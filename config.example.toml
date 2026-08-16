@@ -14,6 +14,8 @@
 weather_location = "Tokyo"
 
 [plugin]
+# 信息性版本号，与插件当前版本对应（无代码读取；权威版本在 _manifest.json）
+version = "2.1.0"
 # 是否启用插件
 enabled = true
 
