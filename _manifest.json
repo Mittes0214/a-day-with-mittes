@@ -1,0 +1,37 @@
+{
+  "manifest_version": 2,
+  "version": "2.1.0",
+  "name": "Mittes 的一天 (A Day With Mittes)",
+  "description": "为 Mittes 提供日常环境上下文工具：按星期×小时的角色日程查询（支持节假日识别），以及实时天气查询（Open-Meteo）。所有信息均通过 Tool 按需提供给 LLM，不注入 prompt。",
+  "author": {
+    "name": "Mittes",
+    "url": "https://github.com/khiqwq"
+  },
+  "license": "GPL-v3.0-or-later",
+  "urls": {
+    "repository": "https://github.com/khiqwq/a_day_with_mittes",
+    "homepage": "https://github.com/khiqwq/a_day_with_mittes"
+  },
+  "host_application": {
+    "min_version": "1.0.0",
+    "max_version": "1.99.99"
+  },
+  "sdk": {
+    "min_version": "1.0.0",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [],
+  "capabilities": [
+    "config.get",
+    "config.get_plugin",
+    "config.get_all",
+    "llm.generate",
+    "http.request"
+  ],
+  "i18n": {
+    "default_locale": "zh-CN",
+    "locales_path": "_locales",
+    "supported_locales": ["zh-CN"]
+  },
+  "id": "khiqwq.a-day-with-mittes"
+}

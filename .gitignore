@@ -1,0 +1,7 @@
+# 运行时配置与数据，不进版本库（config.toml 由 MaiBot/WebUI 在部署侧维护）
+__pycache__/
+*.py[cod]
+config.toml
+data/
+*.log
+
