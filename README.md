@@ -32,6 +32,17 @@ time_range_23_00 = "舒舒服服地泡在浴缸里玩手机"
 
 支持的星期前缀：`schedule_mon`、`schedule_tue`、`schedule_wed`、`schedule_thu`、`schedule_fri`、`schedule_sat`、`schedule_sun`。
 
+时段键格式为 `time_range_HH_NN`（起止小时；23 点跨零点写作 `time_range_23_00`）。
+某时段留空时，当天当前时段恰好落在该格则整个工具返回「当前没有日程信息」，建议每格都填。
+
+### 顶层键 `weather_location`
+
+`get_current_schedule` 返回时会附带此地点的当前天气摘要。取值用英文/罗马字地名
+（如 `Tokyo`、`Shanghai`），避免中文被地理编码匹配到同名小地名。
+
+> **TOML 陷阱**：这是顶层键，**必须写在所有 `[表]` 头之前**——放在任何表头之后
+> 会被归入上一个表，插件按顶层读取将永远取不到（静默回退默认值 `Tokyo`）。
+
 ## 天气查询
 
 `get_weather` 不需要任何配置即可工作，直接调用 Open-Meteo 公开 API：
@@ -48,4 +59,9 @@ time_range_23_00 = "舒舒服服地泡在浴缸里玩手机"
 
 ## 安装
 
-将 `a_day_with_mittes` 文件夹放入 MaiBot 的 `plugins` 目录，重启即可。
+1. 把本目录放进 MaiBot 部署的 `plugins/` 下；
+2. **复制 `config.example.toml` 为 `config.toml`**——本插件使用手动配置读取，
+   `config.toml` 不会自动生成；不复制时日程工具会一直返回「当前没有日程信息」
+   （天气工具无配置也能用）；
+3. 把各时段活动改成你的角色设定，按需调整 `weather_location`；
+4. 重启 MaiBot。

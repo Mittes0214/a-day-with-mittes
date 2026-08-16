@@ -6,7 +6,7 @@
 - `get_weather`：基于 Open-Meteo 的实时天气与近 3 天预报查询
 
 作者：Mittes
-版本：2.0.0
+版本：2.1.0
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """

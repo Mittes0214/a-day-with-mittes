@@ -5,12 +5,14 @@
   "description": "为 Mittes 提供日常环境上下文工具：按星期×小时的角色日程查询（支持节假日识别），以及实时天气查询（Open-Meteo）。所有信息均通过 Tool 按需提供给 LLM，不注入 prompt。",
   "author": {
     "name": "Mittes",
-    "url": "https://github.com/khiqwq"
+    "url": "https://github.com/Mittes0214"
   },
   "license": "GPL-v3.0-or-later",
   "urls": {
-    "repository": "https://github.com/khiqwq/a_day_with_mittes",
-    "homepage": "https://github.com/khiqwq/a_day_with_mittes"
+    "repository": "https://github.com/Mittes0214/a-day-with-mittes",
+    "homepage": "https://github.com/Mittes0214/a-day-with-mittes",
+    "documentation": "https://github.com/Mittes0214/a-day-with-mittes",
+    "issues": "https://github.com/Mittes0214/a-day-with-mittes/issues"
   },
   "host_application": {
     "min_version": "1.0.0",
