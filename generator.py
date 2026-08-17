@@ -118,6 +118,9 @@ class GenerationOutcome:
     state: SegmentState
     ok: bool
     reason: str = ""
+    # 调用层面就失败了（模型不可用、鉴权错、超时），不是模型写得不合格。
+    # 这种错重试一万次也一样，整批应当立刻中止。
+    fatal: bool = False
 
 
 class SegmentGenerator:
@@ -182,6 +185,20 @@ class SegmentGenerator:
                 + (f"　第 {attempt + 1} 次" if attempt else ""),
                 output_title="时段状态",
             )
+
+            # 调用本身就没成功（模型不可用、鉴权失败、超时）。这类错重试没有意义，
+            # 而且真实原因藏在 response 里——不原样带出来，报告只会显示
+            # 「输出不是合法 JSON」，把 404 说成模型不听话。
+            if not result.get("success", True):
+                reason = str(result.get("error") or result.get("response") or "").strip() or "模型调用失败"
+                _logger.error("[生成] %s %s 调用失败：%s", day, segment.slot, reason)
+                return GenerationOutcome(
+                    segment=segment,
+                    state=self._store.fallback_for(segment),
+                    ok=False,
+                    reason=reason,
+                    fatal=True,
+                )
 
             state, reason = self._parse_and_validate(result, segment)
             if state is not None:

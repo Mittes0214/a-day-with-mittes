@@ -104,8 +104,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 enabled=bool(await self._get_config("observability.prompt_preview_enabled", True)),
                 max_records=int(await self._get_config("observability.prompt_preview_limit", 256)),
             ),
-            model=str(await self._get_config("generation.model", "")),
-            digest_model=str(await self._get_config("generation.digest_model", "")),
+            model=str(await self._get_config("generation.model", "replyer")),
+            digest_model=str(await self._get_config("generation.digest_model", "utils")),
             temperature=float(await self._get_config("generation.temperature", 0.9)),
         )
         self._holidays = ScheduleGenerator(self.ctx)
@@ -176,7 +176,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         try:
             store = self._require_store()
             today = now_jst().date()
-            if store.day_generated_count(today) == 0:
+            # 判据是「今天有没有缓存记录」而不是「有没有生成成功」：
+            # 失败的批次也会把底稿写进缓存，所以模型挂掉时反复重启不会每次空转一整轮
+            # （一轮是 10 次调用）。修好之后用 /status batch today 手动补跑。
+            if store.day_cache(today) is None:
                 _logger.info("[批次] 缓存里没有今天，冷启动补跑")
                 await self.run_batch(today, reason="冷启动补跑")
 
@@ -230,6 +233,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             digest = previous_cache.day_digest if previous_cache is not None else ""
 
             failures: list[tuple[Segment, str]] = []
+            aborted = ""
             for segment in segments:
                 previous = self._previous_state(day, segment)
                 level = negative.level_of(day, segment.slot)
@@ -244,6 +248,15 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 )
                 outcome.state.generated_at = now_jst().isoformat()
                 day_cache.segments[segment.slot] = outcome.state
+
+                if outcome.fatal:
+                    # 模型本身不可用，继续往下打十几次没有意义。剩余时段直接铺底稿，
+                    # 让缓存留下「今天已经试过」的痕迹，重启不会再空转一轮。
+                    aborted = outcome.reason
+                    for rest in segments[segments.index(segment) :]:
+                        day_cache.segments.setdefault(rest.slot, store.fallback_for(rest))
+                    break
+
                 if not outcome.ok:
                     failures.append((segment, outcome.reason))
                     continue
@@ -257,22 +270,25 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             store.save_cache()
 
             elapsed = (now_jst() - started).total_seconds()
+            generated = store.day_generated_count(day)
             summary = {
                 "day": day,
                 "total": len(segments),
-                "ok": len(segments) - len(failures),
+                "ok": generated,
                 "failures": failures,
+                "aborted": aborted,
                 "elapsed": elapsed,
                 "negative": negative.entries_of_day(day),
                 "reason": reason,
             }
             _logger.info(
-                "[批次] %s %s：%d/%d 段完成，耗时 %.0f 秒",
+                "[批次] %s %s：%d/%d 段完成，耗时 %.0f 秒%s",
                 day,
                 reason,
-                summary["ok"],
-                summary["total"],
+                generated,
+                len(segments),
                 elapsed,
+                f"，因「{aborted}」中止" if aborted else "",
             )
             await self._report(summary)
             return summary
@@ -295,7 +311,11 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         day: date = summary["day"]
         lines = [f"【日程生成】{day.isoformat()} 周{weekday_name(day)}"]
         failures: list[tuple[Segment, str]] = summary["failures"]
-        if failures:
+        if summary.get("aborted"):
+            lines.append(f"{summary['ok']}/{summary['total']} 段完成，其余已中止并退回底稿。")
+            lines.append(f"中止原因：{summary['aborted']}")
+            lines.append("模型调用失败，重试无意义；修好后用 /status batch 手动补跑。")
+        elif failures:
             lines.append(f"{summary['ok']}/{summary['total']} 段完成，{len(failures)} 段已退回底稿：")
             lines.extend(f"- {segment.slot}　{reason}" for segment, reason in failures)
         else:

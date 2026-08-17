@@ -17,13 +17,18 @@ enable_get_weather = true
 # 00:00~12:00 那几段早就过去了。
 run_at = "12:00"
 
-# 时段生成用的模型。留空使用主程序默认。
+# 时段生成用的模型任务名，取值是 model_config.toml 的 [model_task_config.*] 键
+# （replyer / planner / utils / memory / ...）。
+#
+# **不要留空**：留空会走主程序的「第一个可用任务」兜底，那是 dict 的迭代顺序，
+# 拿到什么全看配置文件怎么写，实测会 404。
+#
 # story 要写出有起承的小事件、mood 要写出「小鹿乱撞」这种质地，
 # 小模型会稳定退化成「翻着漫画，觉得很开心」，prompt 规则再细也救不回来。
-model = ""
+model = "replyer"
 
-# 当日概要滚动压缩用的模型，输入永远只有三百来字，可以用便宜的。
-digest_model = ""
+# 当日概要滚动压缩用的模型，输入永远只有三百来字，用便宜的就行。
+digest_model = "utils"
 
 temperature = 0.9
 
