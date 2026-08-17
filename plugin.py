@@ -78,6 +78,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._holidays: ScheduleGenerator | None = None
         self._batch_task: asyncio.Task[None] | None = None
         self._batch_lock = asyncio.Lock()
+        # 后台任务的强引用；不持有的话事件循环可能把它当垃圾回收掉
+        self._background: set[asyncio.Task[None]] = set()
         self._plugin_config_cache: dict[str, Any] | None = None
         self._last_batch_day: date | None = None
 
@@ -117,6 +119,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if self._batch_task is not None:
             self._batch_task.cancel()
             self._batch_task = None
+        for task in list(self._background):
+            task.cancel()
+        self._background.clear()
 
     async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
         del scope, config_data, version
@@ -571,8 +576,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def cmd_status_regen(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
         moment, segment, old_state = self._current()
-        new_state = await self._regenerate(moment.date(), segment)
-        text = (
+        await self.ctx.send.text(f"正在重生成 {segment.slot}　{segment.title}……", stream_id)
+        self._spawn(self._regen_text(moment.date(), segment, old_state), stream_id)
+        return True, "已开始重生成当前时段", True
+
+    async def _regen_text(self, day: date, segment: Segment, old_state: SegmentState) -> str:
+        new_state = await self._regenerate(day, segment)
+        return (
             f"【重生成】{segment.slot}　{segment.title}\n"
             "\n"
             f"[旧] {old_state.mood}｜{old_state.manner}\n"
@@ -580,8 +590,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             "\n"
             f"{new_state.story}"
         )
-        await self.ctx.send.text(text, stream_id)
-        return True, "已重生成当前时段", True
 
     @Command(
         "status_next",
@@ -602,17 +610,20 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             target_day = today + timedelta(days=1)
             target = store.segments_of(target_day)[0]
 
-        state = await self._regenerate(target_day, target)
-        text = (
-            f"【下一时段】{target_day.isoformat()} {target.slot}　{target.title}\n"
+        await self.ctx.send.text(f"正在生成 {target.slot}　{target.title}……", stream_id)
+        self._spawn(self._next_text(target_day, target), stream_id)
+        return True, "已开始生成下一时段", True
+
+    async def _next_text(self, day: date, segment: Segment) -> str:
+        state = await self._regenerate(day, segment)
+        return (
+            f"【下一时段】{day.isoformat()} {segment.slot}　{segment.title}\n"
             "\n"
             f"{state.story}\n"
             "\n"
             f"manner：{state.manner}\nmood：{state.mood}\nbusy：{state.busy}\n"
             f"建议篇幅：{state.suggest_length}"
         )
-        await self.ctx.send.text(text, stream_id)
-        return True, "已生成下一时段", True
 
     @Command(
         "status_neg",
@@ -704,11 +715,44 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         else:
             target = today + timedelta(days=1)
 
-        await self.ctx.send.text(f"开始生成 {target.isoformat()} 的日程，完成后报到日志群。", stream_id)
-        await self.run_batch(target, reason="手动触发")
-        return True, "批次已完成", True
+        store = self._require_store()
+        await self.ctx.send.text(
+            f"开始生成 {target.isoformat()} 的日程，共 {len(store.segments_of(target))} 段，"
+            "要跑几分钟，完成后报到日志群。",
+            stream_id,
+        )
+        self._spawn(self._batch_text(target), stream_id)
+        return True, "批次已在后台开始", True
+
+    async def _batch_text(self, day: date) -> str:
+        """跑批次并返回一句给发起者的回执；详细结果由 run_batch 自己报到日志群。"""
+        summary = await self.run_batch(day, reason="手动触发")
+        if summary["aborted"]:
+            return f"{day.isoformat()} 批次中止：{summary['aborted']}"
+        return f"{day.isoformat()} 批次完成：{summary['ok']}/{summary['total']} 段。"
 
     # ── 内部工具 ──
+    def _spawn(self, coro: Any, stream_id: str) -> None:
+        """把耗时的活儿丢到后台，命令本身立刻返回。
+
+        ``plugin.invoke_command`` 的 RPC 超时是 60 秒，而一次时段生成就要二三十秒、
+        一整批要好几分钟。同步做完再返回必然超时——虽然协程还会跑完，但调用方
+        看到的是一条 E_TIMEOUT 报错，看起来像失败了。
+        """
+
+        async def runner() -> None:
+            try:
+                text = await coro
+            except Exception as exc:
+                _logger.exception("[命令] 后台任务失败")
+                text = f"执行失败：{type(exc).__name__}: {exc}"
+            if text:
+                await self.ctx.send.text(text, stream_id)
+
+        task = asyncio.create_task(runner())
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
     def _render_week(self, day: date) -> str:
         """渲染某一周的负面事件排期。"""
         store = self._require_store()
