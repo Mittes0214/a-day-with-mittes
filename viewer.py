@@ -1,12 +1,14 @@
 """日程归档浏览器。
 
-起一个只读的本地小服务，把 ``data/schedule.db`` 里的日程按天翻出来看。
+起一个只读的小服务，把 ``data/schedule.db`` 里的日程按天翻出来看。
 
-    uv run python plugins/04_a_day_with_mittes/viewer.py
-    # 然后打开 http://127.0.0.1:8765
+    uv run python plugins/04_a_day_with_mittes/viewer.py          # 只有本机能开
+    uv run python plugins/04_a_day_with_mittes/viewer.py --lan    # 局域网内可开
 
 只用标准库，不引任何依赖；数据库以只读方式打开，不会跟正在运行的 bot 抢写锁。
-只监听 127.0.0.1。
+
+**``--lan`` 没有任何鉴权**：同一局域网里知道地址的人都能看到全部日程内容。
+这是自用小工具的取舍，别往公网端口映射。
 """
 
 from datetime import date
@@ -17,6 +19,7 @@ from urllib.parse import urlparse
 
 import argparse
 import json
+import socket
 import sqlite3
 import sys
 
@@ -242,10 +245,30 @@ boot();
 """
 
 
+def _lan_address() -> str:
+    """取本机在局域网里的地址。
+
+    连一个不存在的外部地址不会真的发包，但内核会为此选好出口网卡，
+    再从 socket 上读回本地地址——比解析主机名可靠。
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        try:
+            probe.connect(("10.255.255.255", 1))
+            return str(probe.getsockname()[0])
+        except OSError:
+            return ""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="日程归档浏览器")
     parser.add_argument("--port", type=int, default=8765, help="监听端口，默认 8765")
     parser.add_argument("--db", type=Path, default=DB_PATH, help="归档库路径")
+    parser.add_argument(
+        "--lan",
+        action="store_true",
+        help="监听 0.0.0.0，局域网内可访问。无鉴权，别映射到公网",
+    )
+    parser.add_argument("--host", default="", help="自定义监听地址，优先级高于 --lan")
     args = parser.parse_args()
 
     if not args.db.exists():
@@ -253,12 +276,26 @@ def main() -> int:
         print("等 12:00 的批次跑完，或在聊天里用 /status batch today 手动生成一次。", file=sys.stderr)
         return 1
 
+    host = args.host or ("0.0.0.0" if args.lan else "127.0.0.1")  # noqa: S104 —— --lan 就是要对局域网开放
+
     Handler.conn = _connect(args.db)
     today = date.today()
-    print(f"日程归档浏览器　http://127.0.0.1:{args.port}")
-    print(f"　库：{args.db}")
-    print(f"　今天是 {today.isoformat()} 周{WEEKDAY_NAMES[today.weekday()]}　（Ctrl-C 退出）")
-    with ThreadingHTTPServer(("127.0.0.1", args.port), Handler) as server:
+    # flush 是必要的：输出重定向到文件或被 systemd 接管时，
+    # 不 flush 的话这几行会一直卡在缓冲区里，看不到访问地址
+    lines = ["日程归档浏览器"]
+    if host in ("0.0.0.0", "::"):
+        lan = _lan_address()
+        if lan:
+            lines.append(f"　局域网：http://{lan}:{args.port}")
+        lines.append(f"　本机　：http://127.0.0.1:{args.port}")
+        lines.append("　注意：没有鉴权，同一局域网里知道地址的人都能看到全部日程内容")
+    else:
+        lines.append(f"　http://{host}:{args.port}")
+    lines.append(f"　库：{args.db}")
+    lines.append(f"　今天是 {today.isoformat()} 周{WEEKDAY_NAMES[today.weekday()]}　（Ctrl-C 退出）")
+    print("\n".join(lines), flush=True)
+
+    with ThreadingHTTPServer((host, args.port), Handler) as server:
         try:
             server.serve_forever()
         except KeyboardInterrupt:

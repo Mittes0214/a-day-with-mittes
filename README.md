@@ -94,13 +94,17 @@ kind    = "工作"                # 唯一一个机器要读的字段
 #### 自带浏览器
 
 ```bash
-uv run python plugins/04_a_day_with_mittes/viewer.py     # 然后开 http://127.0.0.1:8765
-uv run python plugins/04_a_day_with_mittes/viewer.py --port 9000
+uv run python plugins/04_a_day_with_mittes/viewer.py           # 只有本机能开
+uv run python plugins/04_a_day_with_mittes/viewer.py --lan     # 局域网内可开，启动时打印地址
+uv run python plugins/04_a_day_with_mittes/viewer.py --lan --port 9000
 ```
 
-只用标准库、只监听 127.0.0.1、只读方式开库，不会跟运行中的 bot 抢写锁。
+只用标准库、只读方式开库，不会跟运行中的 bot 抢写锁。
 左侧按日期列表，右侧是当天十段的完整内容（故事、心情、忙碌度、建议篇幅、说话方式），
 当前所处的时段会高亮，底稿段和负面事件段各有角标。
+
+> `--lan` 监听 `0.0.0.0` 且**没有任何鉴权**——同一局域网里知道地址的人都能看到
+> 全部日程内容。自用工具的取舍，别往公网做端口映射。
 
 #### 自己写前端
 
