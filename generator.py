@@ -96,17 +96,24 @@ _MOOD_RULES = """## mood —— 一个短语，十字以内，写情绪不写事
 - 如果上一个时段有不愉快，这一段的恢复要有过程，不要一到点就完全没事了
 
 ## busy —— 一句话，她现在方不方便搭话、会不会慢
+- 40 字以内
+- **和 manner 同一条禁令**：只写"腾不腾得开手、回得快不快"，不写她人在哪、在做什么
+  - ✗ 独自在路上和浴室里，随时能接话
+  - ✓ 独处着，随时能接话，就是回得慢一点
+  - ✗ 正在店里忙，回复会慢
+  - ✓ 手上一直有活，回复会慢
 
 ## suggest_length —— 只能是「简短表达」「正常回复」「长回复」之一
 - 依据是她此刻能分出多少注意力，不是话题本身的大小
 - 「长回复」不是罕见档：独处、清闲、心里正好有事想说的时候就该给。不要默认往短里压"""
 
-# manner 里出现就判定不合格的通用场所/身份词。
-# 骨架的 place / outfit 会另行拆成词一起查。
+# 常驻注入的三个字段（manner / mood / busy）里出现就判定不合格的
+# 通用场所/身份词。骨架的 place / outfit 会另行拆成词一起查。
 _BANNED_IN_MANNER = (
     "店里", "店内", "咖啡店", "学校", "教室", "课上", "家里", "回家",
     "上班", "下班", "班上", "打工", "更衣室", "浴室", "卧室", "厨房",
     "露台", "吧台", "摄影棚", "包厢", "女仆装", "制服", "睡裙", "睡衣",
+    "路上", "棚里", "镜头", "便利店", "床上", "楼上", "楼下",
 )
 
 
@@ -314,10 +321,16 @@ class SegmentGenerator:
 
         if len(state.manner) > 60:
             return None, f"manner 超长（{len(state.manner)} 字）"
+        if len(state.busy) > 50:
+            return None, f"busy 超长（{len(state.busy)} 字）"
 
-        hit = _find_banned_word(state.manner, segment)
-        if hit:
-            return None, f"manner 含具体事项名词「{hit}」"
+        # manner / mood / busy 三个字段全都进常驻注入（manner 进 replyer，
+        # 另两个进 planner 状态层），所以禁名词这条纪律对三个都成立。
+        # 只校验 manner 是不够的——实测 busy 写出过「独自在路上和浴室里」。
+        for name in ("manner", "mood", "busy"):
+            hit = _find_banned_word(getattr(state, name), segment)
+            if hit:
+                return None, f"{name} 含具体事项名词「{hit}」"
 
         if not 80 <= len(state.story) <= 200:
             _logger.warning("[生成] %s story 字数 %d 越界，仅告警", segment.slot, len(state.story))
@@ -398,19 +411,19 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _find_banned_word(manner: str, segment: Segment) -> str:
-    """在 manner 里找出不该出现的具体事项名词。
+def _find_banned_word(text: str, segment: Segment) -> str:
+    """在常驻注入的字段里找出不该出现的具体事项名词。
 
     除通用场所/身份词外，还要查这一段骨架自己的地点和服装——
-    生成时把它们写进 manner 是最常见的破法。
+    生成时把它们写进来是最常见的破法。
     """
     for word in _BANNED_IN_MANNER:
-        if word in manner:
+        if word in text:
             return word
     for source in (segment.place, segment.outfit):
         for token in re.split(r"[\s/、，,·—－\-]+", source):
             token = token.strip()
             # 两个字以上才查，避免"家""店"这种单字误伤正常表达
-            if len(token) >= 2 and token in manner:
+            if len(token) >= 2 and token in text:
                 return token
     return ""
