@@ -225,14 +225,24 @@ class ScheduleDB:
             except ValueError:
                 continue
             segments = {segment.slot: (index, segment) for index, segment in enumerate(segments_of(day))}
-            self.upsert_day(day, day_digest=day_data.get("day_digest", ""), batch_reason="迁移自 JSON 缓存")
+            ok = 0
             for slot, raw in (day_data.get("segments") or {}).items():
                 found = segments.get(slot)
                 if found is None:
                     continue
                 seq, segment = found
-                self.upsert_segment(day, seq, segment, _LegacyState(raw))
+                state = _LegacyState(raw)
+                self.upsert_segment(day, seq, segment, state)
                 imported += 1
+                ok += 1 if state.generated else 0
+            # 计数要在导完段之后算，否则那一天在浏览器里会显示成 0/0
+            self.upsert_day(
+                day,
+                day_digest=day_data.get("day_digest", ""),
+                batch_reason="迁移自 JSON 缓存",
+                ok_count=ok,
+                total_count=len(segments),
+            )
         return imported
 
 

@@ -91,7 +91,18 @@ kind    = "工作"                # 唯一一个机器要读的字段
 | `negative_level` | 轻微 / 中等 / 空 |
 | `model` / `generated_at` | 生成用的模型任务名与时刻 |
 
-#### 给前端读
+#### 自带浏览器
+
+```bash
+uv run python plugins/04_a_day_with_mittes/viewer.py     # 然后开 http://127.0.0.1:8765
+uv run python plugins/04_a_day_with_mittes/viewer.py --port 9000
+```
+
+只用标准库、只监听 127.0.0.1、只读方式开库，不会跟运行中的 bot 抢写锁。
+左侧按日期列表，右侧是当天十段的完整内容（故事、心情、忙碌度、建议篇幅、说话方式），
+当前所处的时段会高亮，底稿段和负面事件段各有角标。
+
+#### 自己写前端
 
 库开了 WAL，bot 写入时可以并发只读。**请用只读方式打开**，别持有写锁：
 
