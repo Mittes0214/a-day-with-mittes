@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
-  "version": "2.1.0",
+  "version": "3.0.0",
   "name": "Mittes 的一天 (A Day With Mittes)",
-  "description": "为 Mittes 提供日常环境上下文工具：按星期×小时的角色日程查询（支持节假日识别），以及实时天气查询（Open-Meteo）。所有信息均通过 Tool 按需提供给 LLM，不注入 prompt。",
+  "description": "为 Mittes 提供会自己长出来的日程：每天批量生成变长时段的故事化状态，事实层走 Tool 按需提供，状态层（心情、忙碌度、说话方式）常驻注入 planner 与 replyer。另含实时天气查询与节假日识别。",
   "author": {
     "name": "Mittes",
     "url": "https://github.com/Mittes0214"
@@ -28,12 +28,16 @@
     "config.get_plugin",
     "config.get_all",
     "llm.generate",
+    "chat.get_stream_by_group_id",
+    "send.text",
     "http.request"
   ],
   "i18n": {
     "default_locale": "zh-CN",
     "locales_path": "_locales",
-    "supported_locales": ["zh-CN"]
+    "supported_locales": [
+      "zh-CN"
+    ]
   },
   "id": "khiqwq.a-day-with-mittes"
 }

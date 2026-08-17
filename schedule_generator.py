@@ -1,15 +1,17 @@
-"""节假日日程生成器 — 新 SDK 版本
+"""节假日查询。
 
-负责获取节假日数据并生成节日专属日程。
+只负责取节假日名字，贴在生成 prompt 的「今天」那一段里。
+
+重构时删掉了「节日专属日程 LLM 生成」那一套（``check_and_get_holiday_schedule`` /
+``_generate_holiday_schedule`` 等）——它们从来没有调用方，是死代码；
+新版日程本来就是每天现生成的，节日只作为生成输入之一。
 
 作者：Mittes
-版本：2.0.0
+版本：3.0.0
 """
 
-import asyncio
 import json
 import os
-from datetime import datetime
 from typing import Any
 
 import aiohttp
@@ -33,7 +35,7 @@ FIXED_HOLIDAYS = {
 
 
 class ScheduleGenerator:
-    """节假日日程生成器"""
+    """节假日数据的下载、缓存与查询。"""
 
     def __init__(self, ctx):
         """初始化生成器
@@ -44,14 +46,11 @@ class ScheduleGenerator:
         self.ctx = ctx
         self._base_dir = os.path.dirname(os.path.abspath(__file__))
         self._cache_dir = os.path.join(self._base_dir, "data", "holidays")
-        self._schedule_cache_dir = os.path.join(self._base_dir, "data", "schedules")
-        self._generation_locks: dict[str, bool] = {}
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
         """确保缓存目录存在"""
         os.makedirs(self._cache_dir, exist_ok=True)
-        os.makedirs(self._schedule_cache_dir, exist_ok=True)
 
     def get_holiday_name(self, date_str: str, holiday_map: dict[str, Any]) -> str:
         """从缓存中获取节假日名称
@@ -148,141 +147,3 @@ class ScheduleGenerator:
             self.save_cached_holiday(year, holiday_map)
 
         return holiday_map
-
-    def get_cached_holiday_schedule(self, date_str: str, holiday_name: str) -> dict[str, str] | None:
-        """获取缓存的节日日程
-
-        Args:
-            date_str: 日期字符串
-            holiday_name: 节日名称
-
-        Returns:
-            Optional[Dict[str, str]]: 日程数据，如果不存在则返回 None
-        """
-        filename = f"{date_str}_{holiday_name}.json"
-        path = os.path.join(self._schedule_cache_dir, filename)
-
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return None
-
-    async def check_and_get_holiday_schedule(
-        self, date_str: str, holiday_name: str
-    ) -> dict[str, str] | None:
-        """检查并获取节日日程，如果不存在则触发生成
-
-        Args:
-            date_str: 日期字符串
-            holiday_name: 节日名称
-
-        Returns:
-            Optional[Dict[str, str]]: 日程数据
-        """
-        schedule = self.get_cached_holiday_schedule(date_str, holiday_name)
-        if schedule:
-            return schedule
-
-        asyncio.create_task(self._generate_holiday_schedule(date_str, holiday_name))
-        return None
-
-    async def _generate_holiday_schedule(self, date_str: str, holiday_name: str) -> None:
-        """调用 LLM 生成节日日程（后台任务）
-
-        Args:
-            date_str: 日期字符串
-            holiday_name: 节日名称
-        """
-        if date_str in self._generation_locks:
-            return
-        self._generation_locks[date_str] = True
-
-        try:
-            prompt = self._build_generation_prompt(date_str, holiday_name)
-
-            result = await self.ctx.llm.generate(prompt, model_type="replyer")
-
-            if result:
-                schedule_data = self._parse_schedule_result(result)
-                if schedule_data:
-                    self._save_holiday_schedule(date_str, holiday_name, schedule_data)
-
-        except Exception:
-            pass
-        finally:
-            if date_str in self._generation_locks:
-                del self._generation_locks[date_str]
-
-    def _build_generation_prompt(self, date_str: str, holiday_name: str) -> str:
-        """构建日程生成提示词
-
-        Args:
-            date_str: 日期字符串
-            holiday_name: 节日名称
-
-        Returns:
-            str: 提示词
-        """
-        return f"""请为【{holiday_name}】（{date_str}）生成一份特别的24小时日程。
-
-要求：
-1. 结合节日特点（例如元旦去神社、看日出；情人节做巧克力；圣诞节装饰等）
-2. 保持日常人设（女仆工作、高中生生活），但加入节日元素
-3. 仅仅生成1天的日程
-4. 输出格式必须为 JSON 格式
-
-格式示例：
-{{
-  "time_range_00_01": "...",
-  "time_range_01_02": "...",
-  ...
-  "time_range_23_00": "..."
-}}
-
-请直接输出 JSON 内容。"""
-
-    def _parse_schedule_result(self, result: str) -> dict[str, str] | None:
-        """解析 LLM 返回的日程结果
-
-        Args:
-            result: LLM 返回的字符串
-
-        Returns:
-            Optional[Dict[str, str]]: 解析后的日程数据
-        """
-        content = result
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
-
-        try:
-            schedule_data = json.loads(content)
-            if isinstance(schedule_data, dict) and len(schedule_data) >= 20:
-                return {k: str(v) for k, v in schedule_data.items()}
-        except json.JSONDecodeError:
-            pass
-
-        return None
-
-    def _save_holiday_schedule(
-        self, date_str: str, holiday_name: str, schedule_data: dict[str, str]
-    ) -> None:
-        """保存节日日程到缓存
-
-        Args:
-            date_str: 日期字符串
-            holiday_name: 节日名称
-            schedule_data: 日程数据
-        """
-        self._ensure_dirs()
-        filename = f"{date_str}_{holiday_name}.json"
-        path = os.path.join(self._schedule_cache_dir, filename)
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(schedule_data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass

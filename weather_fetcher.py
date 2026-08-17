@@ -223,3 +223,65 @@ async def fetch_weather_brief(location: str) -> str:
     wind_dir_deg = float(cur.get("wind_direction_10m") or 0)
 
     return f"{desc}，{temp}°C（体感{feels}°C），湿度{humidity}%，{_wind_dir(wind_dir_deg)}风{wind_spd}m/s"
+
+
+async def fetch_daily_forecast(location: str, target_date: str) -> str:
+    """查询指定日期的天气预报，返回一句话摘要。
+
+    日程是提前一天批量生成的（见设计文档 5.3），拿不到实时天气，
+    只能用预报。格式：多云，24~31°C，降水概率30%
+
+    Args:
+        location: 城市的英文/罗马字名称。
+        target_date: 目标日期，``YYYY-MM-DD``。
+
+    Returns:
+        str: 一句话预报；任何失败都返回空串，调用方静默忽略。
+    """
+    headers = {"User-Agent": "MaiBot-WeatherTool/1.0"}
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            geo_url = _GEOCODING_URL + "?" + urllib.parse.urlencode({
+                "name": location,
+                "count": 1,
+                "language": "zh",
+                "format": "json",
+            })
+            geo = await _fetch_json(session, geo_url)
+            results = geo.get("results")
+            if not results:
+                return ""
+
+            place = results[0]
+            weather_url = _WEATHER_URL + "?" + urllib.parse.urlencode({
+                "latitude": place["latitude"],
+                "longitude": place["longitude"],
+                "daily": ",".join([
+                    "weather_code",
+                    "temperature_2m_max",
+                    "temperature_2m_min",
+                    "precipitation_probability_max",
+                ]),
+                "timezone": "auto",
+                "forecast_days": 7,
+            })
+            data = await _fetch_json(session, weather_url)
+    except Exception:
+        return ""
+
+    daily: dict[str, Any] = data.get("daily", {})
+    dates: list[str] = daily.get("time", [])
+    if target_date not in dates:
+        return ""
+
+    index = dates.index(target_date)
+    codes: list[int] = daily.get("weather_code", [])
+    t_max: list[float] = daily.get("temperature_2m_max", [])
+    t_min: list[float] = daily.get("temperature_2m_min", [])
+    p_prob: list[float] = daily.get("precipitation_probability_max", [])
+
+    desc = _WMO_CODES.get(int(codes[index]) if index < len(codes) else 0, "未知天气")
+    summary = f"{desc}，{t_min[index]}~{t_max[index]}°C"
+    if index < len(p_prob) and p_prob[index]:
+        summary += f"，降水概率{int(p_prob[index])}%"
+    return summary

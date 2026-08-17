@@ -1,239 +1,372 @@
 """Mittes 的一天插件 (A Day With Mittes)
 
-为 Mittes 提供日常环境上下文工具，全部通过 Tool 按需暴露给 LLM，不注入到任何 prompt：
+给 Mittes 一份会自己长出来的日程，并让它以正确的方式影响她说话。
 
-- `get_current_schedule`：按星期 × 小时配置的角色活动状态查询，支持节假日识别
-- `get_weather`：基于 Open-Meteo 的实时天气与近 3 天预报查询
+核心是**事实层与状态层分离**（设计文档第 2 节）：
+
+| | 内容 | 出现时机 | 是否含活动名词 |
+|---|---|---|---|
+| 事实层 | 她具体在做什么（故事化文本） | 只有被问才出现（Tool） | 有，这是它的价值 |
+| 状态层 | 她的身体/情绪，以及这如何影响说话 | 每轮都在（常驻注入） | **绝对没有** |
+
+「正在洗碗」是一句可陈述的事实，无论从哪条路进上下文，模型都有复述冲动；
+而「你有点累、话短」不是可陈述内容，模型没法复述它，只能照做。
+状态层的不可复述性完全建立在「没有活动名词」这条纪律上，这条一破，整套设计的地基就没了。
+
+组件：
+- Tool ``get_current_schedule``：事实层，返回当前时段的故事化文本
+- Tool ``get_weather``：实时天气查询
+- Hook ``maisaka.planner.before_request``：planner 状态层注入
+- Hook ``maisaka.replyer.before_model_request``：replyer 语气注入
+- Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：2.1.0
+版本：3.0.0
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """
 
-from maibot_sdk import MaiBotPlugin, Tool
-from maibot_sdk.types import ToolParameterInfo, ToolParamType
+from datetime import date, datetime, time as dt_time, timedelta
 from pathlib import Path
 from typing import Any
 
-import datetime
+import asyncio
+import logging
 import tomllib
+import uuid
 
+from maibot_sdk import Command, HookHandler, MaiBotPlugin, Tool
+from maibot_sdk.types import ToolParameterInfo, ToolParamType
+
+from .generator import SegmentGenerator
+from .negative_events import LEVEL_MILD, NegativeEntry, NegativeScheduler
+from .preview import PromptPreview
 from .schedule_generator import ScheduleGenerator
-from .weather_fetcher import fetch_weather, fetch_weather_brief
+from .schedule_store import (
+    ScheduleStore,
+    Segment,
+    SegmentState,
+    now_jst,
+    weekday_name,
+)
+from .weather_fetcher import fetch_daily_forecast, fetch_weather
 
 
-_TIME_RANGES = [
-    ("00:00-01:00", "time_range_00_01", 0, 1 * 60),
-    ("01:00-02:00", "time_range_01_02", 1 * 60, 2 * 60),
-    ("02:00-03:00", "time_range_02_03", 2 * 60, 3 * 60),
-    ("03:00-04:00", "time_range_03_04", 3 * 60, 4 * 60),
-    ("04:00-05:00", "time_range_04_05", 4 * 60, 5 * 60),
-    ("05:00-06:00", "time_range_05_06", 5 * 60, 6 * 60),
-    ("06:00-07:00", "time_range_06_07", 6 * 60, 7 * 60),
-    ("07:00-08:00", "time_range_07_08", 7 * 60, 8 * 60),
-    ("08:00-09:00", "time_range_08_09", 8 * 60, 9 * 60),
-    ("09:00-10:00", "time_range_09_10", 9 * 60, 10 * 60),
-    ("10:00-11:00", "time_range_10_11", 10 * 60, 11 * 60),
-    ("11:00-12:00", "time_range_11_12", 11 * 60, 12 * 60),
-    ("12:00-13:00", "time_range_12_13", 12 * 60, 13 * 60),
-    ("13:00-14:00", "time_range_13_14", 13 * 60, 14 * 60),
-    ("14:00-15:00", "time_range_14_15", 14 * 60, 15 * 60),
-    ("15:00-16:00", "time_range_15_16", 15 * 60, 16 * 60),
-    ("16:00-17:00", "time_range_16_17", 16 * 60, 17 * 60),
-    ("17:00-18:00", "time_range_17_18", 17 * 60, 18 * 60),
-    ("18:00-19:00", "time_range_18_19", 18 * 60, 19 * 60),
-    ("19:00-20:00", "time_range_19_20", 19 * 60, 20 * 60),
-    ("20:00-21:00", "time_range_20_21", 20 * 60, 21 * 60),
-    ("21:00-22:00", "time_range_21_22", 21 * 60, 22 * 60),
-    ("22:00-23:00", "time_range_22_23", 22 * 60, 23 * 60),
-    ("23:00-00:00", "time_range_23_00", 23 * 60, 24 * 60),
-]
+_logger = logging.getLogger("a_day_with_mittes")
 
-DAY_PREFIX = {
-    0: "schedule_mon",
-    1: "schedule_tue",
-    2: "schedule_wed",
-    3: "schedule_thu",
-    4: "schedule_fri",
-    5: "schedule_sat",
-    6: "schedule_sun",
+# planner 侧状态层的锚点：主程序构造的「时间：YYYY-MM-DD HH:MM:SS」那条 User item
+# （src/maisaka/chat_loop_service.py:776-780），我们插在它后面。
+_PLANNER_ANCHOR_PREFIX = "时间："
+
+# replyer 侧的兜底锚点：final user message 以「当前时间：」开头，位置固定必然存在。
+_REPLYER_FALLBACK_PREFIX = "当前时间："
+
+_ROLE_BY_ITEM_TYPE = {
+    "SystemMessageItem": "system",
+    "UserMessageItem": "user",
+    "AssistantMessageItem": "assistant",
 }
-
-WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
 
 
 class ADayWithMittesPlugin(MaiBotPlugin):
     def __init__(self) -> None:
         super().__init__()
-        self._schedule_generator: ScheduleGenerator | None = None
+        self._plugin_dir = Path(__file__).parent
+        self._store: ScheduleStore | None = None
+        self._generator: SegmentGenerator | None = None
+        self._negative: NegativeScheduler | None = None
+        self._holidays: ScheduleGenerator | None = None
+        self._batch_task: asyncio.Task[None] | None = None
+        self._batch_lock = asyncio.Lock()
         self._plugin_config_cache: dict[str, Any] | None = None
+        self._last_batch_day: date | None = None
 
+    # ── 生命周期 ──
     async def on_load(self) -> None:
-        self._schedule_generator = ScheduleGenerator(self.ctx)
+        data_dir = self._plugin_dir / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        self._store = ScheduleStore(self._plugin_dir, data_dir)
+        self._store.load_skeleton()
+        self._store.load_cache()
+
+        self._negative = NegativeScheduler(
+            data_dir,
+            quota=int(await self._get_config("generation.negative_event_quota", 2)),
+            medium_ratio=float(await self._get_config("generation.negative_medium_ratio", 0.3)),
+        )
+        self._negative.load()
+
+        self._generator = SegmentGenerator(
+            self.ctx,
+            self._store,
+            PromptPreview(
+                enabled=bool(await self._get_config("observability.prompt_preview_enabled", True)),
+                max_records=int(await self._get_config("observability.prompt_preview_limit", 256)),
+            ),
+            model=str(await self._get_config("generation.model", "")),
+            digest_model=str(await self._get_config("generation.digest_model", "")),
+            temperature=float(await self._get_config("generation.temperature", 0.9)),
+        )
+        self._holidays = ScheduleGenerator(self.ctx)
+
+        self._batch_task = asyncio.create_task(self._scheduler_loop())
+        _logger.info("[加载] 骨架就绪，批量生成守护已启动")
 
     async def on_unload(self) -> None:
-        pass
+        if self._batch_task is not None:
+            self._batch_task.cancel()
+            self._batch_task = None
+
+    async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
+        del scope, config_data, version
+        self._plugin_config_cache = None
 
     def get_components(self) -> list[dict[str, Any]]:
         """按 config.toml 的 [components] 开关过滤已禁用的 Tool。
 
         覆盖默认实现，让禁用的工具完全不出现在 LLM 的 tool_definitions 中。
-        本方法在 Runner 加载时同步调用，无法走异步 self.ctx.config，
-        所以直接读插件目录下的 config.toml；开关改动需要重启 MaiBot 才会生效。
+        本方法在 Runner 加载时同步调用，走不了异步的 self.ctx.config，
+        所以直接读插件目录下的 config.toml；开关改动需要重启 MaiBot 才生效。
         """
         components = super().get_components()
         toggles = self._read_component_toggles()
         return [
-            c
-            for c in components
+            component
+            for component in components
             if not (
-                c.get("type", "").upper() == "TOOL"
-                and not toggles.get(f"enable_{c.get('name', '')}", True)
+                component.get("type", "").upper() == "TOOL"
+                and not toggles.get(f"enable_{component.get('name', '')}", True)
             )
         ]
 
-    @staticmethod
-    def _read_component_toggles() -> dict[str, bool]:
-        """从插件目录的 config.toml 读取 [components] 段的开关字典。"""
-        try:
-            with (Path(__file__).parent / "config.toml").open("rb") as f:
-                data = tomllib.load(f)
-            return {k: bool(v) for k, v in (data.get("components") or {}).items()}
-        except Exception:
+    def _read_component_toggles(self) -> dict[str, bool]:
+        """从插件目录的 config.toml 读取 [components] 段。"""
+        path = self._plugin_dir / "config.toml"
+        if not path.exists():
             return {}
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+        return {key: bool(value) for key, value in (data.get("components") or {}).items()}
 
     # ── 配置读取 ──
-    def _extract_config_dict(self, raw: Any) -> dict[str, Any]:
-        if not isinstance(raw, dict):
-            return {}
-        if "result" in raw:
-            inner = raw["result"]
-            if isinstance(inner, dict) and "value" in inner:
-                val = inner["value"]
-                return val if isinstance(val, dict) else {}
-            if isinstance(inner, dict):
-                return inner
-        if "value" in raw:
-            val = raw["value"]
-            return val if isinstance(val, dict) else {}
-        for key in ("schedule_mon", "schedule_tue", "plugin"):
-            if key in raw:
-                return raw
-        return raw if raw else {}
-
     async def _ensure_plugin_config(self) -> dict[str, Any]:
         if self._plugin_config_cache is None:
-            import logging
-            _log = logging.getLogger("a_day_with_mittes.config")
             raw = await self.ctx.config.get_all()
-            self._plugin_config_cache = self._extract_config_dict(raw)
-            _log.info(f"[Config] keys={list(self._plugin_config_cache.keys()) if isinstance(self._plugin_config_cache, dict) else 'N/A'}")
-        return self._plugin_config_cache or {}
-
-    def _resolve_nested_key(self, config: dict, key: str, default: Any = None) -> Any:
-        keys = key.split(".")
-        current = config
-        for k in keys:
-            if isinstance(current, dict) and k in current:
-                current = current[k]
-            else:
-                return default
-        return current
+            self._plugin_config_cache = _unwrap_config(raw)
+        return self._plugin_config_cache
 
     async def _get_config(self, key: str, default: Any = None) -> Any:
-        try:
-            config = await self._ensure_plugin_config()
-            result = self._resolve_nested_key(config, key, "___SENTINEL___")
-            if result == "___SENTINEL___":
+        config = await self._ensure_plugin_config()
+        current: Any = config
+        for part in key.split("."):
+            if not isinstance(current, dict) or part not in current:
                 return default
-            return result
+            current = current[part]
+        return current
+
+    # ── 批量生成 ──
+    async def _scheduler_loop(self) -> None:
+        """守护协程：到点跑批次，冷启动时补当天。
+
+        - 冷启动缓存里没有今天 → 立刻补跑今天（剩余时段用底稿顶着，不阻塞回复）
+        - 每天 ``generation.run_at``（默认 12:00 JST）→ 跑次日全天
+        """
+        await asyncio.sleep(10)  # 等主程序其余部分起来，避免抢启动资源
+        try:
+            store = self._require_store()
+            today = now_jst().date()
+            if store.day_generated_count(today) == 0:
+                _logger.info("[批次] 缓存里没有今天，冷启动补跑")
+                await self.run_batch(today, reason="冷启动补跑")
+
+            while True:
+                await asyncio.sleep(60)
+                now = now_jst()
+                run_at = await self._run_at()
+                if now.time() < run_at:
+                    continue
+                if self._last_batch_day == now.date():
+                    continue
+                self._last_batch_day = now.date()
+                await self.run_batch(now.date() + timedelta(days=1), reason="每日批次")
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            return default
+            _logger.exception("[批次] 守护协程异常退出")
 
-    # ── 日程查询 ──
-    async def _get_current_schedule(self) -> tuple[str, str]:
-        now = datetime.datetime.now()
-        current_time_minutes = now.hour * 60 + now.minute
-        prefix = DAY_PREFIX.get(now.weekday(), "schedule")
+    async def _run_at(self) -> dt_time:
+        raw = str(await self._get_config("generation.run_at", "12:00"))
+        hour, minute = raw.split(":")
+        return dt_time(int(hour), int(minute))
 
-        for time_range, key_name, start_minutes, end_minutes in _TIME_RANGES:
-            status = await self._get_config(f"{prefix}.{key_name}", "")
-            if start_minutes > end_minutes:
-                hit = current_time_minutes >= start_minutes or current_time_minutes < end_minutes
-            else:
-                hit = start_minutes <= current_time_minutes < end_minutes
-            if hit and status:
-                return time_range, str(status)
+    async def run_batch(self, day: date, *, reason: str) -> dict[str, Any]:
+        """跑一天的批次：顺序生成每一段，滚动更新当日概要，最后报告。
 
-        return "", ""
+        Args:
+            day: 要生成的日期。
+            reason: 触发原因，写进日志和报告。
 
-    async def _get_next_hour_status(self) -> str:
-        now = datetime.datetime.now()
-        prefix = DAY_PREFIX.get(now.weekday(), "schedule")
-        return await self._get_status_by_hour_with_prefix(prefix, now.hour + 1)
+        Returns:
+            dict[str, Any]: 批次结果概要，供 ``/status`` 复用。
+        """
+        async with self._batch_lock:
+            store = self._require_store()
+            generator = self._require_generator()
+            negative = self._require_negative()
+            started = now_jst()
 
-    async def _get_status_by_hour_with_prefix(self, prefix: str, hour: int) -> str:
-        if hour < 0:
-            hour = 24 + hour
-        elif hour >= 24:
-            hour = hour - 24
-        minutes = hour * 60 + 30
-        for _, key_name, start_minutes, end_minutes in _TIME_RANGES:
-            if start_minutes > end_minutes:
-                hit = minutes >= start_minutes or minutes < end_minutes
-            else:
-                hit = start_minutes <= minutes < end_minutes
-            if hit:
-                val = await self._get_config(f"{prefix}.{key_name}", "")
-                return str(val) if val else ""
-        return ""
+            # 排期挂在批次开头做惰性检查：这样排期和生成不会错序，
+            # 也不用担心单独的定时任务漏跑导致某天没有排期数据。
+            negative.ensure_week(day, store.segments_of)
 
+            weather = await self._forecast_for(day)
+            holiday = await self._holiday_name(day)
+
+            segments = store.segments_of(day)
+            day_cache = store.ensure_day_cache(day)
+            # 凌晨那段承接的是前一天最后一段，概要也从前一天末尾接上
+            previous_cache = store.day_cache(day - timedelta(days=1))
+            digest = previous_cache.day_digest if previous_cache is not None else ""
+
+            failures: list[tuple[Segment, str]] = []
+            for segment in segments:
+                previous = self._previous_state(day, segment)
+                level = negative.level_of(day, segment.slot)
+                outcome = await generator.generate_segment(
+                    day=day,
+                    segment=segment,
+                    weather=weather,
+                    holiday=holiday,
+                    previous=previous,
+                    day_digest=digest,
+                    negative_level=level,
+                )
+                outcome.state.generated_at = now_jst().isoformat()
+                day_cache.segments[segment.slot] = outcome.state
+                if not outcome.ok:
+                    failures.append((segment, outcome.reason))
+                    continue
+                if segment.kind == "睡眠":
+                    # 概要写的是「醒着的这一天里做过什么」，跨过睡眠段就该归零
+                    digest = ""
+                else:
+                    digest = await generator.update_digest(digest, outcome.state.story)
+
+            day_cache.day_digest = digest
+            store.save_cache()
+
+            elapsed = (now_jst() - started).total_seconds()
+            summary = {
+                "day": day,
+                "total": len(segments),
+                "ok": len(segments) - len(failures),
+                "failures": failures,
+                "elapsed": elapsed,
+                "negative": negative.entries_of_day(day),
+                "reason": reason,
+            }
+            _logger.info(
+                "[批次] %s %s：%d/%d 段完成，耗时 %.0f 秒",
+                day,
+                reason,
+                summary["ok"],
+                summary["total"],
+                elapsed,
+            )
+            await self._report(summary)
+            return summary
+
+    def _previous_state(self, day: date, segment: Segment) -> tuple[Segment, SegmentState] | None:
+        """取上一段的骨架和生成结果，用于承接；上一段没生成过则返回 None。"""
+        store = self._require_store()
+        previous_day, previous_segment = store.previous_segment(day, segment)
+        state = store.state_of(previous_day, previous_segment)
+        if state is None or not state.generated:
+            return None
+        return previous_segment, state
+
+    async def _report(self, summary: dict[str, Any]) -> None:
+        """把批次结果发到报告群。成功也发——静默成功等于没有监控。"""
+        group_id = str(await self._get_config("observability.report_group_id", "")).strip()
+        if not group_id:
+            return
+
+        day: date = summary["day"]
+        lines = [f"【日程生成】{day.isoformat()} 周{weekday_name(day)}"]
+        failures: list[tuple[Segment, str]] = summary["failures"]
+        if failures:
+            lines.append(f"{summary['ok']}/{summary['total']} 段完成，{len(failures)} 段已退回底稿：")
+            lines.extend(f"- {segment.slot}　{reason}" for segment, reason in failures)
+        else:
+            lines.append(f"{summary['ok']}/{summary['total']} 段完成，耗时 {summary['elapsed']:.0f} 秒")
+        for entry in summary["negative"]:
+            lines.append(f"负面事件：{entry.slot}（{entry.level}）")
+
+        platform = str(await self._get_config("observability.report_platform", "qq"))
+        stream = await self.ctx.chat.get_stream_by_group_id(group_id, platform=platform)
+        stream_id = _stream_id_of(stream)
+        if not stream_id:
+            _logger.warning("[报告] 找不到群 %s 的聊天流，跳过本次报告", group_id)
+            return
+        await self.ctx.send.text("\n".join(lines), stream_id)
+
+    async def _forecast_for(self, day: date) -> str:
+        """取目标日期的天气预报。提前一天生成拿不到实时天气，只能用预报。"""
+        location = str(await self._get_config("weather_location", "Tokyo"))
+        return await fetch_daily_forecast(location, day.isoformat())
+
+    async def _holiday_name(self, day: date) -> str:
+        """取当天的日本节假日名，没有则返回空串。"""
+        if self._holidays is None:
+            return ""
+        try:
+            holiday_map = await self._holidays.get_holiday_map(day.year)
+            name = self._holidays.get_holiday_name(day.isoformat(), holiday_map)
+        except Exception as exc:
+            _logger.warning("[节假日] 查询失败：%s", type(exc).__name__)
+            return ""
+        return f"【{name}】" if name else ""
+
+    # ── 事实层与状态层的取值 ──
+    def _current(self) -> tuple[datetime, Segment, SegmentState]:
+        moment = now_jst()
+        segment, state = self._require_store().state_at(moment)
+        return moment, segment, state
+
+    def _planner_block(self, state: SegmentState) -> str:
+        """planner 状态层文本。
+
+        这里一个活动名词都不能有：planner 知道「她有点忙但能搭话」，
+        不知道她在换衣服，想抄也没得抄。
+        """
+        return (
+            "【Mittes 当前状态】\n"
+            f"忙碌度：{state.busy}\n"
+            f"心情：{state.mood}\n"
+            f"建议篇幅：{state.suggest_length}\n"
+            "\n"
+            "篇幅只是建议——对方的问题确实需要展开时可以不采纳。"
+        )
+
+    # ── Tool ──
     @Tool(
         "get_current_schedule",
         brief_description="当需要描述 Mittes 当前在做什么时，必须调用此工具获取真实日程，不得推测。",
         parameters=[],
     )
-    async def tool_get_schedule(self, **kwargs):
-        _ = kwargs
-        time_range, status = await self._get_current_schedule()
-        if not time_range or not status:
-            return {"name": "get_current_schedule", "content": "当前没有日程信息"}
-
-        now = datetime.datetime.now()
-        weekday = WEEKDAY_NAMES[now.weekday()]
-
-        if self._schedule_generator:
-            try:
-                holiday_map = await self._schedule_generator.get_holiday_map(now.year)
-                holiday_name = self._schedule_generator.get_holiday_name(now.strftime("%Y-%m-%d"), holiday_map)
-                if holiday_name:
-                    weekday = f"{weekday}【{holiday_name}】"
-            except Exception:
-                pass
-
-        next_status = await self._get_next_hour_status()
-        current_hour = now.hour
-        current_hour_end = (now.hour + 1) % 24
-        weather_brief = ""
-        weather_location = await self._get_config("weather_location", "Tokyo")
-        try:
-            weather_brief = await fetch_weather_brief(weather_location)
-        except Exception:
-            weather_brief = ""
-        if weather_brief:
-            header = f"今天是星期{weekday}，现在的天气{weather_brief}，"
-        else:
-            header = f"今天是星期{weekday}，"
-
-        current_info = f"当前时间 {current_hour:02d}:00-{current_hour_end:02d}:00: {status}"
-        next_info = ""
-        if next_status:
-            next_hour = (now.hour + 1) % 24
-            next_hour_end = (now.hour + 2) % 24
-            next_info = f"\n下一时段 {next_hour:02d}:00-{next_hour_end:02d}:00: {next_status}"
-
-        content = f"{header}\n{current_info}{next_info}\n不要主动提及自己的日程，除非有人问及"
+    async def tool_get_schedule(self, **kwargs: Any) -> dict[str, str]:
+        del kwargs
+        moment, segment, state = self._current()
+        content = (
+            "【Mittes 当前日程】\n"
+            f"{moment:%Y-%m-%d} 周{weekday_name(moment.date())} {moment:%H:%M}\n"
+            "\n"
+            f"{segment.slot}　{segment.title}\n"
+            f"{state.story}\n"
+            "\n"
+            "以上是她真实的当下，可以据此回答；不要复述原文，也不要在没人问的时候主动提起。"
+        )
         return {"name": "get_current_schedule", "content": content}
 
     @Tool(
@@ -248,17 +381,440 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             ),
         ],
     )
-    async def tool_get_weather(self, location: str = "", **kwargs):
-        _ = kwargs
-        location = (location or "").strip()
+    async def tool_get_weather(self, location: str = "", **kwargs: Any) -> dict[str, str]:
+        del kwargs
+        location = location.strip()
         if not location:
             return {"name": "get_weather", "content": "请提供要查询的城市或地点名称"}
-        content = await fetch_weather(location)
-        return {"name": "get_weather", "content": content}
+        return {"name": "get_weather", "content": await fetch_weather(location)}
 
-    async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
-        _ = (scope, config_data, version)
-        self._plugin_config_cache = None
+    # ── Hook：planner 状态层 ──
+    @HookHandler(
+        "maisaka.planner.before_request",
+        name="schedule_state_planner",
+        mode="blocking",
+        order="normal",
+        timeout_ms=3000,
+        error_policy="skip",
+    )
+    async def handle_planner_before_request(
+        self,
+        items: list[Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """在「时间：」那条 User item 后面插入状态层。"""
+        if not items:
+            return _hook_response(items, kwargs)
+
+        _moment, _segment, state = self._current()
+        block = self._planner_block(state)
+
+        index = _find_item_index(items, lambda text: text.startswith(_PLANNER_ANCHOR_PREFIX))
+        updated = list(items)
+        # 找不到锚点就挂在最后：状态层晚一点出现也比不出现好
+        updated.insert(index + 1 if index >= 0 else len(updated), _new_user_item(block))
+        return _hook_response(updated, kwargs)
+
+    # ── Hook：replyer 语气注入 ──
+    @HookHandler(
+        "maisaka.replyer.before_model_request",
+        name="schedule_manner_replyer",
+        mode="blocking",
+        order="normal",
+        timeout_ms=3000,
+        error_policy="skip",
+    )
+    async def handle_replyer_before_model_request(
+        self,
+        items: list[Any] | None = None,
+        reply_reason: str = "",
+        reply_tool_args: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """在 planner 的 reply_reference item 之前插入 manner。
+
+        锚点从 hook 载荷算出来，不是猜位置：reference item 的正文由主程序按固定规则
+        拼装（maisaka_generator_base.py:574-594）——``reply_tool_args["reply_reference"]``
+        非空时正文就是它原样，否则是 ``当前思考：\\n{reply_reason}``。
+
+        用「包含」而不是「相等」来匹配，是因为 02_owner_auth_plugin 可能已经往
+        reference 首行合并过身份文案，两个插件的 hook 顺序不保证。
+        """
+        if not items:
+            return {"success": True, "action": "continue"}
+
+        _moment, _segment, state = self._current()
+        if not state.manner:
+            return {"success": True, "action": "continue"}
+
+        reference = str((reply_tool_args or {}).get("reply_reference") or "").strip()
+        expected = reference or (f"当前思考：\n{reply_reason}".strip() if reply_reason else "")
+
+        index = -1
+        if expected:
+            index = _find_item_index(items, lambda text: expected in text)
+        if index < 0:
+            index = _find_item_index(items, lambda text: text.startswith(_REPLYER_FALLBACK_PREFIX))
+        if index < 0:
+            _logger.warning("[replyer] 两个锚点都没匹配上，本次不注入")
+            return {"success": True, "action": "continue"}
+
+        updated = list(items)
+        updated.insert(index, _new_user_item(state.manner))
+        return _hook_response(updated, kwargs, extra={"reply_reason": reply_reason, "reply_tool_args": reply_tool_args})
+
+    # ── Command ──
+    @Command(
+        "status",
+        description="查看 Mittes 当前时段状态（仅管理员）",
+        pattern=r"^/status$",
+        permission="operator",
+    )
+    async def cmd_status(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
+        del kwargs
+        moment, segment, state = self._current()
+        run_at = await self._run_at()
+        lines = [
+            f"{moment:%Y-%m-%d} 周{weekday_name(moment.date())} {moment:%H:%M}（JST）",
+            f"当前时段：{segment.slot}　{segment.title}",
+            f"　地点：{segment.place}　服装：{segment.outfit}",
+            f"　同处：{segment.company}　性质：{segment.kind}",
+            "",
+            f"story：{state.story}",
+            f"manner：{state.manner}",
+            f"mood：{state.mood}",
+            f"busy：{state.busy}",
+            f"建议篇幅：{state.suggest_length}",
+            "",
+            "来源：生成结果" if state.generated else "来源：底稿（该段未生成成功）",
+            f"下次批次：每天 {run_at:%H:%M} 生成次日全天",
+        ]
+        await self.ctx.send.text("\n".join(lines), stream_id)
+        return True, "已输出当前状态", True
+
+    @Command(
+        "status_prompt",
+        description="查看本时段实际注入 planner / replyer 的原文（仅管理员）",
+        pattern=r"^/status\s+prompt$",
+        permission="operator",
+    )
+    async def cmd_status_prompt(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
+        del kwargs
+        _moment, _segment, state = self._current()
+        text = (
+            "── planner 状态层（插在「时间：」之后）──\n"
+            f"{self._planner_block(state)}\n"
+            "\n"
+            "── replyer 语气（插在 reply_reference 之前）──\n"
+            f"{state.manner}"
+        )
+        await self.ctx.send.text(text, stream_id)
+        return True, "已输出注入原文", True
+
+    @Command(
+        "status_day",
+        description="查看今天各时段的生成状态（仅管理员）",
+        pattern=r"^/status\s+day$",
+        permission="operator",
+    )
+    async def cmd_status_day(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
+        del kwargs
+        store = self._require_store()
+        negative = self._require_negative()
+        moment = now_jst()
+        today = moment.date()
+        current = store.segment_at(moment)
+
+        lines = [f"【今日日程】{today.isoformat()} 周{weekday_name(today)}"]
+        for segment in store.segments_of(today):
+            state = store.state_of(today, segment)
+            if state is None:
+                mark = "未生成"
+            elif state.generated:
+                mark = "已生成"
+            else:
+                mark = "底稿"
+            row = f"{'▶' if segment is current else '　'}{segment.slot}　{segment.title}　[{mark}]"
+            level = negative.level_of(today, segment.slot)
+            if level:
+                row += f"　※负面事件·{level}"
+            lines.append(row)
+        await self.ctx.send.text("\n".join(lines), stream_id)
+        return True, "已输出今日日程", True
+
+    @Command(
+        "status_regen",
+        description="强制重生成当前时段（仅管理员）",
+        pattern=r"^/status\s+regen$",
+        permission="operator",
+    )
+    async def cmd_status_regen(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
+        del kwargs
+        moment, segment, old_state = self._current()
+        new_state = await self._regenerate(moment.date(), segment)
+        text = (
+            f"【重生成】{segment.slot}　{segment.title}\n"
+            "\n"
+            f"[旧] {old_state.mood}｜{old_state.manner}\n"
+            f"[新] {new_state.mood}｜{new_state.manner}\n"
+            "\n"
+            f"{new_state.story}"
+        )
+        await self.ctx.send.text(text, stream_id)
+        return True, "已重生成当前时段", True
+
+    @Command(
+        "status_next",
+        description="提前生成下一个时段但不切换（仅管理员）",
+        pattern=r"^/status\s+next$",
+        permission="operator",
+    )
+    async def cmd_status_next(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
+        del kwargs
+        store = self._require_store()
+        moment = now_jst()
+        today = moment.date()
+        segments = store.segments_of(today)
+        index = segments.index(store.segment_at(moment))
+        if index + 1 < len(segments):
+            target_day, target = today, segments[index + 1]
+        else:
+            target_day = today + timedelta(days=1)
+            target = store.segments_of(target_day)[0]
+
+        state = await self._regenerate(target_day, target)
+        text = (
+            f"【下一时段】{target_day.isoformat()} {target.slot}　{target.title}\n"
+            "\n"
+            f"{state.story}\n"
+            "\n"
+            f"manner：{state.manner}\nmood：{state.mood}\nbusy：{state.busy}\n"
+            f"建议篇幅：{state.suggest_length}"
+        )
+        await self.ctx.send.text(text, stream_id)
+        return True, "已生成下一时段", True
+
+    @Command(
+        "status_neg",
+        description="查看本周负面事件排期（仅管理员）",
+        pattern=r"^/status\s+neg$",
+        permission="operator",
+    )
+    async def cmd_status_neg(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
+        del kwargs
+        await self.ctx.send.text(self._render_week(now_jst().date()), stream_id)
+        return True, "已输出负面事件排期", True
+
+    @Command(
+        "status_neg_reroll",
+        description="重摇本周负面事件排期（仅管理员）",
+        pattern=r"^/status\s+neg\s+reroll$",
+        permission="operator",
+    )
+    async def cmd_status_neg_reroll(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
+        del kwargs
+        store = self._require_store()
+        today = now_jst().date()
+        self._require_negative().reroll_week(today, store.segments_of)
+        await self.ctx.send.text("已重摇。\n" + self._render_week(today), stream_id)
+        return True, "已重摇负面事件排期", True
+
+    @Command(
+        "status_neg_clear",
+        description="清空本周负面事件排期（仅管理员）",
+        pattern=r"^/status\s+neg\s+clear$",
+        permission="operator",
+    )
+    async def cmd_status_neg_clear(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
+        del kwargs
+        today = now_jst().date()
+        self._require_negative().replace_week(today, [])
+        await self.ctx.send.text("本周负面事件排期已清空。", stream_id)
+        return True, "已清空负面事件排期", True
+
+    @Command(
+        "status_neg_add",
+        description="手动指定一条负面事件（仅管理员）",
+        pattern=r"^/status\s+neg\s+add\s+(?P<day>\d{4}-\d{2}-\d{2})\s+(?P<slot>\d{2}:\d{2}-\d{2}:\d{2})(?:\s+(?P<level>轻微|中等))?$",
+        permission="operator",
+    )
+    async def cmd_status_neg_add(
+        self,
+        stream_id: str = "",
+        day: str = "",
+        slot: str = "",
+        level: str = "",
+        **kwargs: Any,
+    ) -> tuple[bool, str, bool]:
+        del kwargs
+        store = self._require_store()
+        negative = self._require_negative()
+        target_day = date.fromisoformat(day)
+        if not any(segment.slot == slot for segment in store.segments_of(target_day)):
+            await self.ctx.send.text(f"{target_day} 没有 {slot} 这个时段。", stream_id)
+            return False, "时段不存在", True
+
+        _week_start, entries = negative.week_entries(target_day)
+        entries = [entry for entry in entries if not (entry.day == target_day and entry.slot == slot)]
+        entries.append(NegativeEntry(day=target_day, slot=slot, level=level or LEVEL_MILD))
+        entries.sort(key=lambda entry: (entry.day, entry.slot))
+        negative.replace_week(target_day, entries)
+
+        await self.ctx.send.text("已添加。\n" + self._render_week(target_day), stream_id)
+        return True, "已添加负面事件", True
+
+    @Command(
+        "status_batch",
+        description="立即跑一次批次，默认次日（仅管理员）",
+        pattern=r"^/status\s+batch(?:\s+(?P<day>\d{4}-\d{2}-\d{2}|today))?$",
+        permission="operator",
+    )
+    async def cmd_status_batch(
+        self,
+        stream_id: str = "",
+        day: str = "",
+        **kwargs: Any,
+    ) -> tuple[bool, str, bool]:
+        del kwargs
+        today = now_jst().date()
+        if day == "today":
+            target = today
+        elif day:
+            target = date.fromisoformat(day)
+        else:
+            target = today + timedelta(days=1)
+
+        await self.ctx.send.text(f"开始生成 {target.isoformat()} 的日程，完成后报到日志群。", stream_id)
+        await self.run_batch(target, reason="手动触发")
+        return True, "批次已完成", True
+
+    # ── 内部工具 ──
+    def _render_week(self, day: date) -> str:
+        """渲染某一周的负面事件排期。"""
+        store = self._require_store()
+        week_start, entries = self._require_negative().week_entries(day)
+        week_end = week_start + timedelta(days=6)
+        lines = [f"【负面事件排期】{week_start.isoformat()} ~ {week_end.isoformat()}"]
+        if not entries:
+            lines.append("（本周没有排期）")
+            return "\n".join(lines)
+        for entry in entries:
+            title = next(
+                (segment.title for segment in store.segments_of(entry.day) if segment.slot == entry.slot),
+                "",
+            )
+            lines.append(f"周{weekday_name(entry.day)} {entry.slot}　{title}　（{entry.level}）")
+        return "\n".join(lines)
+
+    async def _regenerate(self, day: date, segment: Segment) -> SegmentState:
+        """重生成单段并写回缓存。"""
+        store = self._require_store()
+        generator = self._require_generator()
+        negative = self._require_negative()
+
+        outcome = await generator.generate_segment(
+            day=day,
+            segment=segment,
+            weather=await self._forecast_for(day),
+            holiday=await self._holiday_name(day),
+            previous=self._previous_state(day, segment),
+            day_digest=(store.day_cache(day).day_digest if store.day_cache(day) else ""),
+            negative_level=negative.level_of(day, segment.slot),
+        )
+        outcome.state.generated_at = now_jst().isoformat()
+        store.ensure_day_cache(day).segments[segment.slot] = outcome.state
+        store.save_cache()
+        return outcome.state
+
+    def _require_store(self) -> ScheduleStore:
+        if self._store is None:
+            raise RuntimeError("插件尚未加载完成：ScheduleStore 未就绪")
+        return self._store
+
+    def _require_generator(self) -> SegmentGenerator:
+        if self._generator is None:
+            raise RuntimeError("插件尚未加载完成：SegmentGenerator 未就绪")
+        return self._generator
+
+    def _require_negative(self) -> NegativeScheduler:
+        if self._negative is None:
+            raise RuntimeError("插件尚未加载完成：NegativeScheduler 未就绪")
+        return self._negative
+
+
+def _unwrap_config(raw: Any) -> dict[str, Any]:
+    """剥掉 config.get_all 可能包的 result / value 外壳。"""
+    if not isinstance(raw, dict):
+        return {}
+    for key in ("result", "value"):
+        inner = raw.get(key)
+        if isinstance(inner, dict):
+            return _unwrap_config(inner) if set(inner) & {"result", "value"} else inner
+    return raw
+
+
+def _item_text(item: Any) -> str:
+    """取 Item 的纯文本内容；非消息 Item 返回空串。"""
+    if not isinstance(item, dict) or item.get("item_type") not in _ROLE_BY_ITEM_TYPE:
+        return ""
+    parts = item.get("parts")
+    if not isinstance(parts, list):
+        return ""
+    return "".join(
+        str(part.get("text") or "")
+        for part in parts
+        if isinstance(part, dict) and part.get("type") == "text"
+    )
+
+
+def _find_item_index(items: list[Any], predicate: Any) -> int:
+    """从后往前找第一条正文满足条件的 Item，返回下标；找不到返回 -1。
+
+    从后往前是因为两个锚点（「时间：」和「当前时间：」）都在尾部，
+    而历史消息里可能出现同样开头的旧内容。
+    """
+    for index in range(len(items) - 1, -1, -1):
+        text = _item_text(items[index])
+        if text and predicate(text):
+            return index
+    return -1
+
+
+def _new_user_item(text: str) -> dict[str, Any]:
+    """合成一条新的 User Item。item_id 必须全局唯一，否则主程序校验会拒收。"""
+    return {
+        "item_type": "UserMessageItem",
+        "meta": {
+            "item_id": f"a-day-with-mittes-{uuid.uuid4().hex}",
+            "logical_turn_id": None,
+            "timestamp": now_jst().isoformat(),
+        },
+        "parts": [{"type": "text", "text": text}],
+    }
+
+
+def _hook_response(
+    items: list[Any] | None,
+    kwargs: dict[str, Any],
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """构造 hook 返回值。
+
+    主程序对 modified_kwargs 是**整体替换**而非合并，所以未声明的入参
+    （item_schema_version、session_id 等）必须经 **kwargs 原样回传，否则会被丢掉。
+    """
+    modified_kwargs = dict(kwargs)
+    if extra:
+        modified_kwargs.update(extra)
+    modified_kwargs["items"] = items
+    return {"success": True, "action": "continue", "modified_kwargs": modified_kwargs}
+
+
+def _stream_id_of(stream: Any) -> str:
+    """从 chat 能力返回的聊天流对象里取出 stream_id。"""
+    if isinstance(stream, dict):
+        return str(stream.get("stream_id") or stream.get("session_id") or "")
+    return str(getattr(stream, "stream_id", "") or getattr(stream, "session_id", "") or "")
 
 
 def create_plugin() -> ADayWithMittesPlugin:

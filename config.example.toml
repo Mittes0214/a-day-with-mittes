@@ -1,202 +1,51 @@
-# a_day_with_mittes - Mittes 的一天插件 配置模板
+# Mittes 的一天 — 插件配置
 #
-# 使用方法：把本文件复制为同目录下的 config.toml，再把各时段活动改成你的角色设定。
-# 本插件使用手动配置读取（无 pydantic 模型），config.toml 不会自动生成；
-# 缺失日程时 get_current_schedule 工具会一直返回「当前没有日程信息」（天气工具不受影响）。
-#
-# 时段键格式：time_range_HH_NN（起止小时，23 点跨零点写作 time_range_23_00）。
-# 某个时段留空字符串时，当天当前时段落在该格则整个工具返回「没有日程信息」，
-# 建议每格都填。
-
-# 日程注入的实时天气：get_current_schedule 返回时附带此地点的当前天气摘要。
-# 取值用英文/罗马字地名（如 Tokyo、Shanghai），避免中文被匹配到同名小地名。
-# 注意：这是顶层键，必须放在所有 [表] 头之前，否则会被归入上一个表导致读取不到。
-weather_location = "Tokyo"
+# 这里只放开关和参数。日程骨架、底稿都在 schedule_skeleton.toml（纳入版本库），
+# 因为 config.toml 被 gitignore，手写资产放这里会丢失版本历史。
 
 [plugin]
-# 信息性版本号，与插件当前版本对应（无代码读取；权威版本在 _manifest.json）
-version = "2.1.0"
-# 是否启用插件
 enabled = true
+config_version = "3.0.0"
 
-[schedule_mon]
-time_range_00_01 = "在房间里安睡"
-time_range_01_02 = "在房间里安睡"
-time_range_02_03 = "在房间里安睡"
-time_range_03_04 = "在房间里安睡"
-time_range_04_05 = "在房间里安睡"
-time_range_05_06 = "在房间里安睡"
-time_range_06_07 = "在房间里安睡"
-time_range_07_08 = "睡眼惺忪地赖床，闹钟按掉了第三个"
-time_range_08_09 = "洗漱完慢悠悠地吃早餐"
-time_range_09_10 = "窝在房间里做自己的事"
-time_range_10_11 = "窝在房间里做自己的事"
-time_range_11_12 = "窝在房间里做自己的事"
-time_range_12_13 = "解决午饭"
-time_range_13_14 = "饭后小憩"
-time_range_14_15 = "出门闲逛 / 在家消磨午后"
-time_range_15_16 = "出门闲逛 / 在家消磨午后"
-time_range_16_17 = "出门闲逛 / 在家消磨午后"
-time_range_17_18 = "出门闲逛 / 在家消磨午后"
-time_range_18_19 = "吃晚饭"
-time_range_19_20 = "洗漱后窝在沙发/床上放松"
-time_range_20_21 = "洗漱后窝在沙发/床上放松"
-time_range_21_22 = "洗漱后窝在沙发/床上放松"
-time_range_22_23 = "处理睡前的琐事"
-time_range_23_00 = "熄灯前再刷一会儿手机"
+[components]
+# 关掉的 Tool 完全不会出现在 LLM 的 tool_definitions 里；改动需要重启 MaiBot 才生效
+enable_get_current_schedule = true
+enable_get_weather = true
 
-[schedule_tue]
-time_range_00_01 = "在房间里安睡"
-time_range_01_02 = "在房间里安睡"
-time_range_02_03 = "在房间里安睡"
-time_range_03_04 = "在房间里安睡"
-time_range_04_05 = "在房间里安睡"
-time_range_05_06 = "在房间里安睡"
-time_range_06_07 = "在房间里安睡"
-time_range_07_08 = "睡眼惺忪地赖床，闹钟按掉了第三个"
-time_range_08_09 = "洗漱完慢悠悠地吃早餐"
-time_range_09_10 = "窝在房间里做自己的事"
-time_range_10_11 = "窝在房间里做自己的事"
-time_range_11_12 = "窝在房间里做自己的事"
-time_range_12_13 = "解决午饭"
-time_range_13_14 = "饭后小憩"
-time_range_14_15 = "出门闲逛 / 在家消磨午后"
-time_range_15_16 = "出门闲逛 / 在家消磨午后"
-time_range_16_17 = "出门闲逛 / 在家消磨午后"
-time_range_17_18 = "出门闲逛 / 在家消磨午后"
-time_range_18_19 = "吃晚饭"
-time_range_19_20 = "洗漱后窝在沙发/床上放松"
-time_range_20_21 = "洗漱后窝在沙发/床上放松"
-time_range_21_22 = "洗漱后窝在沙发/床上放松"
-time_range_22_23 = "处理睡前的琐事"
-time_range_23_00 = "熄灯前再刷一会儿手机"
+[generation]
+# 每天几点跑批次（JST）。生成的是**次日**全天——12:00 才生成当天的话，
+# 00:00~12:00 那几段早就过去了。
+run_at = "12:00"
 
-[schedule_wed]
-time_range_00_01 = "在房间里安睡"
-time_range_01_02 = "在房间里安睡"
-time_range_02_03 = "在房间里安睡"
-time_range_03_04 = "在房间里安睡"
-time_range_04_05 = "在房间里安睡"
-time_range_05_06 = "在房间里安睡"
-time_range_06_07 = "在房间里安睡"
-time_range_07_08 = "睡眼惺忪地赖床，闹钟按掉了第三个"
-time_range_08_09 = "洗漱完慢悠悠地吃早餐"
-time_range_09_10 = "窝在房间里做自己的事"
-time_range_10_11 = "窝在房间里做自己的事"
-time_range_11_12 = "窝在房间里做自己的事"
-time_range_12_13 = "解决午饭"
-time_range_13_14 = "饭后小憩"
-time_range_14_15 = "出门闲逛 / 在家消磨午后"
-time_range_15_16 = "出门闲逛 / 在家消磨午后"
-time_range_16_17 = "出门闲逛 / 在家消磨午后"
-time_range_17_18 = "出门闲逛 / 在家消磨午后"
-time_range_18_19 = "吃晚饭"
-time_range_19_20 = "洗漱后窝在沙发/床上放松"
-time_range_20_21 = "洗漱后窝在沙发/床上放松"
-time_range_21_22 = "洗漱后窝在沙发/床上放松"
-time_range_22_23 = "处理睡前的琐事"
-time_range_23_00 = "熄灯前再刷一会儿手机"
+# 时段生成用的模型。留空使用主程序默认。
+# story 要写出有起承的小事件、mood 要写出「小鹿乱撞」这种质地，
+# 小模型会稳定退化成「翻着漫画，觉得很开心」，prompt 规则再细也救不回来。
+model = ""
 
-[schedule_thu]
-time_range_00_01 = "在房间里安睡"
-time_range_01_02 = "在房间里安睡"
-time_range_02_03 = "在房间里安睡"
-time_range_03_04 = "在房间里安睡"
-time_range_04_05 = "在房间里安睡"
-time_range_05_06 = "在房间里安睡"
-time_range_06_07 = "在房间里安睡"
-time_range_07_08 = "睡眼惺忪地赖床，闹钟按掉了第三个"
-time_range_08_09 = "洗漱完慢悠悠地吃早餐"
-time_range_09_10 = "窝在房间里做自己的事"
-time_range_10_11 = "窝在房间里做自己的事"
-time_range_11_12 = "窝在房间里做自己的事"
-time_range_12_13 = "解决午饭"
-time_range_13_14 = "饭后小憩"
-time_range_14_15 = "出门闲逛 / 在家消磨午后"
-time_range_15_16 = "出门闲逛 / 在家消磨午后"
-time_range_16_17 = "出门闲逛 / 在家消磨午后"
-time_range_17_18 = "出门闲逛 / 在家消磨午后"
-time_range_18_19 = "吃晚饭"
-time_range_19_20 = "洗漱后窝在沙发/床上放松"
-time_range_20_21 = "洗漱后窝在沙发/床上放松"
-time_range_21_22 = "洗漱后窝在沙发/床上放松"
-time_range_22_23 = "处理睡前的琐事"
-time_range_23_00 = "熄灯前再刷一会儿手机"
+# 当日概要滚动压缩用的模型，输入永远只有三百来字，可以用便宜的。
+digest_model = ""
 
-[schedule_fri]
-time_range_00_01 = "在房间里安睡"
-time_range_01_02 = "在房间里安睡"
-time_range_02_03 = "在房间里安睡"
-time_range_03_04 = "在房间里安睡"
-time_range_04_05 = "在房间里安睡"
-time_range_05_06 = "在房间里安睡"
-time_range_06_07 = "在房间里安睡"
-time_range_07_08 = "睡眼惺忪地赖床，闹钟按掉了第三个"
-time_range_08_09 = "洗漱完慢悠悠地吃早餐"
-time_range_09_10 = "窝在房间里做自己的事"
-time_range_10_11 = "窝在房间里做自己的事"
-time_range_11_12 = "窝在房间里做自己的事"
-time_range_12_13 = "解决午饭"
-time_range_13_14 = "饭后小憩"
-time_range_14_15 = "出门闲逛 / 在家消磨午后"
-time_range_15_16 = "出门闲逛 / 在家消磨午后"
-time_range_16_17 = "出门闲逛 / 在家消磨午后"
-time_range_17_18 = "出门闲逛 / 在家消磨午后"
-time_range_18_19 = "吃晚饭"
-time_range_19_20 = "洗漱后窝在沙发/床上放松"
-time_range_20_21 = "洗漱后窝在沙发/床上放松"
-time_range_21_22 = "洗漱后窝在沙发/床上放松"
-time_range_22_23 = "处理睡前的琐事"
-time_range_23_00 = "熄灯前再刷一会儿手机"
+temperature = 0.9
 
-[schedule_sat]
-time_range_00_01 = "在房间里安睡"
-time_range_01_02 = "在房间里安睡"
-time_range_02_03 = "在房间里安睡"
-time_range_03_04 = "在房间里安睡"
-time_range_04_05 = "在房间里安睡"
-time_range_05_06 = "在房间里安睡"
-time_range_06_07 = "在房间里安睡"
-time_range_07_08 = "睡眼惺忪地赖床，闹钟按掉了第三个"
-time_range_08_09 = "洗漱完慢悠悠地吃早餐"
-time_range_09_10 = "窝在房间里做自己的事"
-time_range_10_11 = "窝在房间里做自己的事"
-time_range_11_12 = "窝在房间里做自己的事"
-time_range_12_13 = "解决午饭"
-time_range_13_14 = "饭后小憩"
-time_range_14_15 = "出门闲逛 / 在家消磨午后"
-time_range_15_16 = "出门闲逛 / 在家消磨午后"
-time_range_16_17 = "出门闲逛 / 在家消磨午后"
-time_range_17_18 = "出门闲逛 / 在家消磨午后"
-time_range_18_19 = "吃晚饭"
-time_range_19_20 = "洗漱后窝在沙发/床上放松"
-time_range_20_21 = "洗漱后窝在沙发/床上放松"
-time_range_21_22 = "洗漱后窝在沙发/床上放松"
-time_range_22_23 = "处理睡前的琐事"
-time_range_23_00 = "熄灯前再刷一会儿手机"
+# 每周安排几次「不顺心的事」。排期只决定何时、多重，具体发生什么由生成时现编。
+negative_event_quota = 2
 
-[schedule_sun]
-time_range_00_01 = "在房间里安睡"
-time_range_01_02 = "在房间里安睡"
-time_range_02_03 = "在房间里安睡"
-time_range_03_04 = "在房间里安睡"
-time_range_04_05 = "在房间里安睡"
-time_range_05_06 = "在房间里安睡"
-time_range_06_07 = "在房间里安睡"
-time_range_07_08 = "睡眼惺忪地赖床，闹钟按掉了第三个"
-time_range_08_09 = "洗漱完慢悠悠地吃早餐"
-time_range_09_10 = "窝在房间里做自己的事"
-time_range_10_11 = "窝在房间里做自己的事"
-time_range_11_12 = "窝在房间里做自己的事"
-time_range_12_13 = "解决午饭"
-time_range_13_14 = "饭后小憩"
-time_range_14_15 = "出门闲逛 / 在家消磨午后"
-time_range_15_16 = "出门闲逛 / 在家消磨午后"
-time_range_16_17 = "出门闲逛 / 在家消磨午后"
-time_range_17_18 = "出门闲逛 / 在家消磨午后"
-time_range_18_19 = "吃晚饭"
-time_range_19_20 = "洗漱后窝在沙发/床上放松"
-time_range_20_21 = "洗漱后窝在沙发/床上放松"
-time_range_21_22 = "洗漱后窝在沙发/床上放松"
-time_range_22_23 = "处理睡前的琐事"
-time_range_23_00 = "熄灯前再刷一会儿手机"
+# 这几次里判为「中等」强度的比例，其余为「轻微」。
+# 中等会压着接下来两三个时段的情绪；没有「重大」这一档。
+negative_medium_ratio = 0.3
+
+[observability]
+# 每次 LLM 调用是否落盘到 WebUI 推理过程页。
+# 主程序的预览开关只管主程序自己写的记录，管不到插件，所以这里必须自带一个。
+prompt_preview_enabled = true
+
+# 每个目录保留多少条记录。一天约写 20 条（10 次生成 + 10 次概要压缩），
+# 256 条大约覆盖十三天，跟主程序的 maisaka_prompt_preview_limit 默认值对齐。
+prompt_preview_limit = 256
+
+# 批次结果报到哪个群；留空则不报告。成功和失败都报——静默成功等于没有监控。
+report_group_id = "181089267"
+report_platform = "qq"
+
+# 天气查询用的地名，英文/罗马字
+weather_location = "Tokyo"
