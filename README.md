@@ -54,10 +54,55 @@ kind    = "工作"                # 唯一一个机器要读的字段
 
 > TOML 的裸键不允许非 ASCII，中文 `kind` 必须写成 `[fallback."睡眠"]`。
 
-### 生成结果 `data/schedule_cache.json`（LLM 写，可随时删）
+### 生成结果 `data/schedule.db`（SQLite，永久归档）
 
 每段五个字段：`story` / `manner` / `mood` / `busy` / `suggest_length`。
-删掉缓存就退回纯手写的底稿状态，任何时候都能回滚——**LLM 绝不回写骨架**。
+删掉数据库就退回纯手写的底稿状态，任何时候都能回滚——**LLM 绝不回写骨架**。
+
+运行期的热路径（每轮 planner / replyer 注入）读的是内存副本（最近 3 天），
+数据库只在批次结束时写、启动时读一次，所以用同步 `sqlite3` 是安全的。
+
+早期版本用的是 `data/schedule_cache.json`，只留 3 天。升级时会自动导入并把原文件
+改名为 `.json.migrated`（不是删除，万一骨架换过季对不上还能回查）。
+
+#### 表结构
+
+`days` —— 一天一行，批次元信息
+
+| 列 | 说明 |
+|---|---|
+| `date` (PK) | `YYYY-MM-DD` |
+| `weekday` | 0=周一 … 6=周日 |
+| `holiday` / `weather` | 生成时的节假日名与天气预报 |
+| `day_digest` | 当天结束时的滚动概要 |
+| `batch_reason` | 每日批次 / 冷启动补跑 / 手动触发 / 单段重生成 |
+| `batch_at` / `batch_elapsed` | 批次结束时刻（JST）与耗时（秒） |
+| `ok_count` / `total_count` | 生成成功段数 / 总段数 |
+| `aborted` | 非空表示整批中止，内容即原因 |
+
+`segments` —— 一段一行，主键 `(date, slot)`
+
+| 列 | 说明 |
+|---|---|
+| `date` / `slot` / `seq` | 日期、`HH:MM-HH:MM`、当天第几段 |
+| `title` `place` `outfit` `company` `kind` | **骨架快照**——骨架会随换季整份替换，所以存当时的值，别指望回看时还能反查 |
+| `story` `manner` `mood` `busy` `suggest_length` | LLM 生成的五个字段 |
+| `generated` | 0 表示这一段用的是底稿 |
+| `negative_level` | 轻微 / 中等 / 空 |
+| `model` / `generated_at` | 生成用的模型任务名与时刻 |
+
+#### 给前端读
+
+库开了 WAL，bot 写入时可以并发只读。**请用只读方式打开**，别持有写锁：
+
+```python
+con = sqlite3.connect("file:.../data/schedule.db?mode=ro", uri=True)
+con.row_factory = sqlite3.Row
+rows = con.execute(
+    "SELECT slot, title, story, mood FROM segments WHERE date = ? ORDER BY seq",
+    ("2026-08-18",),
+).fetchall()
+```
 
 ## 运行
 
@@ -87,6 +132,7 @@ kind    = "工作"                # 唯一一个机器要读的字段
 | `/status` | 当前时段的五个字段、时段边界 |
 | `/status prompt` | 本时段实际注入 planner / replyer 的**原文** |
 | `/status day` | 今天各段的骨架 + 生成状态 + 负面事件标记 |
+| `/status db` | 归档库覆盖范围、段数、文件大小 |
 | `/status regen` | 强制重生成当前时段，新旧并排 |
 | `/status next` | 提前生成下一段但不切换 |
 | `/status neg` | 本周负面事件排期 |

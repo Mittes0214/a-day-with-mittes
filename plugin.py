@@ -90,7 +90,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
         self._store = ScheduleStore(self._plugin_dir, data_dir)
         self._store.load_skeleton()
-        self._store.load_cache()
+        migrated = self._store.open_db()
+        if migrated:
+            _logger.info("[加载] 已从旧 JSON 缓存迁入 %d 段到归档库", migrated)
 
         self._negative = NegativeScheduler(
             data_dir,
@@ -116,6 +118,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         _logger.info("[加载] 骨架就绪，批量生成守护已启动")
 
     async def on_unload(self) -> None:
+        if self._store is not None:
+            self._store.close_db()
         if self._batch_task is not None:
             self._batch_task.cancel()
             self._batch_task = None
@@ -272,10 +276,22 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                     digest = await generator.update_digest(digest, outcome.state.story)
 
             day_cache.day_digest = digest
-            store.save_cache()
-
             elapsed = (now_jst() - started).total_seconds()
             generated = store.day_generated_count(day)
+            store.flush(
+                day,
+                model=str(await self._get_config("generation.model", "replyer")),
+                negative_level_of=lambda slot: negative.level_of(day, slot),
+                holiday=holiday,
+                weather=weather,
+                batch_reason=reason,
+                batch_at=now_jst().isoformat(),
+                batch_elapsed=elapsed,
+                ok_count=generated,
+                total_count=len(segments),
+                aborted=aborted,
+            )
+
             summary = {
                 "day": day,
                 "total": len(segments),
@@ -626,6 +642,30 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
 
     @Command(
+        "status_db",
+        description="查看日程归档库的规模（仅管理员）",
+        pattern=r"^/status\s+db$",
+        permission="operator",
+    )
+    async def cmd_status_db(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
+        del kwargs
+        store = self._require_store()
+        first, last = store.db.date_range()
+        path = self._plugin_dir / "data" / "schedule.db"
+        size = path.stat().st_size / 1024 if path.exists() else 0
+        lines = [
+            "【日程归档库】",
+            f"路径：{path}",
+            f"覆盖：{first or '—'} ~ {last or '—'}",
+            f"段数：{store.db.count_segments()}　文件：{size:.0f} KB",
+            "",
+            "外部只读："
+            'sqlite3.connect("file:schedule.db?mode=ro", uri=True)',
+        ]
+        await self.ctx.send.text("\n".join(lines), stream_id)
+        return True, "已输出归档库信息", True
+
+    @Command(
         "status_neg",
         description="查看本周负面事件排期（仅管理员）",
         pattern=r"^/status\s+neg$",
@@ -787,7 +827,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
         outcome.state.generated_at = now_jst().isoformat()
         store.ensure_day_cache(day).segments[segment.slot] = outcome.state
-        store.save_cache()
+        store.flush(
+            day,
+            model=str(await self._get_config("generation.model", "replyer")),
+            negative_level_of=lambda slot: negative.level_of(day, slot),
+            batch_reason="单段重生成",
+            batch_at=now_jst().isoformat(),
+        )
         return outcome.state
 
     def _require_store(self) -> ScheduleStore:

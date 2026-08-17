@@ -1,12 +1,12 @@
-"""骨架读取、当日生成结果缓存、当前时段查询。
+"""骨架读取、生成结果的内存副本、当前时段查询。
 
 数据分三层（见设计文档 5.4）：
 
 1. ``schedule_skeleton.toml`` 的手写骨架和底稿——纳入版本库，LLM 绝不回写。
-2. ``data/schedule_cache.json`` 的当日生成结果——每天 12:00 批量写入。
+2. ``data/schedule.db`` 的生成结果——每天 12:00 批量写入，**永久归档**。
 3. 运行时更新——本期不做。
 
-运行期基本只读缓存：按当前时刻查表取出那一段，取不到就用底稿顶上，
+运行期只读内存副本：按当前时刻查表取出那一段，取不到就用底稿顶上，
 任何情况下都不能因为日程没生成好而阻塞回复。
 """
 
@@ -18,6 +18,8 @@ from zoneinfo import ZoneInfo
 
 import json
 import tomllib
+
+from .schedule_db import ScheduleDB
 
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -37,7 +39,8 @@ WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
 
 SUGGEST_LENGTHS = ("简短表达", "正常回复", "长回复")
 
-# 缓存里最多保留几天（今天 + 明天，再多留一天做缓冲）
+# 内存里最多保留几天（今天 + 明天，再多留一天做缓冲）。
+# 这只影响热路径的内存副本，归档库里是全量永久保留的。
 _MAX_CACHED_DAYS = 3
 
 
@@ -137,12 +140,18 @@ class DayCache:
 
 
 class ScheduleStore:
-    """骨架 + 缓存的读写入口。"""
+    """骨架 + 生成结果的读写入口。
+
+    生成结果的权威存储是 ``data/schedule.db``（永久归档，见 ``schedule_db``），
+    这里只保留最近几天的内存副本给运行期热路径用——每轮 planner / replyer 注入
+    都要取当前状态，走内存比走 SQL 稳妥。
+    """
 
     def __init__(self, plugin_dir: Path, data_dir: Path) -> None:
         self._skeleton_path = plugin_dir / "schedule_skeleton.toml"
-        self._cache_path = data_dir / "schedule_cache.json"
+        self._legacy_cache_path = data_dir / "schedule_cache.json"
         self._data_dir = data_dir
+        self._db = ScheduleDB(data_dir / "schedule.db")
         self._days: dict[str, list[Segment]] = {}
         self._fallback: dict[str, SegmentState] = {}
         self._cache: dict[str, DayCache] = {}
@@ -247,30 +256,65 @@ class ScheduleStore:
         work = sum(item.duration_hours for item in segments[start:index] if item.kind == "工作")
         return round(awake, 1), round(work, 1)
 
-    # ── 缓存 ──
-    def load_cache(self) -> None:
-        """读取缓存文件；文件不存在时视作空缓存。"""
-        if not self._cache_path.exists():
-            self._cache = {}
-            return
-        with self._cache_path.open("r", encoding="utf-8") as handle:
-            raw = json.load(handle)
-        self._cache = {
-            str(key): DayCache.from_dict(value)
-            for key, value in raw.items()
-            if isinstance(value, dict)
-        }
+    # ── 生成结果 ──
+    @property
+    def db(self) -> ScheduleDB:
+        return self._db
 
-    def save_cache(self) -> None:
-        """写回缓存，只保留最近几天。"""
-        self._data_dir.mkdir(parents=True, exist_ok=True)
+    def open_db(self) -> int:
+        """连库、迁移旧 JSON 缓存、把最近几天读进内存。
+
+        Returns:
+            int: 本次从旧 JSON 迁移进来的段数，没有旧文件时为 0。
+        """
+        self._db.connect()
+
+        migrated = 0
+        if self._legacy_cache_path.exists():
+            with self._legacy_cache_path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            migrated = self._db.import_legacy_cache(payload, self.segments_of)
+            # 迁完改名而不是删掉：万一骨架换过季对不上，原文件还在手里
+            self._legacy_cache_path.replace(self._legacy_cache_path.with_suffix(".json.migrated"))
+
+        self._cache = {
+            day: DayCache.from_dict(data) for day, data in self._db.load_days(_MAX_CACHED_DAYS).items()
+        }
+        return migrated
+
+    def close_db(self) -> None:
+        self._db.close()
+
+    def flush(self, day: date, *, model: str = "", negative_level_of: Any = None, **day_fields: Any) -> None:
+        """把某一天的内存状态写进归档库，并裁剪内存副本。
+
+        Args:
+            day: 要落库的日期。
+            model: 生成用的模型任务名，写进段记录备查。
+            negative_level_of: ``(slot) -> str``，取该段的负面事件强度。
+            **day_fields: 批次元信息，透传给 ``ScheduleDB.upsert_day``。
+        """
+        cached = self._cache.get(day.isoformat())
+        if cached is None:
+            return
+
+        self._db.upsert_day(day, day_digest=cached.day_digest, **day_fields)
+        for seq, segment in enumerate(self.segments_of(day)):
+            state = cached.segments.get(segment.slot)
+            if state is None:
+                continue
+            self._db.upsert_segment(
+                day,
+                seq,
+                segment,
+                state,
+                negative_level=negative_level_of(segment.slot) if negative_level_of else "",
+                model=model,
+            )
+
+        # 内存只留最近几天；历史全在库里，需要时查库
         for key in sorted(self._cache)[:-_MAX_CACHED_DAYS]:
             del self._cache[key]
-        payload = {key: value.to_dict() for key, value in self._cache.items()}
-        tmp_path = self._cache_path.with_suffix(".json.tmp")
-        with tmp_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-        tmp_path.replace(self._cache_path)
 
     def day_cache(self, day: date) -> DayCache | None:
         return self._cache.get(day.isoformat())
