@@ -30,6 +30,22 @@ model = "replyer"
 # 当日概要滚动压缩用的模型，输入永远只有三百来字，用便宜的就行。
 digest_model = "utils"
 
+# 话题提炼用的模型（第二轮）。和 digest 分开配：压缩只要能概括，
+# 提炼要能看出哪件事值得讲、并把前因后果说清楚，对模型的要求更高。
+#
+# 这里填的是**任务名**（model_task_config 的键），不是模型名——
+# 主程序的 resolve_task_name 只认任务名。本部署里 expression_use 的
+# model_list 就只有 glm-5.2，所以指向它等于指定了 glm-5.2。
+topic_model = "expression_use"
+
+# 话题提炼用的模型（第二轮）。和 digest 分开配：压缩只要能概括，
+# 提炼要能看出哪件事值得讲、并把前因后果说清楚，对模型的要求更高。
+#
+# 注意这里填的是**任务名**（model_task_config 的键），不是模型名——
+# 主程序的 resolve_task_name 只认任务。当前部署里 expression_use 的
+# model_list 就只有 glm-5.2，所以指向它等于指定了 glm-5.2。
+topic_model = "expression_use"
+
 temperature = 0.9
 
 # 单次 LLM 调用的 RPC 超时（毫秒）。

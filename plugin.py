@@ -108,6 +108,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             ),
             model=str(await self._get_config("generation.model", "replyer")),
             digest_model=str(await self._get_config("generation.digest_model", "utils")),
+            topic_model=str(await self._get_config("generation.topic_model", "utils")),
             temperature=float(await self._get_config("generation.temperature", 0.9)),
             timeout_ms=int(await self._get_config("generation.request_timeout_ms", 180000)),
         )

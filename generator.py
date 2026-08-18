@@ -150,6 +150,7 @@ class SegmentGenerator:
         preview: Any,
         model: str,
         digest_model: str,
+        topic_model: str,
         temperature: float,
         timeout_ms: int,
     ) -> None:
@@ -158,6 +159,7 @@ class SegmentGenerator:
         self._preview = preview
         self._model = model
         self._digest_model = digest_model
+        self._topic_model = topic_model
         self._temperature = temperature
         self._timeout_ms = timeout_ms
 
@@ -376,6 +378,9 @@ class SegmentGenerator:
         事实层有个先天缺陷：几乎没人会主动问「你在干嘛」，工具不被调用，story 就用不上。
         所以给她一个主动出口——一句今天遇到的、值得说给人听的事（设计文档 5.10）。
 
+        用的模型和 day_digest 压缩分开配：压缩只要能概括，提炼要能看出哪件事值得讲、
+        并把前因后果说清楚，对模型的要求实际上更高。
+
         不并进主生成，因为两件事性质不同（创作 vs 抽取），而且抽取用便宜模型就够。
         一次看到全天，还能避免十个话题都是同一类。
 
@@ -395,7 +400,7 @@ class SegmentGenerator:
             return 0, "没有可提炼的时段"
 
         prompt = self._build_topic_prompt(day, candidates, states)
-        result = await self._call_llm(prompt, model=self._digest_model, temperature=0.4)
+        result = await self._call_llm(prompt, model=self._topic_model, temperature=0.4)
         self._record_preview(
             request_kind="schedule_topics",
             prompt=prompt,
