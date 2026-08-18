@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.1.1
+版本：3.1.2
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """

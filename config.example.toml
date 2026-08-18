@@ -5,7 +5,7 @@
 
 [plugin]
 enabled = true
-config_version = "3.1.1"
+config_version = "3.1.2"
 
 [components]
 # 关掉的 Tool 完全不会出现在 LLM 的 tool_definitions 里；改动需要重启 MaiBot 才生效
