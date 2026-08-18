@@ -218,17 +218,35 @@ async function boot() {
 }
 
 async function route() {
-  const day = location.hash.slice(1) || document.querySelector('#days a').dataset.d;
+  const known = [...document.querySelectorAll('#days a')].map(a => a.dataset.d);
+  const today = jstNow().date;
+  const day = location.hash.slice(1)
+    || (known.includes(today) ? today : known[0]);
   document.querySelectorAll('#days a').forEach(a => a.classList.toggle('on', a.dataset.d === day));
   const data = await (await fetch('/api/day/' + day)).json();
   if (data.error) { document.getElementById('main').innerHTML = `<p class="empty">${esc(data.error)}</p>`; return; }
   render(day, data);
+  focusNow();
+}
+
+// 打开页面就停在「现在」这一段上。她的日程一天十段、拉得很长，
+// 22:30 那段要滚到最底下才看得见。
+function focusNow() {
+  const now = document.querySelector('.seg.now');
+  if (now) {
+    // instant 而不是 smooth：页面刚渲染完就滚，平滑动画反而像页面在抖
+    now.scrollIntoView({ block: 'center', behavior: 'instant' });
+  } else {
+    window.scrollTo(0, 0);
+  }
 }
 
 function render(day, data) {
   const m = data.meta;
   const d = new Date(day + 'T00:00:00');
-  const nowSlot = (new Date().toISOString().slice(0,10) === day) ? nowMinutes() : -1;
+  const jst = jstNow();
+  const isToday = jst.date === day;
+  const nowSlot = isToday ? jst.minutes : -1;
 
   const meta = [
     m.weather && esc(m.weather),
@@ -236,6 +254,7 @@ function render(day, data) {
     `${m.ok_count}/${m.total_count} 段生成`,
     m.batch_reason && esc(m.batch_reason),
     m.batch_elapsed ? `耗时 ${Math.round(m.batch_elapsed)}s` : '',
+    isToday ? `现在 ${jst.clock} JST` : '',
   ].filter(Boolean).join('　·　');
 
   const segs = data.segments.map(s => {
@@ -288,7 +307,22 @@ function topicBlock(s, shares) {
   </div>`;
 }
 
-function nowMinutes() { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); }
+// 「现在」一律按 Mittes 那边的时间（JST）算，不看打开页面的人在哪个时区。
+// 原来的写法把两个时区混着用：日期取 toISOString（UTC）、时刻取 getHours（浏览器本地），
+// 结果连在这台 JST 机器上都是错的——00:00~09:00 JST 之间 UTC 还停在前一天。
+function jstNow() {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date()).reduce((o, x) => (o[x.type] = x.value, o), {});
+  return {
+    date: `${p.year}-${p.month}-${p.day}`,
+    // 午夜在某些引擎下会格式化成 24，取模压回 0
+    minutes: (+p.hour % 24) * 60 + +p.minute,
+    clock: `${p.hour % 24 < 10 ? '0' : ''}${+p.hour % 24}:${p.minute}`,
+  };
+}
 boot();
 </script>
 </body>
