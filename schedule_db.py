@@ -91,6 +91,17 @@ CREATE INDEX IF NOT EXISTS idx_shares_date ON shares(date);
 """
 
 
+# 各表**新增过**的列：列名 → 类型与默认值。
+# 只需要列出可能在旧库里缺席的列；建库时 _SCHEMA 已经带上它们了，
+# 这份表是给"库比代码旧"的情况用的。
+_EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
+    "segments": {
+        "topic": "TEXT NOT NULL DEFAULT ''",
+        "topic_keys": "TEXT NOT NULL DEFAULT '[]'",
+    },
+}
+
+
 class ScheduleDB:
     """``data/schedule.db`` 的读写封装。"""
 
@@ -99,7 +110,7 @@ class ScheduleDB:
         self._conn: sqlite3.Connection | None = None
 
     def connect(self) -> None:
-        """建库建表。WAL 模式让外部前端可以在 bot 写入时并发只读。"""
+        """建库建表并补齐缺失的列。WAL 模式让外部前端可以在 bot 写入时并发只读。"""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self._path, isolation_level=None)
         conn.row_factory = sqlite3.Row
@@ -107,6 +118,23 @@ class ScheduleDB:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript(_SCHEMA)
         self._conn = conn
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """给已存在的表补上新增的列。
+
+        ``CREATE TABLE IF NOT EXISTS`` 对已存在的表是**完全不动**的——加了新列也不会生效，
+        于是读的时候 ``row["新列"]`` 直接抛 IndexError，插件 on_load 失败、
+        整个日程功能静默消失。这个坑在 v3.0 → v3.1 加 topic 列时实际撞到过。
+
+        归档库是永久保留的，不能靠"删库重建"过版本，所以这里做最小迁移：
+        比对声明与实际列名，缺什么补什么。SQLite 的 ADD COLUMN 是常数时间的。
+        """
+        for table, columns in _EXPECTED_COLUMNS.items():
+            existing = {row[1] for row in self._db.execute(f"PRAGMA table_info({table})")}
+            for name, ddl in columns.items():
+                if name not in existing:
+                    self._db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
     def close(self) -> None:
         if self._conn is not None:
