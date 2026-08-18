@@ -805,9 +805,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         permission="operator",
     )
     async def cmd_status_topics(
-        self, stream_id: str = "", day: str = "", **kwargs: Any
+        self, stream_id: str = "", **kwargs: Any
     ) -> tuple[bool, str, bool]:
-        del kwargs
+        day = self._group(kwargs, "day")
         target = date.fromisoformat(day) if day else now_jst().date()
         await self.ctx.send.text(f"开始重跑 {target.isoformat()} 的话题提炼……", stream_id)
         self._spawn(self._topics_text(target), stream_id)
@@ -911,12 +911,11 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def cmd_status_neg_add(
         self,
         stream_id: str = "",
-        day: str = "",
-        slot: str = "",
-        level: str = "",
         **kwargs: Any,
     ) -> tuple[bool, str, bool]:
-        del kwargs
+        day = self._group(kwargs, "day")
+        slot = self._group(kwargs, "slot")
+        level = self._group(kwargs, "level")
         store = self._require_store()
         negative = self._require_negative()
         target_day = date.fromisoformat(day)
@@ -942,10 +941,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def cmd_status_batch(
         self,
         stream_id: str = "",
-        day: str = "",
         **kwargs: Any,
     ) -> tuple[bool, str, bool]:
-        del kwargs
+        day = self._group(kwargs, "day")
         today = now_jst().date()
         if day == "today":
             target = today
@@ -971,6 +969,21 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         return f"{day.isoformat()} 批次完成：{summary['ok']}/{summary['total']} 段。"
 
     # ── 内部工具 ──
+
+    @staticmethod
+    def _group(kwargs: dict[str, Any], name: str) -> str:
+        """取正则命名捕获组。
+
+        **运行时不会把命名组拆成同名形参**，而是整包塞进一个 ``matched_groups``
+        字典里（``component_query.py`` 组装 invoke_args，``runner_main`` 再
+        ``**invoke.args`` 展开）。所以写成 ``async def cmd(self, day: str = "")``
+        永远只拿得到默认值——这是静默失效：命令照常执行，只是参数当没给。
+        内置的 plugin_management 就是按 ``matched_groups`` 读的，照它来。
+        """
+        groups = kwargs.get("matched_groups")
+        if not isinstance(groups, dict):
+            return ""
+        return str(groups.get(name) or "").strip()
     def _spawn(self, coro: Any, stream_id: str) -> None:
         """把耗时的活儿丢到后台，命令本身立刻返回。
 
