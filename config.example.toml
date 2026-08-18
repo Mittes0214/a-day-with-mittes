@@ -17,41 +17,31 @@ enable_get_weather = true
 # 00:00~12:00 那几段早就过去了。
 run_at = "12:00"
 
-# 时段生成用的模型任务名，取值是 model_config.toml 的 [model_task_config.*] 键
-# （replyer / planner / utils / memory / ...）。
+# 三处 LLM 调用**直接指定模型名**（`model_config.toml` 的 `[[models]].name`），
+# 不再填任务名。
 #
-# **不要留空**：留空会走主程序的「第一个可用任务」兜底，那是 dict 的迭代顺序，
-# 拿到什么全看配置文件怎么写，实测会 404。
-#
-# story 要写出有起承的小事件、mood 要写出「小鹿乱撞」这种质地，
-# 小模型会稳定退化成「翻着漫画，觉得很开心」，prompt 规则再细也救不回来。
-model = "replyer"
+# 为什么：任务名只决定候选池，不决定具体模型。`replyer` 的 selection_strategy
+# 是 random，四个模型随机挑，sonnet 5 只有 1/4 的概率——而整套 prompt 的判据
+# （故事性、mood 质地、禁名词）是照着 sonnet 5 的水平定的，随机挑模型会让每天
+# 的质量方差压过 prompt 本身的影响。
+model = "claude-sonnet-5"
 
-# 当日概要滚动压缩用的模型，输入永远只有三百来字，用便宜的就行。
-digest_model = "utils"
+# 当日概要滚动压缩，输入永远只有三百来字，用便宜的就行。
+digest_model = "glm-5.2"
 
-# 话题提炼用的模型（第二轮）。和 digest 分开配：压缩只要能概括，
-# 提炼要能看出哪件事值得讲、并把前因后果说清楚，对模型的要求更高。
-#
-# 这里填的是**任务名**（model_task_config 的键），不是模型名——
-# 主程序的 resolve_task_name 只认任务名。utils 的 model_list 首位是
-# glm-5.2 且 sequential，所以指向 utils 就是走 glm-5.2。
-topic_model = "utils"
+# 话题提炼（第二轮）。和 digest 分开配：压缩只要能概括，提炼要能看出哪件事
+# 值得讲、并把前因后果说清楚，对模型的要求更高。
+topic_model = "glm-5.2"
 
-# 话题提炼用的模型（第二轮）。和 digest 分开配：压缩只要能概括，
-# 提炼要能看出哪件事值得讲、并把前因后果说清楚，对模型的要求更高。
+# 基座任务名：模型、温度、max_tokens 全由上面几个键覆盖，这里真正借用的是它的
+# hard_timeout 和统计管线。
 #
-# 这里填的是**任务名**（model_task_config 的键），不是模型名——
-# 主程序的 resolve_task_name 只认任务名。utils 的 model_list 首位是
-# glm-5.2 且 sequential，所以指向 utils 就是走 glm-5.2。
-topic_model = "utils"
+# **选 memory 是为了超时**：它的 hard_timeout 是 240 秒，而 replyer 只有 60 秒、
+# utils 只有 20 秒。实测有过 36.9 秒的单段调用，话题提炼更是一次吞十段 story
+# 再吐十条 topic，20 秒根本不够。
+base_task = "memory"
 
 temperature = 0.9
-
-# 单次 LLM 调用的 RPC 超时（毫秒）。
-# 主程序 cap.call 的默认超时只有 30 秒，而 replyer 那档模型动辄 20~40 秒，
-# 实测有过 36.9 秒的调用直接抛 RPCError 把整条批次链路打死。
-request_timeout_ms = 180000
 
 # 每周安排几次「不顺心的事」。排期只决定何时、多重，具体发生什么由生成时现编。
 negative_event_quota = 2

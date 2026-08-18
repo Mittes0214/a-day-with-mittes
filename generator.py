@@ -38,6 +38,12 @@ _logger = logging.getLogger("a_day_with_mittes.generator")
 PREVIEW_STAGE = "a_day_with_mittes"
 PREVIEW_SESSION = "schedule_batch"
 
+# 单次调用的输出上限。给得很宽，因为**推理和正文共用这个预算**：
+# glm-5.2 跑全天话题提炼时把 4000 token 全烧在 reasoning 上，一个字正文都没吐出来，
+# 而 status 仍是 completed，主程序不当失败。正文本身最多一两千 token，
+# 上限给高不额外花钱（按实际用量计费），但能挡住这类静默截断。
+_MAX_TOKENS = 32000
+
 # 人设固定文本，来自 config/bot_config.toml 的 personality 首段，
 # 只做了一处改写：第二人称改第三人称。
 #
@@ -136,8 +142,8 @@ class SegmentGenerator:
         model: str,
         digest_model: str,
         topic_model: str,
+        base_task: str,
         temperature: float,
-        timeout_ms: int,
     ) -> None:
         self._ctx = ctx
         self._store = store
@@ -145,35 +151,62 @@ class SegmentGenerator:
         self._model = model
         self._digest_model = digest_model
         self._topic_model = topic_model
+        self._base_task = base_task
         self._temperature = temperature
-        self._timeout_ms = timeout_ms
 
     async def _call_llm(self, prompt: str, *, model: str, temperature: float) -> dict[str, Any]:
         """调一次 LLM，把异常收敛成 ``success=False`` 的返回。
 
-        两件事必须在这里处理，否则整条批次链路会被打死：
+        **不走 ``llm.generate`` 那条 capability**，直接用主程序的 ``LLMServiceClient``。
+        原因是 capability 只收**任务名**（``core.py`` 里 ``resolve_task_name(args["model"])``），
+        而任务名只决定候选池：``replyer`` 的 ``selection_strategy`` 是 ``random``，
+        四个模型随机挑，sonnet 5 只有 1/4 的概率——整套 prompt 的判据是照着 sonnet 5
+        的水平定的，随机挑模型会让每天的质量方差压过 prompt 本身的影响。
+        ``LLMServiceClient`` 这一层收 ``model_name``，能钉死具体模型。
+        写法参照同部署的 ``03_RssImageFeederPlugin/_bridge.py``。
 
-        1. **RPC 超时**。``cap.call`` 的默认超时是 30 秒，而 replyer 那档模型
-           动辄 20~40 秒，实测 36.9 秒那次直接抛了 ``RPCError``。
-           SDK 的 ``ctx.llm.generate`` 不透传 ``timeout_ms``，所以这里直接调
-           ``call_capability``——它是 PluginContext 的公开方法，不算伸手进主程序。
-        2. **异常会一路冒泡**。``llm.generate`` 不只是返回 ``success=False``，
-           传输层出问题时是直接 raise 的；不收在这里，异常会掀掉 run_batch，
-           再掀掉守护协程，之后每日批次就再也不会跑了。
+        ``self._base_task`` 只当**基座**：模型、温度、max_tokens 全部由这里覆盖，
+        真正借用的是它的 ``hard_timeout`` 和统计管线。选 ``memory``（240 秒）是因为
+        ``replyer`` 只有 60 秒、``utils`` 只有 20 秒，而实测有过 36.9 秒的单段调用，
+        话题提炼更是一次吞十段 story。
+
+        异常必须收在这里：主程序这条链路同样是直接 raise 的，不收住会掀掉 run_batch，
+        再掀掉守护协程，之后每日批次就再也不会跑了。
         """
+        # 延迟导入：插件加载早于主程序部分模块，放模块顶层有循环导入风险。
+        # 不做 try/except 兜底——导入失败属于主程序 API 变更，必须立刻暴露。
+        from src.common.data_models.llm_service_data_models import LLMGenerationOptions
+        from src.services.llm_service import LLMServiceClient
+
         try:
-            result = await self._ctx.call_capability(
-                "llm.generate",
-                timeout_ms=self._timeout_ms,
-                prompt=prompt,
-                model=model,
-                temperature=temperature,
+            client = LLMServiceClient(
+                task_name=self._base_task,
+                request_type="plugin.a_day_with_mittes.schedule",
+            )
+            result = await client.generate_response(
+                prompt,
+                options=LLMGenerationOptions(
+                    model_name=model,
+                    temperature=temperature,
+                    max_tokens=_MAX_TOKENS,
+                ),
             )
         except Exception as exc:
             return {"success": False, "error": f"{type(exc).__name__}: {exc}", "response": ""}
-        if isinstance(result, dict):
-            return result
-        return {"success": False, "error": f"返回值不是字典：{type(result).__name__}", "response": ""}
+
+        text = str(getattr(result, "response", "") or "")
+        if not text.strip():
+            # 空响应最常见的成因不是模型罢工，而是**推理把 max_tokens 吃光了**：
+            # 推理模型的 reasoning 和正文共用这一个预算，想得太久就一个字正文都吐不出来，
+            # 而 status 仍是 completed，主程序不当失败。实测 glm-5.2 跑全天话题提炼时
+            # 4000 token 全烧在 reasoning 上。这两种情况要分开报，否则排查会走偏。
+            used = int(getattr(result, "completion_tokens", 0) or 0)
+            if used >= _MAX_TOKENS:
+                reason = f"输出被 max_tokens 截断：{used}/{_MAX_TOKENS} token 全部用于推理，未产出正文"
+            else:
+                reason = f"模型返回空响应（completion_tokens={used}）"
+            return {"success": False, "error": reason, "response": "", "model": model}
+        return {"success": True, "response": text, "model": getattr(result, "model_name", model)}
 
     # ── 单段生成 ──
     async def generate_segment(

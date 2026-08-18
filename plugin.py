@@ -106,11 +106,11 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 enabled=bool(await self._get_config("observability.prompt_preview_enabled", True)),
                 max_records=int(await self._get_config("observability.prompt_preview_limit", 256)),
             ),
-            model=str(await self._get_config("generation.model", "replyer")),
-            digest_model=str(await self._get_config("generation.digest_model", "utils")),
-            topic_model=str(await self._get_config("generation.topic_model", "utils")),
+            model=str(await self._get_config("generation.model", "claude-sonnet-5")),
+            digest_model=str(await self._get_config("generation.digest_model", "glm-5.2")),
+            topic_model=str(await self._get_config("generation.topic_model", "glm-5.2")),
+            base_task=str(await self._get_config("generation.base_task", "memory")),
             temperature=float(await self._get_config("generation.temperature", 0.9)),
-            timeout_ms=int(await self._get_config("generation.request_timeout_ms", 180000)),
         )
         self._holidays = ScheduleGenerator(self.ctx)
 
