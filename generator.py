@@ -52,7 +52,9 @@ PERSONA = """Mittes，是 17 岁的女子高中生，和店长 Sweyn 一同住�
 
 _STORY_RULES = """## story —— 这段时间里发生了什么
 - **第三人称叙述，主语是 Mittes**，100~150 字
-  - 首句必须点出 Mittes：「Mittes 的饭团包装还压在便利店塑料袋里」
+  - 首句里必须出现「Mittes」这个名字，做主语或所有格都行。句式例如
+    「Mittes 把……」「Mittes 蹲在……」「Mittes 的……还……」——
+    这些只是句式，**首句写什么内容完全由这个时段自己决定**
   - 之后用「她」或承前省略都行，但**不要整段无主语**，也不要每句都念一遍名字
 - **重点是故事性**：这段时间里要真的"发生了一件事"——有起因、有推进、有一点小转折，而不是一帧静止的画面
   - ✗ 端着托盘在桌椅间穿行，裙摆随脚步轻轻摇晃（这是一帧画面，没有事发生）
@@ -63,6 +65,8 @@ _STORY_RULES = """## story —— 这段时间里发生了什么
 - 具体的物件和身体感受用来撑质感（手心的温度、袜口的勒痕、镜子上的水汽），但**它们是细节不是主体**，不要写成一串静态的身体特写
 - 当天的天气、节日能落进去就落
 - 要承接上一个时段，但**承接靠物件和动作的延续，不靠心理旁白**
+  - **一样东西最多接一两段就该退场**，别让它贯穿一整天、更不能跨天。
+    上一段出现过的物件，这一段可以顺手带一下，再往后就该被新的东西替掉
   - ✗ 把刚才看样片的事甩到脑后，开始专心换衣服
   - ✓ 样片还摊在楼上桌上没收，围裙带子已经在腰后绕了两圈
   - ✗ 一晚上的忙碌终于结束，整个人放松下来
@@ -244,7 +248,9 @@ class SegmentGenerator:
                     fatal=True,
                 )
 
-            state, reason = self._parse_and_validate(result, segment)
+            state, reason = self._parse_and_validate(
+                result, segment, previous_story=previous[1].story if previous else ""
+            )
             if state is not None:
                 return GenerationOutcome(segment=segment, state=state, ok=True)
             last_reason = reason
@@ -324,7 +330,7 @@ class SegmentGenerator:
         return "\n\n".join(blocks)
 
     def _parse_and_validate(
-        self, result: dict[str, Any], segment: Segment
+        self, result: dict[str, Any], segment: Segment, previous_story: str = ""
     ) -> tuple[SegmentState | None, str]:
         """解析并校验生成结果（设计文档 5.7）。
 
@@ -363,6 +369,12 @@ class SegmentGenerator:
             hit = _find_banned_word(getattr(state, name), segment)
             if hit:
                 return None, f"{name} 含具体事项名词「{hit}」"
+
+        # 首句跟上一段雷同 = 模型把某个句子当模板锁死了。
+        # 实测发生过：prompt 里演示「首句要出现 Mittes」的那个例句被原样照抄，
+        # 一路滚了 13 段。这类锁死光靠 prompt 措辞挡不住，得在这里拦。
+        if previous_story and state.story[:15] == previous_story[:15]:
+            return None, f"首句与上一段雷同（{state.story[:15]}…）"
 
         if not 80 <= len(state.story) <= 200:
             _logger.warning("[生成] %s story 字数 %d 越界，仅告警", segment.slot, len(state.story))
