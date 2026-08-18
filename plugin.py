@@ -109,6 +109,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             model=str(await self._get_config("generation.model", "replyer")),
             digest_model=str(await self._get_config("generation.digest_model", "utils")),
             temperature=float(await self._get_config("generation.temperature", 0.9)),
+            timeout_ms=int(await self._get_config("generation.request_timeout_ms", 180000)),
         )
         self._holidays = ScheduleGenerator(self.ctx)
 
@@ -193,7 +194,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 target = today + timedelta(days=offset)
                 if store.day_cache(target) is None:
                     _logger.info("[批次] 库里没有%s，冷启动补跑", label)
-                    await self.run_batch(target, reason=f"冷启动补跑（{label}）")
+                    await self._run_batch_guarded(target, f"冷启动补跑（{label}）")
 
             while True:
                 await asyncio.sleep(60)
@@ -204,11 +205,30 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 if self._last_batch_day == now.date():
                     continue
                 self._last_batch_day = now.date()
-                await self.run_batch(now.date() + timedelta(days=1), reason="每日批次")
+                target = now.date() + timedelta(days=1)
+                # 冷启动可能已经把明天补出来了（重启发生在 run_at 之后就会这样），
+                # 不查一下会白跑一整轮
+                if store.day_cache(target) is not None:
+                    _logger.info("[批次] %s 已有记录，跳过每日批次", target)
+                    continue
+                await self._run_batch_guarded(target, "每日批次")
         except asyncio.CancelledError:
             raise
         except Exception:
             _logger.exception("[批次] 守护协程异常退出")
+
+    async def _run_batch_guarded(self, day: date, reason: str) -> None:
+        """跑一次批次，并保证异常不会掀掉守护协程。
+
+        守护协程一旦退出，之后每天的批次就都不会再跑，直到下次重启——
+        这比某一天生成失败严重得多，所以这里必须把异常吃掉。
+        """
+        try:
+            await self.run_batch(day, reason=reason)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _logger.exception("[批次] %s 执行失败，守护继续", day)
 
     async def _run_at(self) -> dt_time:
         raw = str(await self._get_config("generation.run_at", "12:00"))
@@ -246,6 +266,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
             failures: list[tuple[Segment, str]] = []
             aborted = ""
+            # 连续几段都在调用层失败 → 模型是真的挂了，别再往下打十几次。
+            # 只失败一段则继续：偶发的超时不该赔上一整天。
+            consecutive_fatal = 0
             for segment in segments:
                 previous = self._previous_state(day, segment)
                 level = negative.level_of(day, segment.slot)
@@ -262,12 +285,21 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 day_cache.segments[segment.slot] = outcome.state
 
                 if outcome.fatal:
-                    # 模型本身不可用，继续往下打十几次没有意义。剩余时段直接铺底稿，
-                    # 让缓存留下「今天已经试过」的痕迹，重启不会再空转一轮。
+                    consecutive_fatal += 1
+                    failures.append((segment, outcome.reason))
+                    if consecutive_fatal < 2:
+                        _logger.warning(
+                            "[批次] %s %s 调用失败（%s），继续下一段",
+                            day, segment.slot, outcome.reason,
+                        )
+                        continue
+                    # 连着两段都打不通，模型是真的挂了。剩余时段直接铺底稿，
+                    # 让库里留下「今天已经试过」的痕迹，重启不会再空转一轮。
                     aborted = outcome.reason
                     for rest in segments[segments.index(segment) :]:
                         day_cache.segments.setdefault(rest.slot, store.fallback_for(rest))
                     break
+                consecutive_fatal = 0
 
                 if not outcome.ok:
                     failures.append((segment, outcome.reason))

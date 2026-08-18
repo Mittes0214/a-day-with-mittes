@@ -151,6 +151,7 @@ class SegmentGenerator:
         model: str,
         digest_model: str,
         temperature: float,
+        timeout_ms: int,
     ) -> None:
         self._ctx = ctx
         self._store = store
@@ -158,6 +159,34 @@ class SegmentGenerator:
         self._model = model
         self._digest_model = digest_model
         self._temperature = temperature
+        self._timeout_ms = timeout_ms
+
+    async def _call_llm(self, prompt: str, *, model: str, temperature: float) -> dict[str, Any]:
+        """调一次 LLM，把异常收敛成 ``success=False`` 的返回。
+
+        两件事必须在这里处理，否则整条批次链路会被打死：
+
+        1. **RPC 超时**。``cap.call`` 的默认超时是 30 秒，而 replyer 那档模型
+           动辄 20~40 秒，实测 36.9 秒那次直接抛了 ``RPCError``。
+           SDK 的 ``ctx.llm.generate`` 不透传 ``timeout_ms``，所以这里直接调
+           ``call_capability``——它是 PluginContext 的公开方法，不算伸手进主程序。
+        2. **异常会一路冒泡**。``llm.generate`` 不只是返回 ``success=False``，
+           传输层出问题时是直接 raise 的；不收在这里，异常会掀掉 run_batch，
+           再掀掉守护协程，之后每日批次就再也不会跑了。
+        """
+        try:
+            result = await self._ctx.call_capability(
+                "llm.generate",
+                timeout_ms=self._timeout_ms,
+                prompt=prompt,
+                model=model,
+                temperature=temperature,
+            )
+        except Exception as exc:
+            return {"success": False, "error": f"{type(exc).__name__}: {exc}", "response": ""}
+        if isinstance(result, dict):
+            return result
+        return {"success": False, "error": f"返回值不是字典：{type(result).__name__}", "response": ""}
 
     # ── 单段生成 ──
     async def generate_segment(
@@ -188,11 +217,7 @@ class SegmentGenerator:
 
         last_reason = ""
         for attempt in range(2):
-            result = await self._ctx.llm.generate(
-                prompt,
-                model=self._model,
-                temperature=self._temperature,
-            )
+            result = await self._call_llm(prompt, model=self._model, temperature=self._temperature)
             self._record_preview(
                 request_kind="schedule_segment",
                 prompt=prompt,
@@ -370,7 +395,7 @@ class SegmentGenerator:
             return 0, "没有可提炼的时段"
 
         prompt = self._build_topic_prompt(day, candidates, states)
-        result = await self._ctx.llm.generate(prompt, model=self._digest_model, temperature=0.4)
+        result = await self._call_llm(prompt, model=self._digest_model, temperature=0.4)
         self._record_preview(
             request_kind="schedule_topics",
             prompt=prompt,
@@ -471,11 +496,7 @@ class SegmentGenerator:
             f"# 已有的当日概要\n{day_digest or '（今天刚开始，还没有）'}\n\n"
             f"# 新发生的事\n{story}"
         )
-        result = await self._ctx.llm.generate(
-            prompt,
-            model=self._digest_model,
-            temperature=0.3,
-        )
+        result = await self._call_llm(prompt, model=self._digest_model, temperature=0.3)
         self._record_preview(
             request_kind="schedule_digest",
             prompt=prompt,
@@ -483,9 +504,12 @@ class SegmentGenerator:
             selection_reason="当日概要滚动更新",
             output_title="当日概要",
         )
+        if not result.get("success", True):
+            _logger.warning("[概要] 调用失败，沿用旧概要：%s", result.get("error"))
+            return day_digest
         updated = str(result.get("response") or "").strip()
         if not updated:
-            _logger.warning("[概要] 更新失败，沿用旧概要")
+            _logger.warning("[概要] 输出为空，沿用旧概要")
             return day_digest
         return updated
 

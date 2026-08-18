@@ -32,6 +32,11 @@ digest_model = "utils"
 
 temperature = 0.9
 
+# 单次 LLM 调用的 RPC 超时（毫秒）。
+# 主程序 cap.call 的默认超时只有 30 秒，而 replyer 那档模型动辄 20~40 秒，
+# 实测有过 36.9 秒的调用直接抛 RPCError 把整条批次链路打死。
+request_timeout_ms = 180000
+
 # 每周安排几次「不顺心的事」。排期只决定何时、多重，具体发生什么由生成时现编。
 negative_event_quota = 2
 
