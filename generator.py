@@ -5,10 +5,13 @@
 前一段的结果喂给后一段：这样 prompt 按单段写就行，输出质量高于一次吐十段，
 失败重试的粒度也是一段。
 
-五个字段的分工（4.3）：
-- ``story``          → 事实层工具结果，被问才吐，可以有活动名词
-- ``manner``         → replyer 常驻注入，**一个具体名词都不能有**
-- ``mood`` / ``busy`` / ``suggest_length`` → planner 状态层，同样不含活动名词
+字段分工（4.3）：
+- ``story``            → 事实层工具结果，被问才吐，可以有活动名词
+- ``manner``           → replyer 常驻注入（A），**一个具体名词都不能有**
+- ``mood`` / ``busy``  → planner 状态层，同样不含活动名词
+- ``topic``            → replyer 常驻注入（C），第二轮提炼，说出口后撤掉
+
+第二轮的话题提炼见 ``extract_topics``：全天十段一次调用，用便宜模型。
 """
 
 from dataclasses import dataclass
@@ -21,7 +24,6 @@ import re
 
 from .negative_events import LEVEL_HINTS
 from .schedule_store import (
-    SUGGEST_LENGTHS,
     ScheduleStore,
     Segment,
     SegmentState,
@@ -44,12 +46,14 @@ PREVIEW_SESSION = "schedule_batch"
 # story 里就会冒出心理旁白，正好撞上"不写心理总结"那条。
 # 为什么必须改人称：这个 prompt 是对"写手"说话，不是对 Mittes 说话；
 # 原文的"你"会和 manner 要求输出的"你"撞车。
-PERSONA = """Mittes，住在东京新宿区一家咖啡店的楼上，粉白色长发、红眼睛。
-同住的是店长 Sweyn——从小照顾她长大的兄长，也是她最亲近的家人。
+PERSONA = """Mittes，是 17 岁的女子高中生，和店长 Sweyn 一同住在东京新宿区一家咖啡店的楼上，粉白色长发、红眼睛。
+店长 Sweyn——从小照顾她长大的兄长，也是她最亲近的家人。
 她课余在楼下店里换上猫耳女仆装帮忙；喜欢二次元，也做 Cos，接少量平面模特的拍摄。"""
 
 _STORY_RULES = """## story —— 这段时间里发生了什么
-- 无主语的叙述，100~150 字
+- **第三人称叙述，主语是 Mittes**，100~150 字
+  - 首句必须点出 Mittes：「Mittes 的饭团包装还压在便利店塑料袋里」
+  - 之后用「她」或承前省略都行，但**不要整段无主语**，也不要每句都念一遍名字
 - **重点是故事性**：这段时间里要真的"发生了一件事"——有起因、有推进、有一点小转折，而不是一帧静止的画面
   - ✗ 端着托盘在桌椅间穿行，裙摆随脚步轻轻摇晃（这是一帧画面，没有事发生）
   - ✓ 四号桌那份蛋包饭要画小熊，手一抖把耳朵画歪了半边，正想擦掉重来，客人先笑出声，说这只反而更可爱。后来那一晚照着这只歪耳朵的又画了三份
@@ -63,7 +67,7 @@ _STORY_RULES = """## story —— 这段时间里发生了什么
   - ✓ 样片还摊在楼上桌上没收，围裙带子已经在腰后绕了两圈
   - ✗ 一晚上的忙碌终于结束，整个人放松下来
   - ✓ 脚踝上被勒出的红痕泡在水里慢慢淡下去
-- 不要写心理总结（"她觉得有点累"），只写看得见的东西"""
+- 不要写心理总结（"她觉得有点累"），只写看得见的东西。**第三人称比无主语更容易滑向心理旁白，这条要格外守住**"""
 
 _MANNER_RULES = """## manner —— 这段时间她说话是什么样
 **这段文字会出现在她每一条回复的上下文里，所以规则很严：**
@@ -102,10 +106,16 @@ _MOOD_RULES = """## mood —— 一个短语，十字以内，写情绪不写事
   - ✓ 独处着，随时能接话，就是回得慢一点
   - ✗ 正在店里忙，回复会慢
   - ✓ 手上一直有活，回复会慢
+"""
 
-## suggest_length —— 只能是「简短表达」「正常回复」「长回复」之一
-- 依据是她此刻能分出多少注意力，不是话题本身的大小
-- 「长回复」不是罕见档：独处、清闲、心里正好有事想说的时候就该给。不要默认往短里压"""
+_PERSON_TABLE = """# 人称
+下面几个字段的人称各不相同，别串：
+
+| 字段 | 人称 | 说的是谁、对谁说 |
+|---|---|---|
+| story | 第三人称 | 讲 Mittes 的事，讲给读者听 |
+| manner | 第二人称「你」 | 直接对 Mittes 说话 |
+| mood / busy | 不带人称 | 对她当前状态的客观描述 |"""
 
 # 常驻注入的三个字段（manner / mood / busy）里出现就判定不合格的
 # 通用场所/身份词。骨架的 place / outfit 会另行拆成词一起查。
@@ -278,10 +288,11 @@ class SegmentGenerator:
                 "把它写成这段时间的主线，别让它显得是突然插进来的。"
             )
 
-        blocks.append("# 为这个时段生成五个字段\n\n" + "\n\n".join([_STORY_RULES, _MANNER_RULES, _MOOD_RULES]))
+        blocks.append(_PERSON_TABLE)
+        blocks.append("# 为这个时段生成四个字段\n\n" + "\n\n".join([_STORY_RULES, _MANNER_RULES, _MOOD_RULES]))
         blocks.append(
             "# 输出\n严格的 JSON 对象，字段名照上面写，不要包在代码块里：\n"
-            '{"story":"…","manner":"…","mood":"…","busy":"…","suggest_length":"…"}'
+            '{"story":"…","manner":"…","mood":"…","busy":"…"}'
         )
         return "\n\n".join(blocks)
 
@@ -290,8 +301,8 @@ class SegmentGenerator:
     ) -> tuple[SegmentState | None, str]:
         """解析并校验生成结果（设计文档 5.7）。
 
-        硬校验（不过就重来）：manner 超长、manner 含地点/服装/场所词、
-        suggest_length 不在枚举内。
+        硬校验（不过就重来）：manner / mood / busy 含地点/服装/场所词，
+        manner 或 busy 超长。
         只告警不重来：story 字数越界——它是被问才吐的事实层，长一点没有副作用，
         为字数烧一次调用不值得。
         """
@@ -305,19 +316,13 @@ class SegmentGenerator:
             manner=str(payload.get("manner") or "").strip(),
             mood=str(payload.get("mood") or "").strip(),
             busy=str(payload.get("busy") or "").strip(),
-            suggest_length=str(payload.get("suggest_length") or "").strip(),
         )
 
         missing = [
-            name
-            for name in ("story", "manner", "mood", "busy", "suggest_length")
-            if not getattr(state, name)
+            name for name in ("story", "manner", "mood", "busy") if not getattr(state, name)
         ]
         if missing:
             return None, f"缺字段：{'/'.join(missing)}"
-
-        if state.suggest_length not in SUGGEST_LENGTHS:
-            return None, f"suggest_length 不在枚举内（{state.suggest_length}）"
 
         if len(state.manner) > 60:
             return None, f"manner 超长（{len(state.manner)} 字）"
@@ -336,6 +341,119 @@ class SegmentGenerator:
             _logger.warning("[生成] %s story 字数 %d 越界，仅告警", segment.slot, len(state.story))
 
         return state, ""
+
+    # ── 第二轮：话题提炼 ──
+    async def extract_topics(
+        self, day: date, segments: list[Segment], states: dict[str, SegmentState]
+    ) -> tuple[int, str]:
+        """为一整天的 story 提炼谈资，全天十段**一次调用**。
+
+        事实层有个先天缺陷：几乎没人会主动问「你在干嘛」，工具不被调用，story 就用不上。
+        所以给她一个主动出口——一句今天遇到的、值得说给人听的事（设计文档 5.10）。
+
+        不并进主生成，因为两件事性质不同（创作 vs 抽取），而且抽取用便宜模型就够。
+        一次看到全天，还能避免十个话题都是同一类。
+
+        直接把结果写进 ``states`` 里对应的 ``topic`` / ``topic_keys``。
+
+        Returns:
+            tuple[int, str]: (产出话题的段数, 失败原因；成功时为空串)
+        """
+        # 睡眠段按 kind 硬拦，连判断都省掉
+        candidates = [
+            segment
+            for segment in segments
+            if segment.kind != "睡眠" and states.get(segment.slot, None) is not None
+            and states[segment.slot].generated
+        ]
+        if not candidates:
+            return 0, "没有可提炼的时段"
+
+        prompt = self._build_topic_prompt(day, candidates, states)
+        result = await self._ctx.llm.generate(prompt, model=self._digest_model, temperature=0.4)
+        self._record_preview(
+            request_kind="schedule_topics",
+            prompt=prompt,
+            result=result,
+            selection_reason=f"{day.isoformat()} 话题提炼（{len(candidates)} 段）",
+            output_title="今日话题",
+        )
+
+        if not result.get("success", True):
+            reason = str(result.get("error") or result.get("response") or "").strip() or "模型调用失败"
+            _logger.error("[话题] %s 提炼失败：%s", day, reason)
+            return 0, reason
+
+        rows = _extract_json_array(str(result.get("response") or ""))
+        if rows is None:
+            _logger.error("[话题] %s 输出不是合法 JSON 数组", day)
+            return 0, "输出不是合法 JSON 数组"
+
+        by_slot = {segment.slot: segment for segment in candidates}
+        produced = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            slot = str(row.get("slot") or "")
+            if slot not in by_slot:
+                continue
+            topic = str(row.get("topic") or "").strip()
+            if not topic:
+                continue
+            if len(topic) > 40:
+                _logger.warning("[话题] %s %s 超长（%d 字），丢弃", day, slot, len(topic))
+                continue
+            raw_keys = row.get("topic_keys")
+            keys = [str(k).strip() for k in raw_keys if str(k).strip()] if isinstance(raw_keys, list) else []
+            if not keys:
+                # 没有关键词就检测不了说没说过，那这条谈资会一直挂着——宁可不要
+                _logger.warning("[话题] %s %s 没给关键词，丢弃", day, slot)
+                continue
+            states[slot].topic = topic
+            states[slot].topic_keys = keys
+            produced += 1
+
+        _logger.info("[话题] %s 提炼出 %d/%d 条", day, produced, len(candidates))
+        return produced, ""
+
+    def _build_topic_prompt(
+        self, day: date, segments: list[Segment], states: dict[str, SegmentState]
+    ) -> str:
+        """拼装话题提炼 prompt（设计文档 5.10）。"""
+        listing = "\n\n".join(
+            f"{index + 1}. {segment.slot}　{segment.title}\n{states[segment.slot].story}"
+            for index, segment in enumerate(segments)
+        )
+        return f"""你要从一份日程里挑出「今天值得说给人听的事」。
+
+# 角色
+{PERSONA}
+
+# 今天
+{day.isoformat()} 星期{weekday_name(day)}
+
+# 各时段
+{listing}
+
+# 要做的事
+为上面每一段判断：这段时间里有没有一件事，是她之后跟人聊天时会顺口提起的？
+有就写一句提示 topic，没有就把 topic 留成空字符串。
+
+## topic 怎么写
+- **第三人称**的一句提示，20 字以内。例：「借伞给客人时伞骨断了，两个人蹲着缠胶带」
+- **不要写成她的原话**（「刚借了把伞给客人」）——那样她会照着念。写成提示，让她自己组织语言
+- 一段只挑一件事，挑最有画面感、最像会被人接话的那件
+- **宁缺毋滥**：平淡的日常（睡觉、洗澡、发呆、刷手机、赶路）就留空。
+  一天十段里有三四段值得说就够了；十段全都有，说明你的标准太松
+
+## topic_keys 怎么写
+- 2~4 个词，用来事后检测她有没有把这件事说出来
+- 挑这件事**独有**的名词（伞、胶带、蛋包饭），不要挑通用词（今天、客人、店里、时候）
+- topic 为空时，keys 也给空数组
+
+# 输出
+严格的 JSON 数组，不要包在代码块里。一段一个对象，slot 必须和上面完全一致：
+[{{"slot":"09:00-12:00","topic":"…","topic_keys":["…","…"]}}]"""
 
     # ── 当日概要 ──
     async def update_digest(self, day_digest: str, story: str) -> str:
@@ -409,6 +527,22 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _extract_json_array(text: str) -> list[Any] | None:
+    """从模型输出里取出 JSON 数组，容忍前后多余文字和代码块围栏。"""
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", stripped).strip()
+    start = stripped.find("[")
+    end = stripped.rfind("]")
+    if start < 0 or end <= start:
+        return None
+    try:
+        payload = json.loads(stripped[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, list) else None
 
 
 def _find_banned_word(text: str, segment: Segment) -> str:

@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.0.0
+版本：3.1.0
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """
@@ -90,9 +90,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
         self._store = ScheduleStore(self._plugin_dir, data_dir)
         self._store.load_skeleton()
-        migrated = self._store.open_db()
-        if migrated:
-            _logger.info("[加载] 已从旧 JSON 缓存迁入 %d 段到归档库", migrated)
+        self._store.open_db()
 
         self._negative = NegativeScheduler(
             data_dir,
@@ -178,19 +176,24 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def _scheduler_loop(self) -> None:
         """守护协程：到点跑批次，冷启动时补当天。
 
-        - 冷启动缓存里没有今天 → 立刻补跑今天（剩余时段用底稿顶着，不阻塞回复）
+        - 冷启动时**今天和明天缺哪天补哪天**（剩余时段用底稿顶着，不阻塞回复）
         - 每天 ``generation.run_at``（默认 12:00 JST）→ 跑次日全天
         """
         await asyncio.sleep(10)  # 等主程序其余部分起来，避免抢启动资源
         try:
             store = self._require_store()
             today = now_jst().date()
-            # 判据是「今天有没有缓存记录」而不是「有没有生成成功」：
-            # 失败的批次也会把底稿写进缓存，所以模型挂掉时反复重启不会每次空转一整轮
-            # （一轮是 10 次调用）。修好之后用 /status batch today 手动补跑。
-            if store.day_cache(today) is None:
-                _logger.info("[批次] 缓存里没有今天，冷启动补跑")
-                await self.run_batch(today, reason="冷启动补跑")
+            # 系统要维持的不变量是「今天和明天都有日程」，12:00 那次批次负责往前推进；
+            # 冷启动（首次部署、库被删、连着几天没跑成）应当把这个不变量整个补回来，
+            # 而不是只补今天——只补今天的话，过了零点明天那几段全是底稿。
+            #
+            # 判据是「有没有记录」而不是「有没有生成成功」：失败的批次也会把底稿写进库，
+            # 所以模型挂掉时反复重启不会每次空转一整轮。修好后用 /status batch 手动补。
+            for offset, label in ((0, "今天"), (1, "明天")):
+                target = today + timedelta(days=offset)
+                if store.day_cache(target) is None:
+                    _logger.info("[批次] 库里没有%s，冷启动补跑", label)
+                    await self.run_batch(target, reason=f"冷启动补跑（{label}）")
 
             while True:
                 await asyncio.sleep(60)
@@ -276,6 +279,15 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                     digest = await generator.update_digest(digest, outcome.state.story)
 
             day_cache.day_digest = digest
+
+            # 第二轮：全天一次调用，为每段提炼一句谈资（5.10）。
+            # 放在主生成之后，因为它要读全天的 story。
+            topics, topic_error = 0, ""
+            if not aborted:
+                topics, topic_error = await generator.extract_topics(
+                    day, segments, day_cache.segments
+                )
+
             elapsed = (now_jst() - started).total_seconds()
             generated = store.day_generated_count(day)
             store.flush(
@@ -300,6 +312,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 "aborted": aborted,
                 "elapsed": elapsed,
                 "negative": negative.entries_of_day(day),
+                "topics": topics,
+                "topic_error": topic_error,
                 "reason": reason,
             }
             _logger.info(
@@ -341,6 +355,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             lines.extend(f"- {segment.slot}　{reason}" for segment, reason in failures)
         else:
             lines.append(f"{summary['ok']}/{summary['total']} 段完成，耗时 {summary['elapsed']:.0f} 秒")
+        if summary.get("topic_error"):
+            lines.append(f"话题提炼失败：{summary['topic_error']}")
+        elif not summary.get("aborted"):
+            lines.append(f"可说的话题：{summary.get('topics', 0)} 条")
         for entry in summary["negative"]:
             lines.append(f"负面事件：{entry.slot}（{entry.level}）")
 
@@ -381,14 +399,16 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         这里一个活动名词都不能有：planner 知道「她有点忙但能搭话」，
         不知道她在换衣服，想抄也没得抄。
         """
-        return (
-            "【Mittes 当前状态】\n"
-            f"忙碌度：{state.busy}\n"
-            f"心情：{state.mood}\n"
-            f"建议篇幅：{state.suggest_length}\n"
-            "\n"
-            "篇幅只是建议——对方的问题确实需要展开时可以不采纳。"
-        )
+        return f"【Mittes 当前状态】\n忙碌度：{state.busy}\n心情：{state.mood}"
+
+    @staticmethod
+    def _topic_block(topic: str) -> str:
+        """replyer 侧的谈资文案（C）。
+
+        措辞要明确留出不说的余地——它是常驻注入的，如果写成硬性要求，
+        她会在任何语境下硬插一句。
+        """
+        return f"有件小事可以说：{topic}\n聊得上就提一句，聊不上就别硬插。"
 
     # ── Tool ──
     @Tool(
@@ -470,9 +490,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         items: list[Any] | None = None,
         reply_reason: str = "",
         reply_tool_args: dict[str, Any] | None = None,
+        session_id: str = "",
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """在 planner 的 reply_reference item 之前插入 manner。
+        """在 planner 的 reply_reference item 之前插入 A（说话方式）和 C（谈资）。
 
         锚点从 hook 载荷算出来，不是猜位置：reference item 的正文由主程序按固定规则
         拼装（maisaka_generator_base.py:574-594）——``reply_tool_args["reply_reference"]``
@@ -484,8 +505,16 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if not items:
             return {"success": True, "action": "continue"}
 
-        _moment, _segment, state = self._current()
-        if not state.manner:
+        moment, segment, state = self._current()
+        store = self._require_store()
+
+        # A：说话方式。C：今天那件可说的小事，说出口之后就不再注入（5.11）。
+        blocks = [state.manner] if state.manner else []
+        share_pending = False
+        if state.topic and session_id and not store.is_shared(moment.date(), segment.slot, session_id):
+            blocks.append(self._topic_block(state.topic))
+            share_pending = True
+        if not blocks:
             return {"success": True, "action": "continue"}
 
         reference = str((reply_tool_args or {}).get("reply_reference") or "").strip()
@@ -501,8 +530,71 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             return {"success": True, "action": "continue"}
 
         updated = list(items)
-        updated.insert(index, _new_user_item(state.manner))
-        return _hook_response(updated, kwargs, extra={"reply_reason": reply_reason, "reply_tool_args": reply_tool_args})
+        for offset, text in enumerate(blocks):
+            updated.insert(index + offset, _new_user_item(text))
+
+        if share_pending:
+            store.mark_injected(moment.date(), segment.slot, session_id)
+
+        return _hook_response(
+            updated,
+            kwargs,
+            extra={
+                "reply_reason": reply_reason,
+                "reply_tool_args": reply_tool_args,
+                "session_id": session_id,
+            },
+        )
+
+    # ── Hook：谈资的消费检测 ──
+    @HookHandler(
+        "maisaka.replyer.after_response",
+        name="schedule_topic_consume",
+        mode="observe",
+        order="normal",
+        timeout_ms=3000,
+        error_policy="skip",
+    )
+    async def handle_replyer_after_response(
+        self,
+        response: str = "",
+        session_id: str = "",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """检测她有没有把今天那件小事说出去；说了就把谈资标记掉，之后不再注入。
+
+        用 ``observe`` 模式：这个 hook 本身能改写回复正文、甚至要求重新生成，
+        而我们只想读——observe 从机制上保证碰不坏回复。
+
+        判据是**命中任意一个关键词就算说过**。阈值偏松是有意的，两种错的代价不对称：
+        误判「说过了」只是少一次开口机会；误判「没说」是她把同一件事说第二遍，
+        那才是最要避免的。
+        """
+        del kwargs
+        if not response or not session_id:
+            return {"success": True, "action": "continue"}
+
+        moment, segment, state = self._current()
+        if not state.topic or not state.topic_keys:
+            return {"success": True, "action": "continue"}
+
+        store = self._require_store()
+        if store.is_shared(moment.date(), segment.slot, session_id):
+            return {"success": True, "action": "continue"}
+
+        hit = next((key for key in state.topic_keys if key and key in response), "")
+        if not hit:
+            return {"success": True, "action": "continue"}
+
+        store.mark_shared(moment.date(), segment.slot, session_id, moment.isoformat())
+        _logger.info(
+            "[谈资] %s %s 在会话 %s 说出口了（命中「%s」），不再注入",
+            moment.date(),
+            segment.slot,
+            session_id,
+            hit,
+        )
+        return {"success": True, "action": "continue"}
 
     # ── Command ──
     @Command(
@@ -525,7 +617,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             f"manner：{state.manner}",
             f"mood：{state.mood}",
             f"busy：{state.busy}",
-            f"建议篇幅：{state.suggest_length}",
+            f"topic：{state.topic or '（这段没什么好说的）'}",
             "",
             "来源：生成结果" if state.generated else "来源：底稿（该段未生成成功）",
             f"下次批次：每天 {run_at:%H:%M} 生成次日全天",
@@ -546,8 +638,11 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             "── planner 状态层（插在「时间：」之后）──\n"
             f"{self._planner_block(state)}\n"
             "\n"
-            "── replyer 语气（插在 reply_reference 之前）──\n"
-            f"{state.manner}"
+            "── replyer A 说话方式（插在 reply_reference 之前）──\n"
+            f"{state.manner}\n"
+            "\n"
+            "── replyer C 谈资（A 之后；说出口后就不再注入）──\n"
+            + (self._topic_block(state.topic) if state.topic else "（这段没什么好说的，不注入）")
         )
         await self.ctx.send.text(text, stream_id)
         return True, "已输出注入原文", True
@@ -637,9 +732,80 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             "\n"
             f"{state.story}\n"
             "\n"
-            f"manner：{state.manner}\nmood：{state.mood}\nbusy：{state.busy}\n"
-            f"建议篇幅：{state.suggest_length}"
+            f"manner：{state.manner}\nmood：{state.mood}\nbusy：{state.busy}"
         )
+
+    @Command(
+        "status_topic",
+        description="查看当前时段的话题与分享状态（仅管理员）",
+        pattern=r"^/status\s+topic$",
+        permission="operator",
+    )
+    async def cmd_status_topic(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
+        del kwargs
+        store = self._require_store()
+        moment, segment, state = self._current()
+        today = moment.date().isoformat()
+
+        lines = [f"【谈资】{segment.slot}　{segment.title}"]
+        if not state.topic:
+            lines.append("这段没什么好说的，不注入。")
+            await self.ctx.send.text("\n".join(lines), stream_id)
+            return True, "已输出谈资状态", True
+
+        lines.append(f"话题：{state.topic}")
+        lines.append(f"关键词：{'、'.join(state.topic_keys)}")
+        lines.append("")
+        rows = [r for r in store.db.shares_of_day(today) if r["slot"] == segment.slot]
+        if not rows:
+            lines.append("还没在任何会话里注入过。")
+        for row in rows:
+            mark = f"已说出口 {row['shared_at'][11:16]}" if row["shared_at"] else "还没说"
+            lines.append(f"- {row['session_id']}　注入 {row['injected']} 次　{mark}")
+        await self.ctx.send.text("\n".join(lines), stream_id)
+        return True, "已输出谈资状态", True
+
+    @Command(
+        "status_topics",
+        description="重跑某天的话题提炼（仅管理员）",
+        pattern=r"^/status\s+topics(?:\s+(?P<day>\d{4}-\d{2}-\d{2}))?$",
+        permission="operator",
+    )
+    async def cmd_status_topics(
+        self, stream_id: str = "", day: str = "", **kwargs: Any
+    ) -> tuple[bool, str, bool]:
+        del kwargs
+        target = date.fromisoformat(day) if day else now_jst().date()
+        await self.ctx.send.text(f"开始重跑 {target.isoformat()} 的话题提炼……", stream_id)
+        self._spawn(self._topics_text(target), stream_id)
+        return True, "话题提炼已在后台开始", True
+
+    async def _topics_text(self, day: date) -> str:
+        """重跑某天的话题提炼并渲染结果。"""
+        store = self._require_store()
+        generator = self._require_generator()
+        cached = store.day_cache(day)
+        if cached is None:
+            return f"{day.isoformat()} 还没有日程，先跑 /status batch {day.isoformat()}。"
+
+        segments = store.segments_of(day)
+        produced, error = await generator.extract_topics(day, segments, cached.segments)
+        store.flush(
+            day,
+            model=str(await self._get_config("generation.model", "replyer")),
+            negative_level_of=lambda slot: self._require_negative().level_of(day, slot),
+            batch_reason="话题重提炼",
+            batch_at=now_jst().isoformat(),
+        )
+        if error:
+            return f"话题提炼失败：{error}"
+
+        lines = [f"【话题】{day.isoformat()}　{produced} 条"]
+        for segment in segments:
+            state = cached.segments.get(segment.slot)
+            if state is not None and state.topic:
+                lines.append(f"{segment.slot}　{state.topic}")
+        return "\n".join(lines)
 
     @Command(
         "status_db",

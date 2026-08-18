@@ -13,9 +13,16 @@
 |---|---|---|---|
 | **事实层** | 她具体在做什么（故事化文本） | 只有被问才出现（Tool） | 有，这是它的价值 |
 | **状态层** | 她的身体/情绪，以及这如何影响说话 | 每轮都在（常驻注入） | **绝对没有** |
+| **谈资层** | 这段时间里值得说给人听的那一件事 | 常驻注入，**说出口后立刻撤掉** | 有——唯一的例外 |
 
 「正在洗碗」是一句可陈述的事实，模型有复述冲动；「你有点累、话短」不是可陈述内容，
 模型没法复述它，只能照做。**状态层的不可复述性完全建立在「没有活动名词」这条纪律上。**
+
+谈资层是有意开的口子：事实层有个先天缺陷——几乎没人会主动问「你在干嘛」，工具不被调用，
+story 就永远用不上。它的止损方式不同：**说完就从上下文里消失**，一件事只说一次。
+
+> **绝不能改成注入「这件事已经说过了，不要再提」。** 要否定一件事，你必须先把它写进上下文；
+> 注意力对「伞的事」的反应远强于对「别提」的。不可复述只能靠「上下文里根本没有」。
 
 完整设计见 `Mittes-1.0.0-dev/a_day_with_mittes-重构设计.md`。
 
@@ -25,8 +32,9 @@
 |---|---|---|
 | Tool | `get_current_schedule` | 事实层：返回当前时段的故事化文本，被问才吐 |
 | Tool | `get_weather` | 查询指定城市的实时天气和近 3 天预报 |
-| Hook | `maisaka.planner.before_request` | 在「时间：」那条 item 后插入状态层（忙碌度/心情/建议篇幅） |
-| Hook | `maisaka.replyer.before_model_request` | 在 `reply_reference` 之前插入说话方式 |
+| Hook | `maisaka.planner.before_request` | 在「时间：」那条 item 后插入状态层（忙碌度 / 心情） |
+| Hook | `maisaka.replyer.before_model_request` | 在 `reply_reference` 之前插入说话方式（A）与谈资（C） |
+| Hook | `maisaka.replyer.after_response` | `observe` 模式只读，检测谈资有没有被说出口 |
 | Command | `/status *` | 调试命令，仅 operator |
 
 **主程序改动：0。** 所有注入都走插件 hook，跟上游同步时零冲突。
@@ -56,14 +64,22 @@ kind    = "工作"                # 唯一一个机器要读的字段
 
 ### 生成结果 `data/schedule.db`（SQLite，永久归档）
 
-每段五个字段：`story` / `manner` / `mood` / `busy` / `suggest_length`。
+**第一轮**（主生成，一段一次调用）：`story` / `manner` / `mood` / `busy`。
+**第二轮**（话题提炼，全天一次调用，用便宜模型）：`topic` / `topic_keys`。
 删掉数据库就退回纯手写的底稿状态，任何时候都能回滚——**LLM 绝不回写骨架**。
 
 运行期的热路径（每轮 planner / replyer 注入）读的是内存副本（最近 3 天），
 数据库只在批次结束时写、启动时读一次，所以用同步 `sqlite3` 是安全的。
 
-早期版本用的是 `data/schedule_cache.json`，只留 3 天。升级时会自动导入并把原文件
-改名为 `.json.migrated`（不是删除，万一骨架换过季对不上还能回查）。
+`shares` —— 谈资的分享状态，主键 `(date, slot, session_id)`
+
+| 列 | 说明 |
+|---|---|
+| `injected` | 这条谈资在该会话被注入过多少次 |
+| `shared_at` | 检测到她说出口的时刻；空 = 还没说 |
+
+**按会话独立**：跟不同的人聊，同一件事说一遍是正常的。
+**必须落库**：放内存的话重启就清零，她会把今天已经说过的事再说一遍。
 
 #### 表结构
 
@@ -86,7 +102,8 @@ kind    = "工作"                # 唯一一个机器要读的字段
 |---|---|
 | `date` / `slot` / `seq` | 日期、`HH:MM-HH:MM`、当天第几段 |
 | `title` `place` `outfit` `company` `kind` | **骨架快照**——骨架会随换季整份替换，所以存当时的值，别指望回看时还能反查 |
-| `story` `manner` `mood` `busy` `suggest_length` | LLM 生成的五个字段 |
+| `story` `manner` `mood` `busy` | 第一轮主生成 |
+| `topic` `topic_keys` | 第二轮话题提炼；`topic` 为空表示这段没什么好说的，`topic_keys` 是 JSON 数组 |
 | `generated` | 0 表示这一段用的是底稿 |
 | `negative_level` | 轻微 / 中等 / 空 |
 | `model` / `generated_at` | 生成用的模型任务名与时刻 |
@@ -100,7 +117,8 @@ uv run python plugins/04_a_day_with_mittes/viewer.py --lan --port 9000
 ```
 
 只用标准库、只读方式开库，不会跟运行中的 bot 抢写锁。
-左侧按日期列表，右侧是当天十段的完整内容（故事、心情、忙碌度、建议篇幅、说话方式），
+左侧按日期列表，右侧是当天十段的完整内容（故事、心情、忙碌度、说话方式），外加每段的
+话题、关键词和分享状态（在哪些会话注入过几次、几点被说出口）。
 当前所处的时段会高亮，底稿段和负面事件段各有角标。
 
 > `--lan` 监听 `0.0.0.0` 且**没有任何鉴权**——同一局域网里知道地址的人都能看到
@@ -125,8 +143,9 @@ rows = con.execute(
 批次内部仍然一段一次调用、顺序执行，前一段的结果喂给后一段。
 
 - 生成的是**次日**：12:00 才生成当天的话，00:00~12:00 那几段早就过去了
+- 主生成跑完后，再用便宜模型跑**一次**话题提炼，全天十段一起出
 - 天气用**预报**而非实时——提前一天生成拿不到实时天气
-- 冷启动缓存里没有今天时立刻补跑，期间用底稿顶着，**不阻塞回复链路**
+- 冷启动时**今天和明天缺哪天补哪天**，期间用底稿顶着，**不阻塞回复链路**
 - 结果（成功和失败）报到配置的日志群，静默成功等于没有监控
 
 ### 负面事件
@@ -144,7 +163,7 @@ rows = con.execute(
 
 | 命令 | 作用 |
 |---|---|
-| `/status` | 当前时段的五个字段、时段边界 |
+| `/status` | 当前时段的各字段、时段边界 |
 | `/status prompt` | 本时段实际注入 planner / replyer 的**原文** |
 | `/status day` | 今天各段的骨架 + 生成状态 + 负面事件标记 |
 | `/status db` | 归档库覆盖范围、段数、文件大小 |
@@ -155,12 +174,15 @@ rows = con.execute(
 | `/status neg clear` | 清空本周排期 |
 | `/status neg add <日期> <时段> [轻微\|中等]` | 手动指定一条 |
 | `/status batch [日期\|today]` | 立即跑一次批次，默认次日 |
+| `/status topic` | 当前时段的话题、关键词、各会话的分享状态 |
+| `/status topics [日期]` | 重跑话题提炼，默认今天 |
 
 `/status prompt` 最要紧——它直接验证注入位置对不对，省得去翻 `logs/maisaka_prompt` 的 dump。
 
 ## 可观测性
 
 每次 LLM 调用都落盘到 WebUI 推理过程页，分类 `a_day_with_mittes`、会话 `schedule_batch`。
+三种调用靠 `request.kind` 区分：`schedule_segment`（时段生成）、`schedule_digest`（当日概要）、`schedule_topics`（话题提炼）。
 
 WebUI 那个页面**没有上报接口**，就是在扫 `logs/maisaka_prompt/` 目录树，payload 格式
 （`schema_version: 6`）写死在主程序里。所以 `preview.py` 自带一份拼装代码。

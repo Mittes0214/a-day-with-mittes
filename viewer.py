@@ -55,7 +55,17 @@ def _load_day(conn: sqlite3.Connection, day: str) -> dict[str, Any] | None:
     segments = conn.execute(
         "SELECT * FROM segments WHERE date = ? ORDER BY seq", (day,)
     ).fetchall()
-    return {"meta": dict(meta), "segments": [dict(row) for row in segments]}
+    shares = conn.execute(
+        "SELECT * FROM shares WHERE date = ? ORDER BY slot, session_id", (day,)
+    ).fetchall()
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in shares:
+        grouped.setdefault(row["slot"], []).append(dict(row))
+    return {
+        "meta": dict(meta),
+        "segments": [dict(row) for row in segments],
+        "shares": grouped,
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -155,6 +165,18 @@ main { flex: 1; padding: 28px 32px 64px; max-width: 900px; }
   padding: 1px 7px; font-size: 12px; margin-left: 8px; color: var(--muted);
 }
 .badge.neg { background: var(--accent); color: #fff; }
+.topic {
+  margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+  background: var(--badge); font-size: 13.5px;
+}
+.topic.none { color: var(--muted); font-size: 12.5px; padding: 6px 12px; }
+.topic .tag {
+  display: inline-block; background: var(--accent); color: #fff; border-radius: 4px;
+  padding: 0 6px; font-size: 11.5px; margin-right: 8px; vertical-align: 1px;
+}
+.topic .keys { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+.topic .share { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+.topic .share b { color: var(--accent); font-weight: 600; }
 .empty { color: var(--muted); padding: 40px 0; }
 @media (max-width: 640px) {
   body { flex-direction: column; }
@@ -222,9 +244,9 @@ function render(day, data) {
       <dl class="fields">
         <dt>心情</dt><dd>${esc(s.mood)}</dd>
         <dt>忙碌度</dt><dd>${esc(s.busy)}</dd>
-        <dt>建议篇幅</dt><dd>${esc(s.suggest_length)}</dd>
         <dt>说话方式</dt><dd>${esc(s.manner)}</dd>
       </dl>
+      ${topicBlock(s, (data.shares || {})[s.slot] || [])}
     </article>`;
   }).join('');
 
@@ -235,6 +257,23 @@ function render(day, data) {
       ${m.aborted ? `<div class="digest">中止原因：${esc(m.aborted)}</div>` : ''}
       ${m.day_digest ? `<div class="digest">当日概要：${esc(m.day_digest)}</div>` : ''}
     </div>${segs}`;
+}
+
+function topicBlock(s, shares) {
+  if (!s.topic) return '<div class="topic none">这段没什么好说的</div>';
+  let keys = [];
+  try { keys = JSON.parse(s.topic_keys || '[]'); } catch (e) { keys = []; }
+  const rows = shares.map(r => {
+    const state = r.shared_at
+      ? `<b>已说出口 ${esc(r.shared_at.slice(11, 16))}</b>`
+      : '还没说';
+    return `<div class="share">${esc(r.session_id)}　注入 ${r.injected} 次　${state}</div>`;
+  }).join('');
+  return `<div class="topic">
+    <span class="tag">可说</span>${esc(s.topic)}
+    <div class="keys">关键词：${keys.map(esc).join('、') || '—'}</div>
+    ${rows || '<div class="share">还没在任何会话里注入过</div>'}
+  </div>`;
 }
 
 function nowMinutes() { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); }

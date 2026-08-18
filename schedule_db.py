@@ -21,6 +21,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import json
 import sqlite3
 
 
@@ -52,12 +53,15 @@ CREATE TABLE IF NOT EXISTS segments (
     company        TEXT NOT NULL,
     kind           TEXT NOT NULL,
 
-    -- LLM 生成的五个字段
+    -- 第一轮主生成
     story          TEXT NOT NULL DEFAULT '',
     manner         TEXT NOT NULL DEFAULT '',
     mood           TEXT NOT NULL DEFAULT '',
     busy           TEXT NOT NULL DEFAULT '',
-    suggest_length TEXT NOT NULL DEFAULT '',
+
+    -- 第二轮话题提炼；topic 为空表示这段没什么好说的
+    topic          TEXT NOT NULL DEFAULT '',
+    topic_keys     TEXT NOT NULL DEFAULT '[]',   -- JSON 数组
 
     generated      INTEGER NOT NULL DEFAULT 0,  -- 0 表示这一段用的是底稿
     negative_level TEXT NOT NULL DEFAULT '',    -- 轻微 / 中等 / 空
@@ -71,6 +75,19 @@ CREATE INDEX IF NOT EXISTS idx_segments_date ON segments(date);
 CREATE INDEX IF NOT EXISTS idx_segments_kind ON segments(kind);
 CREATE INDEX IF NOT EXISTS idx_segments_negative ON segments(negative_level)
     WHERE negative_level <> '';
+
+-- 谈资的分享状态，按会话独立计数：跟不同的人聊，同一件事说一遍是正常的。
+-- 必须落库而不是放内存，否则重启后她会把今天已经说过的事再说一遍。
+CREATE TABLE IF NOT EXISTS shares (
+    date       TEXT NOT NULL,
+    slot       TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    injected   INTEGER NOT NULL DEFAULT 0,   -- 这条谈资在该会话被注入过多少次
+    shared_at  TEXT NOT NULL DEFAULT '',     -- 检测到她说出口的时刻；空 = 还没说
+    PRIMARY KEY (date, slot, session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shares_date ON shares(date);
 """
 
 
@@ -151,7 +168,8 @@ class ScheduleDB:
             "manner": state.manner,
             "mood": state.mood,
             "busy": state.busy,
-            "suggest_length": state.suggest_length,
+            "topic": state.topic,
+            "topic_keys": json.dumps(state.topic_keys, ensure_ascii=False),
             "generated": 1 if state.generated else 0,
             "negative_level": negative_level,
             "model": model,
@@ -193,11 +211,52 @@ class ScheduleDB:
                 "manner": row["manner"],
                 "mood": row["mood"],
                 "busy": row["busy"],
-                "suggest_length": row["suggest_length"],
+                "topic": row["topic"],
+                "topic_keys": json.loads(row["topic_keys"] or "[]"),
                 "generated": bool(row["generated"]),
                 "generated_at": row["generated_at"],
             }
         return result
+
+    def load_shares(self, dates: list[str]) -> dict[tuple[str, str, str], tuple[int, str]]:
+        """读若干天的谈资分享状态，供启动时填充内存。
+
+        Returns:
+            dict: ``{(日期, 时段, 会话): (注入次数, 说出口时刻)}``
+        """
+        if not dates:
+            return {}
+        placeholders = ",".join("?" for _ in dates)
+        rows = self._db.execute(
+            f"SELECT * FROM shares WHERE date IN ({placeholders})", tuple(dates)
+        ).fetchall()
+        return {
+            (row["date"], row["slot"], row["session_id"]): (row["injected"], row["shared_at"])
+            for row in rows
+        }
+
+    def upsert_share(
+        self, day: date, slot: str, session_id: str, injected: int, shared_at: str
+    ) -> None:
+        """写入或更新一条谈资分享状态。
+
+        每次注入都会调一次。SQLite 本地写入是微秒级的，放在 replyer hook 里不成负担，
+        换来的是任何时刻查库都能看到准确的注入次数。
+        """
+        self._db.execute(
+            "INSERT INTO shares (date, slot, session_id, injected, shared_at) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(date, slot, session_id) DO UPDATE SET "
+            "injected=excluded.injected, shared_at=excluded.shared_at",
+            (day.isoformat(), slot, session_id, injected, shared_at),
+        )
+
+    def shares_of_day(self, day: str) -> list[dict[str, Any]]:
+        """取某一天的全部分享记录，供 viewer 和 /status topic 展示。"""
+        rows = self._db.execute(
+            "SELECT * FROM shares WHERE date = ? ORDER BY slot, session_id", (day,)
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def count_segments(self) -> int:
         """归档里一共有多少段，供 /status 展示。"""
@@ -207,53 +266,3 @@ class ScheduleDB:
         """归档覆盖的首末日期；空库返回两个空串。"""
         row = self._db.execute("SELECT MIN(date), MAX(date) FROM days").fetchone()
         return (row[0] or "", row[1] or "")
-
-    # ── 迁移 ──
-    def import_legacy_cache(self, payload: dict[str, Any], segments_of: Any) -> int:
-        """把旧的 schedule_cache.json 导入归档。
-
-        旧格式没有骨架快照，只能按日期回查当时的骨架——换过季的话对不上，
-        所以只用于一次性迁移，对不上的段直接跳过。
-
-        Returns:
-            int: 成功导入的段数。
-        """
-        imported = 0
-        for day_str, day_data in payload.items():
-            try:
-                day = date.fromisoformat(day_str)
-            except ValueError:
-                continue
-            segments = {segment.slot: (index, segment) for index, segment in enumerate(segments_of(day))}
-            ok = 0
-            for slot, raw in (day_data.get("segments") or {}).items():
-                found = segments.get(slot)
-                if found is None:
-                    continue
-                seq, segment = found
-                state = _LegacyState(raw)
-                self.upsert_segment(day, seq, segment, state)
-                imported += 1
-                ok += 1 if state.generated else 0
-            # 计数要在导完段之后算，否则那一天在浏览器里会显示成 0/0
-            self.upsert_day(
-                day,
-                day_digest=day_data.get("day_digest", ""),
-                batch_reason="迁移自 JSON 缓存",
-                ok_count=ok,
-                total_count=len(segments),
-            )
-        return imported
-
-
-class _LegacyState:
-    """把旧 JSON 里的一段包成 upsert_segment 认得的形状。"""
-
-    def __init__(self, raw: dict[str, Any]) -> None:
-        self.story = str(raw.get("story") or "")
-        self.manner = str(raw.get("manner") or "")
-        self.mood = str(raw.get("mood") or "")
-        self.busy = str(raw.get("busy") or "")
-        self.suggest_length = str(raw.get("suggest_length") or "")
-        self.generated = bool(raw.get("generated", True))
-        self.generated_at = str(raw.get("generated_at") or "")

@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import json
 import tomllib
 
 from .schedule_db import ScheduleDB
@@ -36,8 +35,6 @@ DAY_KEYS = [
 ]
 
 WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
-
-SUGGEST_LENGTHS = ("简短表达", "正常回复", "长回复")
 
 # 内存里最多保留几天（今天 + 明天，再多留一天做缓冲）。
 # 这只影响热路径的内存副本，归档库里是全量永久保留的。
@@ -79,13 +76,19 @@ class Segment:
 
 @dataclass
 class SegmentState:
-    """一个时段的生成结果（LLM 产出的五个字段）。"""
+    """一个时段的生成结果。
+
+    前四个字段来自主生成（第一轮），``topic`` / ``topic_keys`` 来自话题提炼（第二轮）。
+    """
 
     story: str
     manner: str
     mood: str
     busy: str
-    suggest_length: str
+    # 第二轮产出：一句第三人称的谈资提示，空 = 这段没什么好说的
+    topic: str = ""
+    # 第二轮产出：检测她有没有把这件事说出来用的关键词
+    topic_keys: list[str] = field(default_factory=list)
     generated_at: str = ""
     # 底稿顶上的（未生成成功）标记为 False，供 /status 和事实层工具区分
     generated: bool = True
@@ -96,19 +99,22 @@ class SegmentState:
             "manner": self.manner,
             "mood": self.mood,
             "busy": self.busy,
-            "suggest_length": self.suggest_length,
+            "topic": self.topic,
+            "topic_keys": list(self.topic_keys),
             "generated_at": self.generated_at,
             "generated": self.generated,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SegmentState":
+        raw_keys = data.get("topic_keys")
         return cls(
             story=str(data.get("story") or ""),
             manner=str(data.get("manner") or ""),
             mood=str(data.get("mood") or ""),
             busy=str(data.get("busy") or ""),
-            suggest_length=str(data.get("suggest_length") or ""),
+            topic=str(data.get("topic") or ""),
+            topic_keys=[str(k) for k in raw_keys] if isinstance(raw_keys, list) else [],
             generated_at=str(data.get("generated_at") or ""),
             generated=bool(data.get("generated", True)),
         )
@@ -149,12 +155,13 @@ class ScheduleStore:
 
     def __init__(self, plugin_dir: Path, data_dir: Path) -> None:
         self._skeleton_path = plugin_dir / "schedule_skeleton.toml"
-        self._legacy_cache_path = data_dir / "schedule_cache.json"
         self._data_dir = data_dir
         self._db = ScheduleDB(data_dir / "schedule.db")
         self._days: dict[str, list[Segment]] = {}
         self._fallback: dict[str, SegmentState] = {}
         self._cache: dict[str, DayCache] = {}
+        # 谈资分享状态：{(日期, 时段, 会话): (注入次数, 说出口时刻)}
+        self._shares: dict[tuple[str, str, str], tuple[int, str]] = {}
 
     # ── 骨架 ──
     def load_skeleton(self) -> None:
@@ -192,7 +199,6 @@ class ScheduleStore:
                 manner=str(value.get("manner") or ""),
                 mood=str(value.get("mood") or ""),
                 busy=str(value.get("busy") or ""),
-                suggest_length=str(value.get("suggest_length") or ""),
                 generated=False,
             )
 
@@ -231,11 +237,12 @@ class ScheduleStore:
         """按 kind 取底稿，story 由 title + place 现拼一句。"""
         base = self._fallback[segment.kind]
         return SegmentState(
-            story=f"在{segment.place}，{segment.title}。",
+            story=f"Mittes 在{segment.place}，{segment.title}。",
             manner=base.manner,
             mood=base.mood,
             busy=base.busy,
-            suggest_length=base.suggest_length,
+            # 异常状态下不给她谈资：底稿是兜底，不该顺带制造话题
+            topic="",
             generated=False,
         )
 
@@ -261,26 +268,13 @@ class ScheduleStore:
     def db(self) -> ScheduleDB:
         return self._db
 
-    def open_db(self) -> int:
-        """连库、迁移旧 JSON 缓存、把最近几天读进内存。
-
-        Returns:
-            int: 本次从旧 JSON 迁移进来的段数，没有旧文件时为 0。
-        """
+    def open_db(self) -> None:
+        """连库，并把最近几天的生成结果和谈资分享状态读进内存。"""
         self._db.connect()
-
-        migrated = 0
-        if self._legacy_cache_path.exists():
-            with self._legacy_cache_path.open("r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-            migrated = self._db.import_legacy_cache(payload, self.segments_of)
-            # 迁完改名而不是删掉：万一骨架换过季对不上，原文件还在手里
-            self._legacy_cache_path.replace(self._legacy_cache_path.with_suffix(".json.migrated"))
-
         self._cache = {
             day: DayCache.from_dict(data) for day, data in self._db.load_days(_MAX_CACHED_DAYS).items()
         }
-        return migrated
+        self._shares = self._db.load_shares(list(self._cache))
 
     def close_db(self) -> None:
         self._db.close()
@@ -338,6 +332,27 @@ class ScheduleStore:
         if cached is None:
             return None
         return cached.segments.get(segment.slot)
+
+    # ── 谈资的分享状态（5.11）──
+    def share_state(self, day: date, slot: str, session_id: str) -> tuple[int, str]:
+        """取某条谈资在某会话的状态：(注入次数, 说出口时刻)。"""
+        return self._shares.get((day.isoformat(), slot, session_id), (0, ""))
+
+    def is_shared(self, day: date, slot: str, session_id: str) -> bool:
+        """这条谈资在该会话是否已经说出口过。说过就不再注入，且不留任何痕迹。"""
+        return bool(self.share_state(day, slot, session_id)[1])
+
+    def mark_injected(self, day: date, slot: str, session_id: str) -> None:
+        """记一次注入。"""
+        injected, shared_at = self.share_state(day, slot, session_id)
+        self._shares[(day.isoformat(), slot, session_id)] = (injected + 1, shared_at)
+        self._db.upsert_share(day, slot, session_id, injected + 1, shared_at)
+
+    def mark_shared(self, day: date, slot: str, session_id: str, moment: str) -> None:
+        """记一次"她把这件事说出口了"。"""
+        injected, _ = self.share_state(day, slot, session_id)
+        self._shares[(day.isoformat(), slot, session_id)] = (injected, moment)
+        self._db.upsert_share(day, slot, session_id, injected, moment)
 
     def day_generated_count(self, day: date) -> int:
         """某天已生成成功的段数。"""
