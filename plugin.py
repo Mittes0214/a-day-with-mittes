@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.1.3
+版本：3.1.4
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """
@@ -284,6 +284,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 )
                 outcome.state.generated_at = now_jst().isoformat()
                 day_cache.segments[segment.slot] = outcome.state
+                # 这一段换了新内容，旧 topic 的分享状态必须跟着作废，
+                # 否则 is_shared 会拿"上一版说过了"把新谈资一直摁住。
+                store.reset_shares(day, segment.slot)
 
                 if outcome.fatal:
                     consecutive_fatal += 1
@@ -830,6 +833,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
         segments = store.segments_of(day)
         produced, error = await generator.extract_topics(day, segments, cached.segments)
+        # topic 变了，绑在旧 topic 上的分享状态同样作废
+        for segment in segments:
+            store.reset_shares(day, segment.slot)
         store.flush(
             day,
             model=str(await self._get_config("generation.model", "replyer")),

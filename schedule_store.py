@@ -366,6 +366,17 @@ class ScheduleStore:
         self._shares[(day.isoformat(), slot, session_id)] = (injected, moment)
         self._db.upsert_share(day, slot, session_id, injected, moment, reply_text, hit_key)
 
+    def reset_shares(self, day: date, slot: str) -> None:
+        """这一段被重新生成了，把它的分享状态清空。
+
+        必须在**写入新 state 之后**调用：分享状态属于旧的那条 topic，
+        留着会让新 topic 一次都注入不出去（见 ``ScheduleDB.delete_shares``）。
+        """
+        key_prefix = (day.isoformat(), slot)
+        for key in [k for k in self._shares if k[:2] == key_prefix]:
+            del self._shares[key]
+        self._db.delete_shares(day, slot)
+
     def day_generated_count(self, day: date) -> int:
         """某天已生成成功的段数。"""
         cached = self._cache.get(day.isoformat())

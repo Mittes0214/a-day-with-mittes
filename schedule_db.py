@@ -301,6 +301,18 @@ class ScheduleDB:
             (day.isoformat(), slot, session_id, injected, shared_at, reply_text, hit_key),
         )
 
+    def delete_shares(self, day: date, slot: str) -> None:
+        """清掉某一段的全部分享状态。
+
+        谈资的分享状态是**绑在那条 topic 上**的，可这张表按 (date, slot, session_id)
+        建键，换了 topic 键还是同一个。所以一段被重新生成之后必须清，否则
+        ``is_shared`` 会拿旧 topic 的"说过了"把新 topic 一直摁住——静默的，
+        既不报错也不进日志，只有前端那行"已说出口"还挂着才看得出来。
+        """
+        self._db.execute(
+            "DELETE FROM shares WHERE date = ? AND slot = ?", (day.isoformat(), slot)
+        )
+
     def shares_of_day(self, day: str) -> list[dict[str, Any]]:
         """取某一天的全部分享记录，供 viewer 和 /status topic 展示。"""
         rows = self._db.execute(
