@@ -109,8 +109,7 @@ _MOOD_RULES = """## mood —— 一个短语，十字以内，写情绪不写事
   - ✗ 独自在路上和浴室里，随时能接话
   - ✓ 独处着，随时能接话，就是回得慢一点
   - ✗ 正在店里忙，回复会慢
-  - ✓ 手上一直有活，回复会慢
-"""
+  - ✓ 手上一直有活，回复会慢"""
 
 _PERSON_TABLE = """# 人称
 下面几个字段的人称各不相同，别串：
@@ -514,15 +513,7 @@ class SegmentGenerator:
         输入永远只有三百来字（旧概要 + 一段新 story），所以可以用便宜模型。
         失败就沿用旧的，不影响主链路——它只用来防当天自我重复。
         """
-        prompt = (
-            "把下面这段新发生的事，并进已有的当日概要里，输出更新后的概要。\n\n"
-            "要求：\n"
-            "- 只写「做过什么」，两三句话，120 字以内\n"
-            "- 滤掉物件、身体细节和文笔，那些留着会诱导后面的段落接着写同样的细节\n"
-            "- 直接输出概要正文，不要任何解释或前缀\n\n"
-            f"# 已有的当日概要\n{day_digest or '（今天刚开始，还没有）'}\n\n"
-            f"# 新发生的事\n{story}"
-        )
+        prompt = self._build_digest_prompt(day_digest, story)
         result = await self._call_llm(prompt, model=self._digest_model, temperature=0.3)
         self._record_preview(
             request_kind="schedule_digest",
@@ -539,6 +530,19 @@ class SegmentGenerator:
             _logger.warning("[概要] 输出为空，沿用旧概要")
             return day_digest
         return updated
+
+    @staticmethod
+    def _build_digest_prompt(day_digest: str, story: str) -> str:
+        """拼装当日概要压缩 prompt（设计文档 5.9）。"""
+        return (
+            "把下面这段新发生的事，并进已有的当日概要里，输出更新后的概要。\n\n"
+            "要求：\n"
+            "- 只写「做过什么」，两三句话，120 字以内\n"
+            "- 滤掉物件、身体细节和文笔，那些留着会诱导后面的段落接着写同样的细节\n"
+            "- 直接输出概要正文，不要任何解释或前缀\n\n"
+            f"# 已有的当日概要\n{day_digest or '（今天刚开始，还没有）'}\n\n"
+            f"# 新发生的事\n{story}"
+        )
 
     def _record_preview(
         self,
