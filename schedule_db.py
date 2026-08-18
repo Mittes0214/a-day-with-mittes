@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS shares (
     session_id TEXT NOT NULL,
     injected   INTEGER NOT NULL DEFAULT 0,   -- 这条谈资在该会话被注入过多少次
     shared_at  TEXT NOT NULL DEFAULT '',     -- 检测到她说出口的时刻；空 = 还没说
+    reply_text TEXT NOT NULL DEFAULT '',     -- 判定为"说出口"的那条回复原文
+    hit_key    TEXT NOT NULL DEFAULT '',     -- 触发判定的那个关键词
     PRIMARY KEY (date, slot, session_id)
 );
 
@@ -98,6 +100,10 @@ _EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     "segments": {
         "topic": "TEXT NOT NULL DEFAULT ''",
         "topic_keys": "TEXT NOT NULL DEFAULT '[]'",
+    },
+    "shares": {
+        "reply_text": "TEXT NOT NULL DEFAULT ''",
+        "hit_key": "TEXT NOT NULL DEFAULT ''",
     },
 }
 
@@ -264,19 +270,35 @@ class ScheduleDB:
         }
 
     def upsert_share(
-        self, day: date, slot: str, session_id: str, injected: int, shared_at: str
+        self,
+        day: date,
+        slot: str,
+        session_id: str,
+        injected: int,
+        shared_at: str,
+        reply_text: str = "",
+        hit_key: str = "",
     ) -> None:
         """写入或更新一条谈资分享状态。
 
         每次注入都会调一次。SQLite 本地写入是微秒级的，放在 replyer hook 里不成负担，
         换来的是任何时刻查库都能看到准确的注入次数。
+
+        ``reply_text`` / ``hit_key`` 只在"检测到说出口"那一次带值，注入时是空串——
+        所以更新时给了才覆盖，否则之后再有注入会把回复原文冲掉。
+        这两列纯粹给人查：光看「已说出口」判断不了检测准不准，得看她到底说了什么、
+        又是哪个关键词触发的（5.11 那条已知风险靠它们排查）。
         """
         self._db.execute(
-            "INSERT INTO shares (date, slot, session_id, injected, shared_at) "
-            "VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO shares (date, slot, session_id, injected, shared_at, reply_text, hit_key) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(date, slot, session_id) DO UPDATE SET "
-            "injected=excluded.injected, shared_at=excluded.shared_at",
-            (day.isoformat(), slot, session_id, injected, shared_at),
+            "injected=excluded.injected, shared_at=excluded.shared_at, "
+            "reply_text=CASE WHEN excluded.reply_text <> '' "
+            "THEN excluded.reply_text ELSE shares.reply_text END, "
+            "hit_key=CASE WHEN excluded.hit_key <> '' "
+            "THEN excluded.hit_key ELSE shares.hit_key END",
+            (day.isoformat(), slot, session_id, injected, shared_at, reply_text, hit_key),
         )
 
     def shares_of_day(self, day: str) -> list[dict[str, Any]]:

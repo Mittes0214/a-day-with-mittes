@@ -348,11 +348,23 @@ class ScheduleStore:
         self._shares[(day.isoformat(), slot, session_id)] = (injected + 1, shared_at)
         self._db.upsert_share(day, slot, session_id, injected + 1, shared_at)
 
-    def mark_shared(self, day: date, slot: str, session_id: str, moment: str) -> None:
-        """记一次"她把这件事说出口了"。"""
+    def mark_shared(
+        self,
+        day: date,
+        slot: str,
+        session_id: str,
+        moment: str,
+        reply_text: str = "",
+        hit_key: str = "",
+    ) -> None:
+        """记一次"她把这件事说出口了"。
+
+        ``reply_text`` / ``hit_key`` 只落库、不进内存缓存——判定逻辑只用得上
+        "说没说过"这一个比特，回复原文是给人在前端查证用的。
+        """
         injected, _ = self.share_state(day, slot, session_id)
         self._shares[(day.isoformat(), slot, session_id)] = (injected, moment)
-        self._db.upsert_share(day, slot, session_id, injected, moment)
+        self._db.upsert_share(day, slot, session_id, injected, moment, reply_text, hit_key)
 
     def day_generated_count(self, day: date) -> int:
         """某天已生成成功的段数。"""

@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.1.2
+版本：3.1.3
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """
@@ -619,7 +619,14 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if not hit:
             return {"success": True, "action": "continue"}
 
-        store.mark_shared(moment.date(), segment.slot, session_id, moment.isoformat())
+        store.mark_shared(
+            moment.date(),
+            segment.slot,
+            session_id,
+            moment.isoformat(),
+            reply_text=response,
+            hit_key=hit,
+        )
         _logger.info(
             "[谈资] %s %s 在会话 %s 说出口了（命中「%s」），不再注入",
             moment.date(),

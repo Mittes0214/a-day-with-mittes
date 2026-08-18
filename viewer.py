@@ -177,6 +177,13 @@ main { flex: 1; padding: 28px 32px 64px; max-width: 900px; }
 .topic .keys { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
 .topic .share { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
 .topic .share b { color: var(--accent); font-weight: 600; }
+.topic .said {
+  margin: 4px 0 2px; padding: 6px 9px; border-radius: 6px;
+  background: var(--badge); border-left: 3px solid var(--accent);
+  color: var(--text); font-size: 13px; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-word;
+}
+.topic .said.none { color: var(--muted); border-left-color: var(--line); font-style: italic; }
 .empty { color: var(--muted); padding: 40px 0; }
 @media (max-width: 640px) {
   body { flex-direction: column; }
@@ -264,10 +271,15 @@ function topicBlock(s, shares) {
   let keys = [];
   try { keys = JSON.parse(s.topic_keys || '[]'); } catch (e) { keys = []; }
   const rows = shares.map(r => {
-    const state = r.shared_at
-      ? `<b>已说出口 ${esc(r.shared_at.slice(11, 16))}</b>`
-      : '还没说';
-    return `<div class="share">${esc(r.session_id)}　注入 ${r.injected} 次　${state}</div>`;
+    if (!r.shared_at) {
+      return `<div class="share">注入 ${r.injected} 次，还没说出口</div>`;
+    }
+    const hit = r.hit_key ? `　命中「${esc(r.hit_key)}」` : '';
+    const said = r.reply_text
+      ? `<div class="said">${esc(r.reply_text)}</div>`
+      : '<div class="said none">（这条记录早于回复留存，没有原文）</div>';
+    return `<div class="share"><b>已说出口 ${esc(r.shared_at.slice(11, 16))}</b>`
+      + `　注入 ${r.injected} 次${hit}${said}</div>`;
   }).join('');
   return `<div class="topic">
     <span class="tag">可说</span>${esc(s.topic)}
