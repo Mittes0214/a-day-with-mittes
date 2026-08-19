@@ -35,8 +35,6 @@ CREATE TABLE IF NOT EXISTS days (
     batch_reason   TEXT NOT NULL DEFAULT '',   -- 每日批次 / 冷启动补跑 / 手动触发
     batch_at       TEXT NOT NULL DEFAULT '',   -- 批次结束时刻（JST，ISO8601）
     batch_elapsed  REAL NOT NULL DEFAULT 0,    -- 批次耗时（秒）
-    ok_count       INTEGER NOT NULL DEFAULT 0,
-    total_count    INTEGER NOT NULL DEFAULT 0,
     aborted        TEXT NOT NULL DEFAULT ''    -- 非空表示整批中止，内容是原因
 );
 
@@ -97,6 +95,14 @@ CREATE INDEX IF NOT EXISTS idx_shares_date ON shares(date);
 # 各表**新增过**的列：列名 → 类型与默认值。
 # 只需要列出可能在旧库里缺席的列；建库时 _SCHEMA 已经带上它们了，
 # 这份表是给"库比代码旧"的情况用的。
+# 各表**废弃掉**的列。留着不删是有代价的：ok_count / total_count 可以从
+# segments 数出来，存一份就必然会跟实际漂——换骨架裁掉旧段之后，
+# 段数变了而这两个数还是旧的，前端就显示出「19/11」这种不可能的比值。
+# 可派生的东西不存，是消除这类漂移的唯一办法。
+_OBSOLETE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "days": ("ok_count", "total_count"),
+}
+
 _EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     "segments": {
         "topic": "TEXT NOT NULL DEFAULT ''",
@@ -144,6 +150,14 @@ class ScheduleDB:
                 if name not in existing:
                     self._db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
+        # 反向：删掉已经废弃的列。留着的话它们会继续被 SELECT * 读到，
+        # 而里面装的是过期的值——那比没有更糟。
+        for table, obsolete in _OBSOLETE_COLUMNS.items():
+            existing = {row[1] for row in self._db.execute(f"PRAGMA table_info({table})")}
+            for name in obsolete:
+                if name in existing:
+                    self._db.execute(f"ALTER TABLE {table} DROP COLUMN {name}")
+
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()
@@ -167,8 +181,6 @@ class ScheduleDB:
             "batch_reason": str(fields.get("batch_reason") or ""),
             "batch_at": str(fields.get("batch_at") or ""),
             "batch_elapsed": float(fields.get("batch_elapsed") or 0),
-            "ok_count": int(fields.get("ok_count") or 0),
-            "total_count": int(fields.get("total_count") or 0),
             "aborted": str(fields.get("aborted") or ""),
         }
         columns = ",".join(row)

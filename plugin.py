@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.4.1
+版本：3.4.2
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """
@@ -345,8 +345,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 batch_reason=reason,
                 batch_at=now_jst().isoformat(),
                 batch_elapsed=elapsed,
-                ok_count=generated,
-                total_count=len(segments),
                 aborted=aborted,
             )
 

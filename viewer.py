@@ -38,7 +38,11 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 def _list_days(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        SELECT d.date, d.weekday, d.ok_count, d.total_count, d.aborted,
+        SELECT d.date, d.weekday, d.aborted,
+               -- 段数从 segments 现数，不存冗余列：存一份就必然会跟实际漂
+               (SELECT COUNT(*) FROM segments s WHERE s.date = d.date) AS total_count,
+               (SELECT COUNT(*) FROM segments s
+                 WHERE s.date = d.date AND s.generated = 1) AS ok_count,
                (SELECT COUNT(*) FROM segments s
                  WHERE s.date = d.date AND s.negative_level <> '') AS negative_count
           FROM days d
@@ -49,7 +53,16 @@ def _list_days(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 def _load_day(conn: sqlite3.Connection, day: str) -> dict[str, Any] | None:
-    meta = conn.execute("SELECT * FROM days WHERE date = ?", (day,)).fetchone()
+    meta = conn.execute(
+        """
+        SELECT d.*,
+               (SELECT COUNT(*) FROM segments s WHERE s.date = d.date) AS total_count,
+               (SELECT COUNT(*) FROM segments s
+                 WHERE s.date = d.date AND s.generated = 1) AS ok_count
+          FROM days d WHERE d.date = ?
+        """,
+        (day,),
+    ).fetchone()
     if meta is None:
         return None
     segments = conn.execute(
@@ -276,7 +289,6 @@ function render(day, data) {
       <p class="story">${esc(s.story)}</p>
       <dl class="fields">
         <dt>心情</dt><dd>${esc(s.mood)}</dd>
-        <dt>忙碌度</dt><dd>${esc(s.busy)}</dd>
         <dt>说话方式</dt><dd>${esc(s.manner)}</dd>
       </dl>
       ${topicBlock(s, (data.shares || {})[s.slot] || [])}
