@@ -8,10 +8,10 @@
 字段分工（4.3）：
 - ``story``            → 事实层工具结果，被问才吐，可以有活动名词
 - ``manner``           → replyer 常驻注入（A），**一个具体名词都不能有**
-- ``mood`` / ``busy``  → planner 状态层，同样不含活动名词
+- ``mood``            → planner 注入，同样不含活动名词
 - ``topic``            → replyer 常驻注入（C），第二轮提炼，说出口后撤掉
 
-第二轮的话题提炼见 ``extract_topics``：全天十段一次调用，用便宜模型。
+第二轮见 ``extract_round2``：从 story 里抽地点时段轴和谈资，全天十段一次调用，用便宜模型。
 """
 
 from dataclasses import dataclass
@@ -27,6 +27,7 @@ from .schedule_store import (
     ScheduleStore,
     Segment,
     SegmentState,
+    to_minutes,
     weekday_name,
 )
 
@@ -84,15 +85,7 @@ _MOOD_RULES = """## mood —— 一个短语，十字以内，写情绪不写事
   - ✗ 手心发痒想画画　（"画画"是事由）
   - ✗ 因为被夸而高兴　（"被夸"是事由）
   - ✓ 小鹿乱撞（写出了是哪种心动，但看不出她在看什么）
-- 如果上一个时段有不愉快，这一段的恢复要有过程，不要一到点就完全没事了
-
-## busy —— 一句话，她现在方不方便搭话、会不会慢
-- 40 字以内
-- **和 manner 同一条禁令**：只写"腾不腾得开手、回得快不快"，不写她人在哪、在做什么
-  - ✗ 独自在路上和浴室里，随时能接话
-  - ✓ 独处着，随时能接话，就是回得慢一点
-  - ✗ 正在店里忙，回复会慢
-  - ✓ 手上一直有活，回复会慢"""
+- 如果上一个时段有不愉快，这一段的恢复要有过程，不要一到点就完全没事了"""
 
 _PERSON_TABLE = """# 人称
 下面几个字段的人称各不相同，别串：
@@ -101,9 +94,9 @@ _PERSON_TABLE = """# 人称
 |---|---|---|
 | story | 第三人称 | 讲 Mittes 的事，讲给读者听 |
 | manner | 第二人称「你」 | 直接对 Mittes 说话 |
-| mood / busy | 不带人称 | 对她当前状态的客观描述 |"""
+| mood | 不带人称 | 对她当前情绪的客观描述 |"""
 
-# 常驻注入的三个字段（manner / mood / busy）里出现就判定不合格的
+# 常驻注入的两个字段（manner / mood）里出现就判定不合格的
 # 通用场所/身份词。骨架的 place / outfit 会另行拆成词一起查。
 _BANNED_IN_MANNER = (
     "店里", "店内", "咖啡店", "学校", "教室", "课上", "家里", "回家",
@@ -329,10 +322,10 @@ class SegmentGenerator:
             )
 
         blocks.append(_PERSON_TABLE)
-        blocks.append("# 为这个时段生成四个字段\n\n" + "\n\n".join([_STORY_RULES, _MANNER_RULES, _MOOD_RULES]))
+        blocks.append("# 为这个时段生成三个字段\n\n" + "\n\n".join([_STORY_RULES, _MANNER_RULES, _MOOD_RULES]))
         blocks.append(
             "# 输出\n严格的 JSON 对象，字段名照上面写，不要包在代码块里：\n"
-            '{"story":"…","manner":"…","mood":"…","busy":"…"}'
+            '{"story":"…","manner":"…","mood":"…"}'
         )
         return "\n\n".join(blocks)
 
@@ -341,8 +334,7 @@ class SegmentGenerator:
     ) -> tuple[SegmentState | None, str]:
         """解析并校验生成结果（设计文档 5.7）。
 
-        硬校验（不过就重来）：manner / mood / busy 含地点/服装/场所词，
-        manner 或 busy 超长。
+        硬校验（不过就重来）：manner / mood 含地点/服装/场所词，manner 超长。
         只告警不重来：story 字数越界——它是被问才吐的事实层，长一点没有副作用，
         为字数烧一次调用不值得。
         """
@@ -355,24 +347,18 @@ class SegmentGenerator:
             story=str(payload.get("story") or "").strip(),
             manner=str(payload.get("manner") or "").strip(),
             mood=str(payload.get("mood") or "").strip(),
-            busy=str(payload.get("busy") or "").strip(),
         )
 
-        missing = [
-            name for name in ("story", "manner", "mood", "busy") if not getattr(state, name)
-        ]
+        missing = [name for name in ("story", "manner", "mood") if not getattr(state, name)]
         if missing:
             return None, f"缺字段：{'/'.join(missing)}"
 
         if len(state.manner) > 60:
             return None, f"manner 超长（{len(state.manner)} 字）"
-        if len(state.busy) > 50:
-            return None, f"busy 超长（{len(state.busy)} 字）"
 
-        # manner / mood / busy 三个字段全都进常驻注入（manner 进 replyer，
-        # 另两个进 planner 状态层），所以禁名词这条纪律对三个都成立。
-        # 只校验 manner 是不够的——实测 busy 写出过「独自在路上和浴室里」。
-        for name in ("manner", "mood", "busy"):
+        # manner 进 replyer、mood 进 planner，两个都是常驻注入，
+        # 所以禁名词这条纪律对两个都成立。
+        for name in ("manner", "mood"):
             hit = _find_banned_word(getattr(state, name), segment)
             if hit:
                 return None, f"{name} 含具体事项名词「{hit}」"
@@ -388,25 +374,28 @@ class SegmentGenerator:
 
         return state, ""
 
-    # ── 第二轮：话题提炼 ──
-    async def extract_topics(
+    # ── 第二轮：地点时段轴 + 话题提炼 ──
+    async def extract_round2(
         self, day: date, segments: list[Segment], states: dict[str, SegmentState]
-    ) -> tuple[int, str]:
-        """为一整天的 story 提炼谈资，全天十段**一次调用**。
+    ) -> tuple[dict[str, int], str]:
+        """从一整天的 story 里抽两样东西，全天十段**一次调用**（设计文档 5.10）。
 
-        事实层有个先天缺陷：几乎没人会主动问「你在干嘛」，工具不被调用，story 就用不上。
-        所以给她一个主动出口——一句今天遇到的、值得说给人听的事（设计文档 5.10）。
+        - ``places``：她这一段待过哪些地方，排成首尾相接的时段轴。
+          骨架的 ``place`` 是一段一个值，跨场所的时段只能把几个地点挤进一个字符串、
+          没有时间边界，所以「她现在在哪」在那 90 分钟里答不出来。
+        - ``topic`` / ``topic_keys``：一句值得说给人听的小事。
+          事实层有个先天缺陷——几乎没人会主动问「你在干嘛」，工具不被调用 story 就用不上；
+          谈资给她一个主动出口。
 
-        用的模型和 day_digest 压缩分开配：压缩只要能概括，提炼要能看出哪件事值得讲、
-        并把前因后果说清楚，对模型的要求实际上更高。
+        不并进主生成，因为两件事性质不同（创作 vs 抽取），抽取用便宜模型就够。
+        ``places`` 尤其不能进主生成：模型如果知道写完 story 还得交一份地点时段轴，
+        可能会为了填满它把人挪来挪去，写出本来不该发生的移动。
 
-        不并进主生成，因为两件事性质不同（创作 vs 抽取），而且抽取用便宜模型就够。
-        一次看到全天，还能避免十个话题都是同一类。
-
-        直接把结果写进 ``states`` 里对应的 ``topic`` / ``topic_keys``。
+        两个字段**分开容错**：一段的时段轴不合格不影响它的 topic，反之亦然。
+        直接把结果写进 ``states``。
 
         Returns:
-            tuple[int, str]: (产出话题的段数, 失败原因；成功时为空串)
+            tuple[dict, str]: ({"places": 段数, "topics": 条数, "total": 候选段数}, 失败原因)
         """
         # 睡眠段按 kind 硬拦，连判断都省掉
         candidates = [
@@ -415,65 +404,123 @@ class SegmentGenerator:
             if segment.kind != "睡眠" and states.get(segment.slot, None) is not None
             and states[segment.slot].generated
         ]
+        empty = {"places": 0, "topics": 0, "total": 0}
         if not candidates:
-            return 0, "没有可提炼的时段"
+            return empty, "没有可提炼的时段"
 
-        prompt = self._build_topic_prompt(day, candidates, states)
+        prompt = self._build_round2_prompt(day, candidates, states)
         result = await self._call_llm(prompt, model=self._topic_model, temperature=0.4)
         self._record_preview(
             request_kind="schedule_topics",
             prompt=prompt,
             result=result,
-            selection_reason=f"{day.isoformat()} 话题提炼（{len(candidates)} 段）",
-            output_title="今日话题",
+            selection_reason=f"{day.isoformat()} 第二轮抽取（{len(candidates)} 段）",
+            output_title="地点与话题",
         )
 
         if not result.get("success", True):
             reason = str(result.get("error") or result.get("response") or "").strip() or "模型调用失败"
-            _logger.error("[话题] %s 提炼失败：%s", day, reason)
-            return 0, reason
+            _logger.error("[第二轮] %s 失败：%s", day, reason)
+            return dict(empty, total=len(candidates)), reason
 
         rows = _extract_json_array(str(result.get("response") or ""))
         if rows is None:
-            _logger.error("[话题] %s 输出不是合法 JSON 数组", day)
-            return 0, "输出不是合法 JSON 数组"
+            _logger.error("[第二轮] %s 输出不是合法 JSON 数组", day)
+            return dict(empty, total=len(candidates)), "输出不是合法 JSON 数组"
 
         by_slot = {segment.slot: segment for segment in candidates}
         produced = 0
+        placed = 0
         for row in rows:
             if not isinstance(row, dict):
                 continue
             slot = str(row.get("slot") or "")
             if slot not in by_slot:
                 continue
+
+            # places 与 topic 分字段容错：一个不合格不牵连另一个（设计文档 5.10）。
+            # 两者的损失量级不一样——topic 没了只是少一次开口机会，
+            # places 没了是常驻注入每一轮都缺。
+            places = self._parse_places(day, by_slot[slot], row.get("places"))
+            if places:
+                states[slot].places = places
+                placed += 1
+
             topic = str(row.get("topic") or "").strip()
             if not topic:
                 continue
             if len(topic) > 100:
-                _logger.warning("[话题] %s %s 超长（%d 字），丢弃", day, slot, len(topic))
+                _logger.warning("[第二轮] %s %s topic 超长（%d 字），丢弃", day, slot, len(topic))
                 continue
             raw_keys = row.get("topic_keys")
             keys = [str(k).strip() for k in raw_keys if str(k).strip()] if isinstance(raw_keys, list) else []
             if not keys:
                 # 没有关键词就检测不了说没说过，那这条谈资会一直挂着——宁可不要
-                _logger.warning("[话题] %s %s 没给关键词，丢弃", day, slot)
+                _logger.warning("[第二轮] %s %s 没给关键词，丢弃 topic", day, slot)
                 continue
             states[slot].topic = topic
             states[slot].topic_keys = keys
             produced += 1
 
-        _logger.info("[话题] %s 提炼出 %d/%d 条", day, produced, len(candidates))
-        return produced, ""
+        _logger.info(
+            "[第二轮] %s 地点 %d/%d 段，话题 %d 条", day, placed, len(candidates), produced
+        )
+        return {"topics": produced, "places": placed, "total": len(candidates)}, ""
 
-    def _build_topic_prompt(
+    @staticmethod
+    def _parse_places(day: date, segment: Segment, raw: Any) -> list[dict[str, str]]:
+        """校验并规整一段的地点时段轴（设计文档 5.10）。
+
+        只校验时间，**地点不做任何检查**——地点的说法从 story 里来，
+        不要求落在骨架的 ``place`` 范围内（那一栏是概括，story 走过的地方比它细）。
+
+        时间必须首尾相接、覆盖整个时段：注入时要按当前时刻查表，
+        中间留空档就意味着那几分钟查不到人在哪。不合格整段丢弃，
+        退回骨架 ``place``——半截的时段轴比没有更糟。
+        """
+        if not isinstance(raw, list) or not raw:
+            return []
+        entries: list[dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                return []
+            start, end = str(item.get("from") or "").strip(), str(item.get("to") or "").strip()
+            place = str(item.get("place") or "").strip()
+            if not start or not end or not place:
+                return []
+            entries.append({"from": start, "to": end, "place": place})
+
+        try:
+            bounds = [(to_minutes(e["from"]), to_minutes(e["to"])) for e in entries]
+        except (ValueError, IndexError):
+            _logger.warning("[第二轮] %s %s 地点时间格式不对，丢弃", day, segment.slot)
+            return []
+
+        seg_start, seg_end = to_minutes(segment.start), to_minutes(segment.end)
+        problems = []
+        if bounds[0][0] != seg_start:
+            problems.append(f"首条从 {entries[0]['from']} 起，应为 {segment.start}")
+        if bounds[-1][1] != seg_end:
+            problems.append(f"末条到 {entries[-1]['to']} 止，应为 {segment.end}")
+        for index, (start, end) in enumerate(bounds):
+            if start >= end:
+                problems.append(f"第 {index + 1} 条时间倒挂")
+            if index and bounds[index - 1][1] != start:
+                problems.append(f"第 {index} 与第 {index + 1} 条之间不相接")
+        if problems:
+            _logger.warning("[第二轮] %s %s 地点时段轴不合格：%s", day, segment.slot, "；".join(problems))
+            return []
+        return entries
+
+    def _build_round2_prompt(
         self, day: date, segments: list[Segment], states: dict[str, SegmentState]
     ) -> str:
-        """拼装话题提炼 prompt（设计文档 5.10）。"""
+        """拼装第二轮 prompt：地点时段轴 + 话题提炼（设计文档 5.10）。"""
         listing = "\n\n".join(
             f"{index + 1}. {segment.slot}　{segment.title}\n{states[segment.slot].story}"
             for index, segment in enumerate(segments)
         )
-        return f"""你要从一份日程里挑出「今天值得说给人听的事」。
+        return f"""你要从一份日程里抽两样东西：她每一段待过哪些地方，以及这一段有没有值得说给人听的事。
 
 # 角色
 {PERSONA}
@@ -485,8 +532,14 @@ class SegmentGenerator:
 {listing}
 
 # 要做的事
-为上面每一段判断：这段时间里有没有一件事，是她之后跟人聊天时会顺口提起的？
-有就写一句提示 topic，没有就把 topic 留成空字符串。
+为上面每一段排出 places，并判断有没有一件事是她之后跟人聊天时会顺口提起的——
+有就写一句 topic，没有就把 topic 留成空字符串。
+
+## places 怎么写
+- 从 story 里看出她这段时间待过哪些地方，按先后排成一条时段轴，地点用 story 里的说法
+- 每段从几点到几点由你定
+- 第一条从这个时段的开始时刻起，最后一条到结束时刻止，相邻两条首尾相接
+- 从头到尾没挪过地方就只写一条，占满整段
 
 ## topic 怎么写
 - **是从 story 里挑一件事，不是把 story 概括一遍**。一段 story 里可能有好几件事在发生，
@@ -508,7 +561,11 @@ class SegmentGenerator:
 # 输出
 严格的 JSON 数组，不要包在代码块里。一段一个对象，slot 必须和上面完全一致。
 没什么好说的那几段也要出现在数组里，只是 topic 给空字符串：
-[{{"slot":"09:00-12:00","topic":"…","topic_keys":["…","…"]}}]"""
+[{{"slot":"21:30-23:00",
+  "places":[{{"from":"21:30","to":"22:00","place":"KTV 洗手间"}},
+            {{"from":"22:00","to":"22:45","place":"街区夜路"}},
+            {{"from":"22:45","to":"23:00","place":"家门口"}}],
+  "topic":"…","topic_keys":["…","…"]}}]"""
 
     # ── 当日概要 ──
     async def update_digest(self, day_digest: str, story: str) -> str:

@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.1.5
+版本：3.2.0
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """
@@ -318,9 +318,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
             # 第二轮：全天一次调用，为每段提炼一句谈资（5.10）。
             # 放在主生成之后，因为它要读全天的 story。
-            topics, topic_error = 0, ""
+            round2, round2_error = {"places": 0, "topics": 0, "total": 0}, ""
             if not aborted:
-                topics, topic_error = await generator.extract_topics(
+                round2, round2_error = await generator.extract_round2(
                     day, segments, day_cache.segments
                 )
 
@@ -348,8 +348,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 "aborted": aborted,
                 "elapsed": elapsed,
                 "negative": negative.entries_of_day(day),
-                "topics": topics,
-                "topic_error": topic_error,
+                "round2": round2,
+                "round2_error": round2_error,
                 "reason": reason,
             }
             _logger.info(
@@ -391,10 +391,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             lines.extend(f"- {segment.slot}　{reason}" for segment, reason in failures)
         else:
             lines.append(f"{summary['ok']}/{summary['total']} 段完成，耗时 {summary['elapsed']:.0f} 秒")
-        if summary.get("topic_error"):
-            lines.append(f"话题提炼失败：{summary['topic_error']}")
+        if summary.get("round2_error"):
+            lines.append(f"第二轮抽取失败：{summary['round2_error']}")
         elif not summary.get("aborted"):
-            lines.append(f"可说的话题：{summary.get('topics', 0)} 条")
+            # 分开报数：两个字段是分开容错的，一个失败不牵连另一个（设计文档 5.10）
+            round2 = summary.get("round2") or {}
+            lines.append(f"地点：{round2.get('places', 0)}/{round2.get('total', 0)} 段")
+            lines.append(f"可说的话题：{round2.get('topics', 0)} 条")
         for entry in summary["negative"]:
             lines.append(f"负面事件：{entry.slot}（{entry.level}）")
 
@@ -429,13 +432,31 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         segment, state = self._require_store().state_at(moment)
         return moment, segment, state
 
-    def _planner_block(self, state: SegmentState) -> str:
-        """planner 状态层文本。
+    def _planner_block(self, moment: datetime, segment: Segment, state: SegmentState) -> str:
+        """planner 注入文本（设计文档 3.1）。
 
-        这里一个活动名词都不能有：planner 知道「她有点忙但能搭话」，
-        不知道她在换衣服，想抄也没得抄。
+        `所在` 直接给结论，不让 planner 自己拿当前时间去时段轴上比对——
+        它是导演，不该干查表的活，查错了还没人知道。
+        行程整条也给，是为了让它看得出「刚到家」还是「马上要出门」。
+
+        行程排成一行不排表格：这是常驻注入，每轮都在，而 `所在` 已经把结论给了，
+        行程只用来提供前后脉络，不值得为排版多占四行。
+
+        **这一块打破了「一个活动名词都不能有」的纪律，是有意为之。**
+        地点是最顺口的可复述内容，而实测 planner 会把这个块近乎整块转发给 replyer
+        （5.14）。之所以仍然这么做：导演需要在决定怎么演之前就知道人在哪，
+        而 Tool 是「该聊她在干嘛」时才调用的，那时候给已经晚了。观察项见设计文档 7。
         """
-        return f"【Mittes 当前状态】\n忙碌度：{state.busy}\n心情：{state.mood}"
+        store = self._require_store()
+        lines = [
+            "【Mittes 此刻】",
+            f"所在：{store.place_at(moment, segment, state)}",
+            f"心情：{state.mood}",
+        ]
+        trail = _render_trail(state)
+        if trail:
+            lines.append(f"这一段的行程：{trail}")
+        return "\n".join(lines)
 
     @staticmethod
     def _topic_block(topic: str) -> str:
@@ -499,12 +520,12 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         items: list[Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """在「时间：」那条 User item 后面插入状态层。"""
+        """在「时间：」那条 User item 后面插入所在与心情。"""
         if not items:
             return _hook_response(items, kwargs)
 
-        _moment, _segment, state = self._current()
-        block = self._planner_block(state)
+        moment, segment, state = self._current()
+        block = self._planner_block(moment, segment, state)
 
         index = _find_item_index(items, lambda text: text.startswith(_PLANNER_ANCHOR_PREFIX))
         updated = list(items)
@@ -649,17 +670,21 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def cmd_status(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
         moment, segment, state = self._current()
+        store = self._require_store()
         run_at = await self._run_at()
+        trail = _render_trail(state) or "（没有时段轴，退回骨架地点）"
         lines = [
             f"{moment:%Y-%m-%d} 周{weekday_name(moment.date())} {moment:%H:%M}（JST）",
             f"当前时段：{segment.slot}　{segment.title}",
-            f"　地点：{segment.place}　服装：{segment.outfit}",
+            f"　骨架地点：{segment.place}　服装：{segment.outfit}",
             f"　同处：{segment.company}　性质：{segment.kind}",
+            "",
+            f"所在：{store.place_at(moment, segment, state)}",
+            f"行程：{trail}",
             "",
             f"story：{state.story}",
             f"manner：{state.manner}",
             f"mood：{state.mood}",
-            f"busy：{state.busy}",
             f"topic：{state.topic or '（这段没什么好说的）'}",
             "",
             "来源：生成结果" if state.generated else "来源：底稿（该段未生成成功）",
@@ -676,10 +701,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     )
     async def cmd_status_prompt(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
-        _moment, _segment, state = self._current()
+        moment, segment, state = self._current()
         text = (
-            "── planner 状态层（插在「时间：」之后）──\n"
-            f"{self._planner_block(state)}\n"
+            "── planner 注入（插在「时间：」之后）──\n"
+            f"{self._planner_block(moment, segment, state)}\n"
             "\n"
             "── replyer A 说话方式（插在 reply_reference 之前）──\n"
             f"{state.manner}\n"
@@ -775,7 +800,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             "\n"
             f"{state.story}\n"
             "\n"
-            f"manner：{state.manner}\nmood：{state.mood}\nbusy：{state.busy}"
+            f"manner：{state.manner}\nmood：{state.mood}"
         )
 
     @Command(
@@ -810,7 +835,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
     @Command(
         "status_topics",
-        description="重跑某天的话题提炼（仅管理员）",
+        description="重跑某天的第二轮抽取：地点时段轴与话题（仅管理员）",
         pattern=r"^/status\s+topics(?:\s+(?P<day>\d{4}-\d{2}-\d{2}))?$",
         permission="operator",
     )
@@ -819,12 +844,12 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     ) -> tuple[bool, str, bool]:
         day = self._group(kwargs, "day")
         target = date.fromisoformat(day) if day else now_jst().date()
-        await self.ctx.send.text(f"开始重跑 {target.isoformat()} 的话题提炼……", stream_id)
+        await self.ctx.send.text(f"开始重跑 {target.isoformat()} 的地点与话题……", stream_id)
         self._spawn(self._topics_text(target), stream_id)
-        return True, "话题提炼已在后台开始", True
+        return True, "第二轮抽取已在后台开始", True
 
     async def _topics_text(self, day: date) -> str:
-        """重跑某天的话题提炼并渲染结果。"""
+        """重跑某天的第二轮抽取并渲染结果。"""
         store = self._require_store()
         generator = self._require_generator()
         cached = store.day_cache(day)
@@ -832,7 +857,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             return f"{day.isoformat()} 还没有日程，先跑 /status batch {day.isoformat()}。"
 
         segments = store.segments_of(day)
-        produced, error = await generator.extract_topics(day, segments, cached.segments)
+        round2, error = await generator.extract_round2(day, segments, cached.segments)
         # topic 变了，绑在旧 topic 上的分享状态同样作废
         for segment in segments:
             store.reset_shares(day, segment.slot)
@@ -840,17 +865,25 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             day,
             model=str(await self._get_config("generation.model", "replyer")),
             negative_level_of=lambda slot: self._require_negative().level_of(day, slot),
-            batch_reason="话题重提炼",
+            batch_reason="第二轮重跑",
             batch_at=now_jst().isoformat(),
         )
         if error:
-            return f"话题提炼失败：{error}"
+            return f"第二轮抽取失败：{error}"
 
-        lines = [f"【话题】{day.isoformat()}　{produced} 条"]
+        lines = [
+            f"【第二轮】{day.isoformat()}　"
+            f"地点 {round2['places']}/{round2['total']} 段　话题 {round2['topics']} 条"
+        ]
         for segment in segments:
             state = cached.segments.get(segment.slot)
-            if state is not None and state.topic:
-                lines.append(f"{segment.slot}　{state.topic}")
+            if state is None:
+                continue
+            trail = _render_trail(state)
+            if trail:
+                lines.append(f"{segment.slot}　{trail}")
+            if state.topic:
+                lines.append(f"　　话题：{state.topic}")
         return "\n".join(lines)
 
     @Command(
@@ -1100,6 +1133,14 @@ def _item_text(item: Any) -> str:
         for part in parts
         if isinstance(part, dict) and part.get("type") == "text"
     )
+
+
+def _render_trail(state: SegmentState) -> str:
+    """把地点时段轴渲染成一行。空时段轴返回空串。
+
+    注入块、``/status``、``/status topics`` 三处共用，免得三份写法慢慢走样。
+    """
+    return " / ".join(f"{e['from']}-{e['to']} {e['place']}" for e in state.places)
 
 
 def _find_item_index(items: list[Any], predicate: Any) -> int:

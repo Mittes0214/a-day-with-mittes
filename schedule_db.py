@@ -59,8 +59,9 @@ CREATE TABLE IF NOT EXISTS segments (
     mood           TEXT NOT NULL DEFAULT '',
     busy           TEXT NOT NULL DEFAULT '',
 
-    -- 第二轮话题提炼；topic 为空表示这段没什么好说的
-    topic          TEXT NOT NULL DEFAULT '',
+    -- 第二轮（从 story 里抽取）
+    places         TEXT NOT NULL DEFAULT '[]',   -- 地点时段轴，JSON：[{from,to,place}, …]
+    topic          TEXT NOT NULL DEFAULT '',     -- 空表示这段没什么好说的
     topic_keys     TEXT NOT NULL DEFAULT '[]',   -- JSON 数组
 
     generated      INTEGER NOT NULL DEFAULT 0,  -- 0 表示这一段用的是底稿
@@ -100,6 +101,7 @@ _EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     "segments": {
         "topic": "TEXT NOT NULL DEFAULT ''",
         "topic_keys": "TEXT NOT NULL DEFAULT '[]'",
+        "places": "TEXT NOT NULL DEFAULT '[]'",
     },
     "shares": {
         "reply_text": "TEXT NOT NULL DEFAULT ''",
@@ -201,7 +203,9 @@ class ScheduleDB:
             "story": state.story,
             "manner": state.manner,
             "mood": state.mood,
+            # busy 在 v3.2 取消，列保留只为不丢历史值；新行恒为空串
             "busy": state.busy,
+            "places": json.dumps(state.places, ensure_ascii=False),
             "topic": state.topic,
             "topic_keys": json.dumps(state.topic_keys, ensure_ascii=False),
             "generated": 1 if state.generated else 0,
@@ -245,6 +249,7 @@ class ScheduleDB:
                 "manner": row["manner"],
                 "mood": row["mood"],
                 "busy": row["busy"],
+                "places": json.loads(row["places"] or "[]"),
                 "topic": row["topic"],
                 "topic_keys": json.loads(row["topic_keys"] or "[]"),
                 "generated": bool(row["generated"]),

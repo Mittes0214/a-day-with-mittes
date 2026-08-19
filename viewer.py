@@ -174,6 +174,12 @@ main { flex: 1; padding: 28px 32px 64px; max-width: 900px; }
   display: inline-block; background: var(--accent); color: #fff; border-radius: 4px;
   padding: 0 6px; font-size: 11.5px; margin-right: 8px; vertical-align: 1px;
 }
+.trail { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+.trail .leg {
+  font-size: 12.5px; color: var(--muted); background: var(--badge);
+  padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+}
+.trail .leg.on { color: var(--panel); background: var(--accent); font-weight: 600; }
 .topic .keys { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
 .topic .share { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
 .topic .share b { color: var(--accent); font-weight: 600; }
@@ -266,6 +272,7 @@ function render(day, data) {
         ${s.negative_level ? `<span class="badge neg">不顺心 · ${esc(s.negative_level)}</span>` : ''}
       </h3>
       <div class="skeleton">${[s.place, s.outfit, s.company, s.kind].map(esc).join('　/　')}</div>
+      ${trail(s, now ? nowSlot : -1)}
       <p class="story">${esc(s.story)}</p>
       <dl class="fields">
         <dt>心情</dt><dd>${esc(s.mood)}</dd>
@@ -283,6 +290,20 @@ function render(day, data) {
       ${m.aborted ? `<div class="digest">中止原因：${esc(m.aborted)}</div>` : ''}
       ${m.day_digest ? `<div class="digest">当日概要：${esc(m.day_digest)}</div>` : ''}
     </div>${segs}`;
+}
+
+// 地点时段轴。当前那一段高亮——只在"现在"落在这个时段里时才标。
+function trail(s, nowMin) {
+  let ps = [];
+  try { ps = JSON.parse(s.places || '[]'); } catch (e) { ps = []; }
+  if (!ps.length) return '';
+  const cells = ps.map(p => {
+    const a = +p.from.slice(0,2) * 60 + +p.from.slice(3);
+    const b = +p.to.slice(0,2) * 60 + +p.to.slice(3);
+    const on = nowMin >= a && nowMin < b;
+    return `<span class="leg${on ? ' on' : ''}">${esc(p.from)}-${esc(p.to)}　${esc(p.place)}</span>`;
+  }).join('');
+  return `<div class="trail">${cells}</div>`;
 }
 
 function topicBlock(s, shares) {

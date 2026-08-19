@@ -60,11 +60,11 @@ class Segment:
 
     @property
     def start_minutes(self) -> int:
-        return _to_minutes(self.start)
+        return to_minutes(self.start)
 
     @property
     def end_minutes(self) -> int:
-        return _to_minutes(self.end)
+        return to_minutes(self.end)
 
     @property
     def duration_hours(self) -> float:
@@ -78,13 +78,17 @@ class Segment:
 class SegmentState:
     """一个时段的生成结果。
 
-    前四个字段来自主生成（第一轮），``topic`` / ``topic_keys`` 来自话题提炼（第二轮）。
+    ``story`` / ``manner`` / ``mood`` 来自主生成（第一轮），
+    ``places`` / ``topic`` / ``topic_keys`` 来自第二轮抽取。
     """
 
     story: str
     manner: str
     mood: str
-    busy: str
+    # v3.2 起不再生成，字段保留只为读得动历史数据（设计文档 3.1）
+    busy: str = ""
+    # 第二轮产出：地点时段轴 [{"from","to","place"}, …]，首尾相接覆盖整个时段
+    places: list[dict[str, str]] = field(default_factory=list)
     # 第二轮产出：一句第三人称的谈资提示，空 = 这段没什么好说的
     topic: str = ""
     # 第二轮产出：检测她有没有把这件事说出来用的关键词
@@ -99,6 +103,7 @@ class SegmentState:
             "manner": self.manner,
             "mood": self.mood,
             "busy": self.busy,
+            "places": [dict(p) for p in self.places],
             "topic": self.topic,
             "topic_keys": list(self.topic_keys),
             "generated_at": self.generated_at,
@@ -108,11 +113,13 @@ class SegmentState:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SegmentState":
         raw_keys = data.get("topic_keys")
+        raw_places = data.get("places")
         return cls(
             story=str(data.get("story") or ""),
             manner=str(data.get("manner") or ""),
             mood=str(data.get("mood") or ""),
             busy=str(data.get("busy") or ""),
+            places=[dict(p) for p in raw_places] if isinstance(raw_places, list) else [],
             topic=str(data.get("topic") or ""),
             topic_keys=[str(k) for k in raw_keys] if isinstance(raw_keys, list) else [],
             generated_at=str(data.get("generated_at") or ""),
@@ -326,6 +333,26 @@ class ScheduleStore:
                 return segment, state
         return segment, self.fallback_for(segment)
 
+    @staticmethod
+    def place_at(moment: datetime, segment: Segment, state: SegmentState) -> str:
+        """取某一时刻她所在的地点（设计文档 5.10）。
+
+        在 ``places`` 时段轴上查：取 ``from <= 此刻 < to`` 的那一条。
+        时段轴是首尾相接、覆盖整段的，所以正常情况一定查得到。
+
+        查不到就退回骨架的 ``place``——旧数据、生成失败、底稿段都会走这条路。
+        骨架的 place 可能是「家 / 卧室床上」这种斜杠串（它本来就是给写手看的素材支点，
+        不是给人读的），所以退回时取第一段，免得注入里出现一个突兀的斜杠。
+        """
+        now = moment.hour * 60 + moment.minute
+        for entry in state.places:
+            start, end = to_minutes(str(entry.get("from") or "0:00")), to_minutes(
+                str(entry.get("to") or "0:00")
+            )
+            if start <= now < end:
+                return str(entry.get("place") or "").strip()
+        return segment.place.split("/")[0].strip()
+
     def state_of(self, day: date, segment: Segment) -> SegmentState | None:
         """取指定某天某段的生成结果，没有则返回 ``None``。"""
         cached = self._cache.get(day.isoformat())
@@ -385,7 +412,7 @@ class ScheduleStore:
         return sum(1 for state in cached.segments.values() if state.generated)
 
 
-def _to_minutes(value: str) -> int:
+def to_minutes(value: str) -> int:
     """``HH:MM`` → 从零点起的分钟数，``24:00`` 记作 1440。"""
     hour, minute = value.split(":")
     return int(hour) * 60 + int(minute)
