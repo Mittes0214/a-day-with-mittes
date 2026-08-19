@@ -232,6 +232,10 @@ class ScheduleStore:
         """取某一天的全部时段骨架。"""
         return self._days[DAY_KEYS[day.weekday()]]
 
+    def all_segments(self) -> list[Segment]:
+        """全周七天的时段骨架，供加载时做全局校验用。"""
+        return [segment for segments in self._days.values() for segment in segments]
+
     def resolve_moment(self, moment: datetime) -> tuple[date, int]:
         """把真实时刻映射成 (逻辑日, 逻辑日内的分钟数)。
 
@@ -439,6 +443,10 @@ class ScheduleStore:
 
 _MINUTES_PER_DAY = 24 * 60
 
+# parse_moment 在拿不到 store 实例时的逻辑日起点兜底；
+# 真正的起点由骨架决定（ScheduleStore._day_start_minutes）
+_DEFAULT_DAY_START = 2 * 60
+
 
 def to_minutes(value: str) -> int:
     """``HH:MM`` → 从零点起的分钟数，``24:00`` 记作 1440。"""
@@ -481,6 +489,55 @@ def now_jst() -> datetime:
     服务器时区一旦不是 JST，整份日程会整体偏移，而且错得很隐蔽。
     """
     return datetime.now(JST)
+
+
+def parse_moment(text: str) -> datetime | None:
+    """把工具参数里的时间串解析成 JST 时刻。
+
+    接受三种写法，都不带时区（一律按 JST 理解）：
+
+    - ``HH:MM``              —— 今天（**逻辑日**的今天）的某一刻
+    - ``YYYY-MM-DD HH:MM``   —— 某一天的某一刻
+    - ``YYYY-MM-DD``         —— 某一天，按中午 12:00 算
+
+    ``HH:MM`` 形式为什么要按逻辑日算：凌晨一点问「你 23 点在干嘛」，
+    指的是几十分钟前，不是二十多小时以后。逻辑日的今天正好覆盖这个直觉。
+    小时可以写到 25、26——那是骨架里跨零点那段的记法，同样认。
+
+    解析不出来返回 ``None``，由调用方决定怎么回话，不在这里瞎猜。
+    """
+    text = text.strip().replace("：", ":").replace("/", "-")
+    if not text:
+        return None
+
+    date_part, _sep, time_part = text.rpartition(" ")
+    date_part, time_part = date_part.strip(), time_part.strip()
+    if not date_part and ":" not in time_part:
+        # 只给了日期
+        date_part, time_part = time_part, "12:00"
+
+    try:
+        hour_raw, _, minute_raw = time_part.partition(":")
+        hour, minute = int(hour_raw), int(minute_raw or 0)
+    except ValueError:
+        return None
+    if not 0 <= minute < 60 or not 0 <= hour < 30:
+        return None
+    # 24:00+ 是骨架里跨零点的记法，落到真实时刻要退回 0~23 并进一天
+    extra_days, hour = divmod(hour, 24)
+
+    if date_part:
+        try:
+            day = date.fromisoformat(date_part)
+        except ValueError:
+            return None
+    else:
+        # 不给日期就用逻辑日的今天；逻辑日起点写死 02:00 会和骨架脱钩，
+        # 所以这里退一步用「日历日」，再由调用方的 resolve_moment 归位。
+        now = now_jst()
+        day = now.date() if now.hour * 60 + now.minute >= _DEFAULT_DAY_START else now.date() - timedelta(days=1)
+
+    return datetime(day.year, day.month, day.day, hour, minute, tzinfo=JST) + timedelta(days=extra_days)
 
 
 def weekday_name(day: date) -> str:

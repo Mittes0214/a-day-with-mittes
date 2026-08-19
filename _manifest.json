@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "version": "3.3.0",
+  "version": "3.4.0",
   "name": "Mittes 的一天 (A Day With Mittes)",
   "description": "为 Mittes 提供会自己长出来的日程：每天批量生成变长时段的故事化状态，事实层走 Tool 按需提供，状态层（心情、忙碌度、说话方式）常驻注入 planner 与 replyer。另含实时天气查询与节假日识别。",
   "author": {

@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.3.0
+版本：3.4.0
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """
@@ -42,8 +42,10 @@ from .generator import SegmentGenerator
 from .negative_events import LEVEL_MILD, NegativeEntry, NegativeScheduler
 from .preview import PromptPreview
 from .schedule_generator import ScheduleGenerator
+from .wardrobe import Wardrobe
 from .schedule_store import (
     ScheduleStore,
+    parse_moment,
     Segment,
     SegmentState,
     now_jst,
@@ -73,6 +75,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         super().__init__()
         self._plugin_dir = Path(__file__).parent
         self._store: ScheduleStore | None = None
+        self._wardrobe: Wardrobe | None = None
         self._generator: SegmentGenerator | None = None
         self._negative: NegativeScheduler | None = None
         self._holidays: ScheduleGenerator | None = None
@@ -98,6 +101,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             medium_ratio=float(await self._get_config("generation.negative_medium_ratio", 0.3)),
         )
         self._negative.load()
+
+        self._wardrobe = Wardrobe(self._plugin_dir)
+        self._wardrobe.load()
+        self._warn_unknown_outfits()
 
         self._generator = SegmentGenerator(
             self.ctx,
@@ -430,6 +437,29 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         return f"【{name}】" if name else ""
 
     # ── 事实层与状态层的取值 ──
+    def _require_wardrobe(self) -> Wardrobe:
+        if self._wardrobe is None:
+            raise RuntimeError("衣柜尚未加载")
+        return self._wardrobe
+
+    def _warn_unknown_outfits(self) -> None:
+        """骨架里用到、衣柜里没有的套装名，加载时报一次。
+
+        不抛异常：拍摄现场那身本来就不在衣柜里，而一个手滑打错的名字
+        也不该把整个日程功能带下水——工具那边会照实回答，日程照常跑。
+        """
+        store, wardrobe = self._require_store(), self._require_wardrobe()
+        unknown = {
+            segment.outfit
+            for segment in store.all_segments()
+            if segment.outfit not in wardrobe.names
+        }
+        if unknown:
+            _logger.warning(
+                "[衣柜] 骨架里有 %d 个名字不在衣柜里，工具会按「当天临时定的」回答：%s",
+                len(unknown), "、".join(sorted(unknown)),
+            )
+
     def _today(self) -> date:
         """此刻所属的**逻辑日**（00:00~02:00 算前一天）。
 
@@ -489,23 +519,129 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
     # ── Tool ──
     @Tool(
-        "get_current_schedule",
-        brief_description="当需要描述 Mittes 当前在做什么时，必须调用此工具获取真实日程，不得推测。",
-        parameters=[],
+        "get_mittes_schedule",
+        brief_description=(
+            "当需要描述 Mittes 在做什么时，必须调用此工具获取真实日程，不得推测。"
+            "不填 time 就是此刻；填了可以查她今天早些时候、昨天或明天的安排。"
+        ),
+        parameters=[
+            ToolParameterInfo(
+                name="time",
+                param_type=ToolParamType.STRING,
+                description=(
+                    "要查的时刻，留空表示现在。写法："
+                    "「HH:MM」查今天的某一刻；「YYYY-MM-DD HH:MM」查指定某天；"
+                    "「YYYY-MM-DD」只给日期时按中午算。"
+                    "她的一天从凌晨两点算起，所以凌晨一点问「23:00」指的是几十分钟前。"
+                ),
+                required=False,
+            ),
+        ],
     )
-    async def tool_get_schedule(self, **kwargs: Any) -> dict[str, str]:
+    async def tool_get_schedule(self, time: str = "", **kwargs: Any) -> dict[str, str]:
         del kwargs
-        moment, day, segment, state = self._current()
-        content = (
-            "【Mittes 当前日程】\n"
-            f"{day:%Y-%m-%d} 周{weekday_name(day)} {moment:%H:%M}\n"
-            "\n"
+        return {"name": "get_mittes_schedule", "content": self._render_schedule_at(time)}
+
+    def _render_schedule_at(self, raw_time: str) -> str:
+        """渲染某一时刻的日程与故事（不填时刻就是此刻）。
+
+        **未来的时刻只给安排，不给 story。** 次日的日程提前一天就生成好了，
+        但那段 story 写的是「发生了什么」——事情还没发生，照着念等于让她
+        预言自己的一天。安排（几点在哪、做什么）是计划，可以说。
+        """
+        store = self._require_store()
+        now = now_jst()
+        moment = now
+        if raw_time.strip():
+            parsed = parse_moment(raw_time)
+            if parsed is None:
+                return (
+                    f"看不懂「{raw_time.strip()}」这个时间。"
+                    "请用「HH:MM」或「YYYY-MM-DD HH:MM」，比如 19:30、2026-08-19 19:30。"
+                )
+            moment = parsed
+
+        day, _minutes = store.resolve_moment(moment)
+        try:
+            segment = store.segment_at(moment)
+        except LookupError:
+            return f"{moment:%Y-%m-%d %H:%M} 不在骨架覆盖的范围里，查不到。"
+
+        state = store.state_of(day, segment)
+        head = (
+            f"【Mittes 的日程】{day:%Y-%m-%d} 周{weekday_name(day)}　"
+            f"{'此刻 ' if moment is now else ''}{moment:%H:%M}\n"
             f"{segment.slot}　{segment.title}\n"
-            f"{state.story}\n"
-            "\n"
-            "以上是她真实的当下，可以据此回答；不要复述原文，也不要在没人问的时候主动提起。"
+            f"地点：{segment.place}　穿着：{segment.outfit}　同处：{segment.company}"
         )
-        return {"name": "get_current_schedule", "content": content}
+
+        if moment > now:
+            return (
+                f"{head}\n\n"
+                "这是**还没到的时间**，只有安排、没有经过——别把它当成已经发生的事来讲。"
+            )
+        if state is None or not state.story:
+            return f"{head}\n\n这一段的细节没有记录，只有上面的安排。"
+        return (
+            f"{head}\n\n{state.story}\n\n"
+            "以上是她真实经历过的，可以据此回答；不要复述原文，也不要在没人问的时候主动提起。"
+        )
+
+    @Tool(
+        "get_mittes_outfit",
+        brief_description=(
+            "当需要描述 Mittes 穿什么时，必须调用此工具获取真实穿搭，不得推测。"
+            "从头到脚都有；不填 time 就是此刻。"
+        ),
+        parameters=[
+            ToolParameterInfo(
+                name="time",
+                param_type=ToolParamType.STRING,
+                description=(
+                    "要查的时刻，留空表示现在。写法同日程工具："
+                    "「HH:MM」或「YYYY-MM-DD HH:MM」。她一天里会换好几次衣服，"
+                    "问的是别的时段就要把时刻填上。"
+                ),
+                required=False,
+            ),
+        ],
+    )
+    async def tool_get_outfit(self, time: str = "", **kwargs: Any) -> dict[str, str]:
+        del kwargs
+        return {"name": "get_mittes_outfit", "content": self._render_outfit_at(time)}
+
+    def _render_outfit_at(self, raw_time: str) -> str:
+        """渲染某一时刻的穿搭。
+
+        穿搭来自骨架的 ``outfit``（一个套装名），细节来自 ``wardrobe.toml``。
+        名字查不到不算错误——周五拍摄现场那身是当天临时定的，衣柜里本来就没有。
+        """
+        store = self._require_store()
+        wardrobe = self._require_wardrobe()
+        now = now_jst()
+        moment = now
+        if raw_time.strip():
+            parsed = parse_moment(raw_time)
+            if parsed is None:
+                return (
+                    f"看不懂「{raw_time.strip()}」这个时间。"
+                    "请用「HH:MM」或「YYYY-MM-DD HH:MM」，比如 19:30、2026-08-19 19:30。"
+                )
+            moment = parsed
+
+        day, _minutes = store.resolve_moment(moment)
+        try:
+            segment = store.segment_at(moment)
+        except LookupError:
+            return f"{moment:%Y-%m-%d %H:%M} 不在骨架覆盖的范围里，查不到。"
+
+        return (
+            f"【Mittes 的穿搭】{day:%Y-%m-%d} 周{weekday_name(day)}　"
+            f"{'此刻 ' if moment is now else ''}{moment:%H:%M}　"
+            f"（{segment.slot}　{segment.title}）\n\n"
+            f"{wardrobe.render(segment.outfit)}\n\n"
+            "问到哪儿说哪儿，别把整份清单报一遍——没有人会那样描述自己的衣服。"
+        )
 
     @Tool(
         "get_weather",
