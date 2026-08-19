@@ -22,9 +22,11 @@ import json
 import socket
 import sqlite3
 import sys
+import tomllib
 
 
 DB_PATH = Path(__file__).parent / "data" / "schedule.db"
+WARDROBE_PATH = Path(__file__).parent / "wardrobe.toml"
 WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
 
 
@@ -81,13 +83,32 @@ def _load_day(conn: sqlite3.Connection, day: str) -> dict[str, Any] | None:
     }
 
 
+def _load_wardrobe(path: Path) -> dict[str, Any]:
+    """读衣柜。**每次请求都重读**——它是手写资产，改完刷新页面就该看到，
+    不该为了省一次文件读取而要求重启 viewer。文件不到 10KB。
+    """
+    try:
+        with path.open("rb") as handle:
+            raw = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return {"error": f"读不了 wardrobe.toml：{exc}"}
+    return {
+        "always": raw.get("always") or {},
+        "wardrobe": raw.get("wardrobe") or {},
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     conn: sqlite3.Connection
+    wardrobe_path: Path
 
     def do_GET(self) -> None:  # noqa: N802 —— BaseHTTPRequestHandler 的固定签名
         path = urlparse(self.path).path
         if path == "/":
             self._send(200, "text/html; charset=utf-8", PAGE.encode("utf-8"))
+            return
+        if path == "/api/wardrobe":
+            self._send_json(_load_wardrobe(self.wardrobe_path))
             return
         if path == "/api/days":
             self._send_json(_list_days(self.conn))
@@ -204,6 +225,35 @@ main { flex: 1; padding: 28px 32px 64px; max-width: 900px; }
 }
 .topic .said.none { color: var(--muted); border-left-color: var(--line); font-style: italic; }
 .empty { color: var(--muted); padding: 40px 0; }
+
+/* 骨架行里可点的穿搭名 */
+.skeleton .outfit {
+  font: inherit; color: var(--accent); background: none; border: 0; padding: 0;
+  cursor: pointer; border-bottom: 1px dashed currentColor;
+}
+.skeleton .outfit:hover { background: var(--badge); }
+
+/* 穿搭细节弹层 */
+#modal {
+  display: none; position: fixed; inset: 0; z-index: 20;
+  background: rgba(0,0,0,.38); padding: 24px; overflow-y: auto;
+}
+#modal.on { display: flex; align-items: flex-start; justify-content: center; }
+#modal .sheet {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 20px 22px; max-width: 620px; width: 100%; margin: auto;
+  box-shadow: 0 10px 40px rgba(0,0,0,.25); position: relative;
+}
+#modal .sheet h3 { margin: 0 0 12px; font-size: 17px; }
+#modal .close {
+  position: absolute; top: 10px; right: 12px; font-size: 22px; line-height: 1;
+  background: none; border: 0; color: var(--muted); cursor: pointer;
+}
+#modal .close:hover { color: var(--text); }
+#modal .always { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+#modal .always b { font-size: 12.5px; color: var(--muted); }
+#modal .none { color: var(--muted); font-style: italic; }
+.wardrobe-link { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 12px !important; }
 @media (max-width: 640px) {
   body { flex-direction: column; }
   aside { width: auto; height: auto; position: static; border-right: 0; border-bottom: 1px solid var(--line); }
@@ -214,6 +264,7 @@ main { flex: 1; padding: 28px 32px 64px; max-width: 900px; }
 <body>
 <aside><h1>Mittes 的一天</h1><nav id="days"></nav></aside>
 <main id="main"><p class="empty">加载中…</p></main>
+<div id="modal"></div>
 <script>
 const WD = ['一','二','三','四','五','六','日'];
 const esc = s => (s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
@@ -231,13 +282,19 @@ async function boot() {
     const neg = d.negative_count ? ' ※' : '';
     return `<a href="#${d.date}" data-d="${d.date}">${d.date.slice(5)} 周${WD[d.weekday]}
       <span class="sub">${bad}${neg}</span></a>`;
-  }).join('');
+  }).join('') + `<a href="#wardrobe" data-d="wardrobe" class="wardrobe-link">衣柜　<span class="sub">全部搭配</span></a>`;
   window.addEventListener('hashchange', route);
   route();
 }
 
 async function route() {
-  const known = [...document.querySelectorAll('#days a')].map(a => a.dataset.d);
+  if (location.hash === '#wardrobe') {
+    document.querySelectorAll('#days a').forEach(a => a.classList.toggle('on', a.dataset.d === 'wardrobe'));
+    renderWardrobe(await wardrobe());
+    window.scrollTo(0, 0);
+    return;
+  }
+  const known = [...document.querySelectorAll('#days a')].map(a => a.dataset.d).filter(d => d !== 'wardrobe');
   const today = jstNow().date;
   const day = location.hash.slice(1)
     || (known.includes(today) ? today : known[0]);
@@ -284,7 +341,7 @@ function render(day, data) {
         ${s.generated ? '' : '<span class="badge">底稿</span>'}
         ${s.negative_level ? `<span class="badge neg">不顺心 · ${esc(s.negative_level)}</span>` : ''}
       </h3>
-      <div class="skeleton">${[s.place, s.outfit, s.company, s.kind].map(esc).join('　/　')}</div>
+      <div class="skeleton">${esc(s.place)}　/　<button class="outfit" data-o="${esc(s.outfit)}">${esc(s.outfit)}</button>　/　${esc(s.company)}　/　${esc(s.kind)}</div>
       ${trail(s, now ? nowSlot : -1)}
       <p class="story">${esc(s.story)}</p>
       <dl class="fields">
@@ -340,6 +397,55 @@ function topicBlock(s, shares) {
   </div>`;
 }
 
+// 衣柜。一次取回缓存住——同一页里会被点很多次。
+let _wardrobe = null;
+async function wardrobe() {
+  if (!_wardrobe) _wardrobe = await (await fetch('/api/wardrobe')).json();
+  return _wardrobe;
+}
+
+const PART_LABELS = [['hair','头发'],['top','上身'],['bottom','下身'],
+                     ['legs','腿'],['feet','脚'],['accessories','配饰'],['optional','有时会加']];
+const ALWAYS_LABELS = [['hair_base','头发底子'],['nails','美甲'],['props','道具']];
+
+function outfitRows(o) {
+  return PART_LABELS.filter(([k]) => o[k])
+    .map(([k, label]) => `<dt>${label}</dt><dd>${esc(o[k])}</dd>`).join('');
+}
+
+// 点段落里的穿搭名 → 弹出这一套的从头到脚
+async function showOutfit(name) {
+  const w = await wardrobe();
+  const o = (w.wardrobe || {})[name];
+  const body = o
+    ? `<dl class="fields">${outfitRows(o)}</dl>`
+    : `<p class="none">这一身不在衣柜里——当天临时定的衣服（品牌方或角色的），每次都不一样。</p>`;
+  const always = (o && w.always) ? `<div class="always"><b>不分场合一直有的</b>
+      <dl class="fields">${ALWAYS_LABELS.filter(([k]) => w.always[k])
+        .map(([k, label]) => `<dt>${label}</dt><dd>${esc(w.always[k])}</dd>`).join('')}</dl></div>` : '';
+  document.getElementById('modal').innerHTML =
+    `<div class="sheet"><button class="close">×</button><h3>${esc(name)}</h3>${body}${always}</div>`;
+  document.getElementById('modal').classList.add('on');
+}
+
+function renderWardrobe(w) {
+  if (w.error) { document.getElementById('main').innerHTML = `<p class="empty">${esc(w.error)}</p>`; return; }
+  const sets = Object.entries(w.wardrobe || {}).map(([name, o]) => `
+    <article class="seg">
+      <h3>${esc(name)}</h3>
+      <dl class="fields">${outfitRows(o)}</dl>
+    </article>`).join('');
+  const always = `<article class="seg">
+      <h3>不分场合一直有的</h3>
+      <dl class="fields">${ALWAYS_LABELS.filter(([k]) => (w.always||{})[k])
+        .map(([k, label]) => `<dt>${label}</dt><dd>${esc(w.always[k])}</dd>`).join('')}</dl>
+    </article>`;
+  document.getElementById('main').innerHTML =
+    `<div class="dayhead"><h2>衣柜</h2>
+       <div class="meta">${Object.keys(w.wardrobe || {}).length} 套　·　骨架的穿搭栏填的就是这些名字</div>
+     </div>${sets}${always}`;
+}
+
 // 日程逻辑日的起点（分钟）。骨架各天首段都是 02:00。
 const DAY_START = 2 * 60;
 
@@ -365,6 +471,17 @@ function jstNow() {
     wrapped,
   };
 }
+// 点穿搭名弹层；点空白或 × 关掉
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.outfit');
+  if (btn) { showOutfit(btn.dataset.o); return; }
+  const modal = document.getElementById('modal');
+  if (e.target.closest('.close') || e.target === modal) modal.classList.remove('on');
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.getElementById('modal').classList.remove('on');
+});
+
 boot();
 </script>
 </body>
@@ -390,6 +507,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="日程归档浏览器")
     parser.add_argument("--port", type=int, default=8765, help="监听端口，默认 8765")
     parser.add_argument("--db", type=Path, default=DB_PATH, help="归档库路径")
+    parser.add_argument("--wardrobe", type=Path, default=WARDROBE_PATH, help="衣柜文件路径")
     parser.add_argument(
         "--lan",
         action="store_true",
@@ -406,6 +524,7 @@ def main() -> int:
     host = args.host or ("0.0.0.0" if args.lan else "127.0.0.1")  # noqa: S104 —— --lan 就是要对局域网开放
 
     Handler.conn = _connect(args.db)
+    Handler.wardrobe_path = args.wardrobe
     today = date.today()
     # flush 是必要的：输出重定向到文件或被 systemd 接管时，
     # 不 flush 的话这几行会一直卡在缓冲区里，看不到访问地址
