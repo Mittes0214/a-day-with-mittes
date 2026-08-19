@@ -306,6 +306,28 @@ class ScheduleDB:
             (day.isoformat(), slot, session_id, injected, shared_at, reply_text, hit_key),
         )
 
+    def prune_day(self, day: date, keep_slots: set[str]) -> int:
+        """删掉某一天里**不属于当前骨架**的时段及其分享状态。
+
+        骨架是「这一天有哪些时段」的唯一真相。改了骨架（换季、重排）之后，
+        旧 slot 会永远留在库里：段数统计、viewer、``/status day`` 全都跟着错，
+        而且不会报错——只会多出几段查不到出处的日程。
+
+        只在 ``flush`` 里调，也就是只裁剪「正在被重写的那一天」。
+        不在启动时全库对账：换季替换骨架之后，那样会把整个上一季的归档抹掉。
+        """
+        if not keep_slots:
+            return 0
+        holes = ",".join("?" for _ in keep_slots)
+        args = (day.isoformat(), *keep_slots)
+        removed = self._db.execute(
+            f"DELETE FROM segments WHERE date = ? AND slot NOT IN ({holes})", args
+        ).rowcount
+        self._db.execute(
+            f"DELETE FROM shares WHERE date = ? AND slot NOT IN ({holes})", args
+        )
+        return removed
+
     def delete_shares(self, day: date, slot: str) -> None:
         """清掉某一段的全部分享状态。
 

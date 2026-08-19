@@ -16,10 +16,13 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import logging
 import tomllib
 
 from .schedule_db import ScheduleDB
 
+
+_logger = logging.getLogger("a_day_with_mittes.store")
 
 JST = ZoneInfo("Asia/Tokyo")
 
@@ -307,9 +310,21 @@ class ScheduleStore:
     def open_db(self) -> None:
         """连库，并把最近几天的生成结果和谈资分享状态读进内存。"""
         self._db.connect()
-        self._cache = {
-            day: DayCache.from_dict(data) for day, data in self._db.load_days(_MAX_CACHED_DAYS).items()
-        }
+        # 按骨架过滤：库里可能还留着改骨架之前的 slot（那一天还没被重写过）。
+        # 这里只裁内存，不动库——历史归档要留着，裁剪只发生在 flush。
+        self._cache = {}
+        for day_key, data in self._db.load_days(_MAX_CACHED_DAYS).items():
+            cache = DayCache.from_dict(data)
+            valid = {segment.slot for segment in self.segments_of(date.fromisoformat(day_key))}
+            stale = set(cache.segments) - valid
+            for slot in stale:
+                del cache.segments[slot]
+            if stale:
+                _logger.warning(
+                    "[归档] %s 库里有 %d 段不属于当前骨架，本次不载入内存：%s",
+                    day_key, len(stale), "、".join(sorted(stale)),
+                )
+            self._cache[day_key] = cache
         self._shares = self._db.load_shares(list(self._cache))
 
     def close_db(self) -> None:
@@ -341,6 +356,11 @@ class ScheduleStore:
                 negative_level=negative_level_of(segment.slot) if negative_level_of else "",
                 model=model,
             )
+
+        # 骨架改过之后，库里会留着旧 slot——这一天正在被重写，顺手裁掉
+        removed = self._db.prune_day(day, {segment.slot for segment in self.segments_of(day)})
+        if removed:
+            _logger.info("[归档] %s 清掉 %d 段不属于当前骨架的旧记录", day, removed)
 
         # 内存只留最近几天；历史全在库里，需要时查库
         for key in sorted(self._cache)[:-_MAX_CACHED_DAYS]:
