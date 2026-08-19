@@ -56,12 +56,12 @@ negative_medium_ratio = 0.3
 # 主程序的预览开关只管主程序自己写的记录，管不到插件，所以这里必须自带一个。
 prompt_preview_enabled = true
 
-# 每个目录保留多少条记录。一天约写 20 条（10 次生成 + 10 次概要压缩），
-# 256 条大约覆盖十三天，跟主程序的 maisaka_prompt_preview_limit 默认值对齐。
+# 每个目录保留多少条记录。一天约写二十几条（每段一次生成 + 一次概要压缩，另加一次第二轮抽取），
+# 256 条大约覆盖十来天，跟主程序的 maisaka_prompt_preview_limit 默认值对齐。
 prompt_preview_limit = 256
 
 # 批次结果报到哪个群；留空则不报告。成功和失败都报——静默成功等于没有监控。
-report_group_id = "181089267"
+report_group_id = ""
 report_platform = "qq"
 
 # 天气查询用的地名，英文/罗马字
