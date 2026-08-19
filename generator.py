@@ -335,8 +335,10 @@ class SegmentGenerator:
         blocks.append(_PERSON_TABLE)
         blocks.append("# 为这个时段生成三个字段\n\n" + "\n\n".join([_STORY_RULES, _MANNER_RULES, _MOOD_RULES]))
         blocks.append(
-            "# 输出\n严格的 JSON 对象，字段名照上面写，不要包在代码块里：\n"
-            '{"story":"…","manner":"…","mood":"…"}'
+            "# 输出\n"
+            "三个小节，每节用一行「### 字段名」开头，下面写正文。\n"
+            "正文里想用引号、破折号、换行都可以，不用管转义。\n\n"
+            "### story\n（正文）\n\n### manner\n（正文）\n\n### mood\n（正文）"
         )
         return "\n\n".join(blocks)
 
@@ -350,9 +352,9 @@ class SegmentGenerator:
         为字数烧一次调用不值得。
         """
         raw = str(result.get("response") or "")
-        payload = _extract_json_object(raw)
+        payload = _extract_sections(raw, ("story", "manner", "mood"))
         if payload is None:
-            return None, "输出不是合法 JSON"
+            return None, "输出里找不到 ### 分节"
 
         state = SegmentState(
             story=str(payload.get("story") or "").strip(),
@@ -640,20 +642,33 @@ class SegmentGenerator:
             _logger.warning("[推理记录] 写入失败：%s", type(exc).__name__)
 
 
-def _extract_json_object(text: str) -> dict[str, Any] | None:
-    """从模型输出里取出 JSON 对象，容忍前后多余文字和代码块围栏。"""
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", stripped).strip()
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start < 0 or end <= start:
+def _extract_sections(text: str, names: tuple[str, ...]) -> dict[str, str] | None:
+    """从「### 字段名」分节的输出里取各节正文。
+
+    **为什么不用 JSON。** story 是 200~300 字的自由散文，而我们要求它当成小说写——
+    小说必然有对话，对话必然有引号。把这种文本塞进 JSON 字符串，任何一个未转义的
+    半角引号都会毁掉整个对象。实测 134 次时段生成里失败 12 次（8%），其中 10 次
+    就是正文里的半角引号。那不是模型写坏了，是我们让它用错了格式。
+
+    分节文本零转义，引号、换行、反斜杠都不再是问题。
+    第二轮的 places / topic 仍然用 JSON——那边是数组套对象、字段短，JSON 是对的格式。
+
+    解析尽量宽容：``### story``、``###story``、``### story：`` 都认，
+    行首以外的 ``###`` 不当分节。缺任何一节返回 ``None``。
+    """
+    pattern = re.compile(r"^[ \t]*#{2,4}[ \t]*(" + "|".join(names) + r")[ \t]*[:：]?[ \t]*$", re.M | re.I)
+    marks = list(pattern.finditer(text))
+    if not marks:
         return None
-    try:
-        payload = json.loads(stripped[start : end + 1])
-    except json.JSONDecodeError:
+
+    sections: dict[str, str] = {}
+    for index, mark in enumerate(marks):
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
+        # 同一节出现两次时以第一次为准，后面的多半是模型自我重复
+        sections.setdefault(mark.group(1).lower(), text[mark.end():end].strip())
+    if any(name not in sections for name in names):
         return None
-    return payload if isinstance(payload, dict) else None
+    return sections
 
 
 def _extract_json_array(text: str) -> list[Any] | None:
