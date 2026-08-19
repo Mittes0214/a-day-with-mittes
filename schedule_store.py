@@ -166,6 +166,8 @@ class ScheduleStore:
         self._db = ScheduleDB(data_dir / "schedule.db")
         self._days: dict[str, list[Segment]] = {}
         self._fallback: dict[str, SegmentState] = {}
+        # 逻辑日起点（分钟），load_skeleton 时从骨架算出
+        self._day_start_minutes = 0
         self._cache: dict[str, DayCache] = {}
         # 谈资分享状态：{(日期, 时段, 会话): (注入次数, 说出口时刻)}
         self._shares: dict[tuple[str, str, str], tuple[int, str]] = {}
@@ -209,6 +211,14 @@ class ScheduleStore:
                 generated=False,
             )
 
+        # 逻辑日的起点：所有天的首段必须从同一个时刻开始，否则
+        # 「某个时刻属于哪个逻辑日」就没有唯一解。不写死在代码里，
+        # 换季重排骨架时改了起点，这里自动跟上。
+        starts = {segments[0].start for segments in days.values()}
+        if len(starts) != 1:
+            raise ValueError(f"各天的首段起点不一致，逻辑日无法定义：{sorted(starts)}")
+        self._day_start_minutes = to_minutes(starts.pop())
+
         # 骨架里出现的每个 kind 都必须有底稿，否则异常时会拿到空状态
         used_kinds = {segment.kind for segments in days.values() for segment in segments}
         missing = used_kinds - set(fallback)
@@ -222,13 +232,28 @@ class ScheduleStore:
         """取某一天的全部时段骨架。"""
         return self._days[DAY_KEYS[day.weekday()]]
 
+    def resolve_moment(self, moment: datetime) -> tuple[date, int]:
+        """把真实时刻映射成 (逻辑日, 逻辑日内的分钟数)。
+
+        **逻辑日不是日历日。** 它从 02:00 起算，跨零点那一段在骨架里写成
+        ``24:00-26:00``，归属当天而不是次日。所以 00:00~02:00 这段真实时间
+        属于**前一个**逻辑日，分钟数要 +1440 才能落进 ``24:00-26:00`` 这个区间。
+
+        凡是拿时刻去查日程的地方都要走这里——直接用 ``moment.date()``
+        会在每天午夜到 02:00 之间查错一整个日期。
+        """
+        minutes = moment.hour * 60 + moment.minute
+        if minutes < self._day_start_minutes:
+            return moment.date() - timedelta(days=1), minutes + _MINUTES_PER_DAY
+        return moment.date(), minutes
+
     def segment_at(self, moment: datetime) -> Segment:
         """取某一时刻所在的时段骨架。"""
-        minutes = moment.hour * 60 + moment.minute
-        for segment in self.segments_of(moment.date()):
+        day, minutes = self.resolve_moment(moment)
+        for segment in self.segments_of(day):
             if segment.contains(minutes):
                 return segment
-        # 骨架已在加载时校验过铺满全天，走到这里说明校验被绕过了
+        # 骨架已在加载时校验过铺满整个逻辑日，走到这里说明校验被绕过了
         raise LookupError(f"{moment:%Y-%m-%d %H:%M} 没有匹配的时段，骨架可能被改坏了")
 
     def previous_segment(self, day: date, segment: Segment) -> tuple[date, Segment]:
@@ -325,16 +350,16 @@ class ScheduleStore:
 
     def state_at(self, moment: datetime) -> tuple[Segment, SegmentState]:
         """取某一时刻的时段骨架和状态，缓存缺失时回落到底稿。"""
+        day, _minutes = self.resolve_moment(moment)
         segment = self.segment_at(moment)
-        cached = self._cache.get(moment.date().isoformat())
+        cached = self._cache.get(day.isoformat())
         if cached is not None:
             state = cached.segments.get(segment.slot)
             if state is not None:
                 return segment, state
         return segment, self.fallback_for(segment)
 
-    @staticmethod
-    def place_at(moment: datetime, segment: Segment, state: SegmentState) -> str:
+    def place_at(self, moment: datetime, segment: Segment, state: SegmentState) -> str:
         """取某一时刻她所在的地点（设计文档 5.10）。
 
         在 ``places`` 时段轴上查：取 ``from <= 此刻 < to`` 的那一条。
@@ -344,7 +369,7 @@ class ScheduleStore:
         骨架的 place 可能是「家 / 卧室床上」这种斜杠串（它本来就是给写手看的素材支点，
         不是给人读的），所以退回时取第一段，免得注入里出现一个突兀的斜杠。
         """
-        now = moment.hour * 60 + moment.minute
+        _day, now = self.resolve_moment(moment)
         for entry in state.places:
             start, end = to_minutes(str(entry.get("from") or "0:00")), to_minutes(
                 str(entry.get("to") or "0:00")
@@ -412,6 +437,9 @@ class ScheduleStore:
         return sum(1 for state in cached.segments.values() if state.generated)
 
 
+_MINUTES_PER_DAY = 24 * 60
+
+
 def to_minutes(value: str) -> int:
     """``HH:MM`` → 从零点起的分钟数，``24:00`` 记作 1440。"""
     hour, minute = value.split(":")
@@ -419,16 +447,27 @@ def to_minutes(value: str) -> int:
 
 
 def _validate_day(key: str, segments: list[Segment]) -> None:
-    """校验一天的时段首尾相接、铺满 00:00~24:00。"""
-    cursor = 0
+    """校验一天的时段首尾相接、铺满整个**逻辑日**。
+
+    逻辑日不是 00:00~24:00，是「首段起点 → 起点 + 24 小时」。
+    骨架现在从 02:00 起算、跨零点写成 24:00-26:00，所以这里不能拿
+    0 和 1440 当边界——那会把每一天都判成不合法。
+    """
+    if not segments:
+        raise ValueError(f"{key} 没有任何时段")
+    cursor = segments[0].start_minutes
+    day_end = cursor + _MINUTES_PER_DAY
     for segment in segments:
         if segment.start_minutes != cursor:
             raise ValueError(f"{key} 的 {segment.slot} 与上一段不相接（应从 {_from_minutes(cursor)} 开始）")
         if segment.end_minutes <= segment.start_minutes:
             raise ValueError(f"{key} 的 {segment.slot} 结束时间不晚于开始时间")
         cursor = segment.end_minutes
-    if cursor != 24 * 60:
-        raise ValueError(f"{key} 没有铺满一天，最后停在 {_from_minutes(cursor)}")
+    if cursor != day_end:
+        raise ValueError(
+            f"{key} 没有铺满一整个逻辑日（{_from_minutes(segments[0].start_minutes)} "
+            f"→ {_from_minutes(day_end)}），最后停在 {_from_minutes(cursor)}"
+        )
 
 
 def _from_minutes(value: int) -> str:

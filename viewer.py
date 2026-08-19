@@ -260,7 +260,7 @@ function render(day, data) {
     `${m.ok_count}/${m.total_count} 段生成`,
     m.batch_reason && esc(m.batch_reason),
     m.batch_elapsed ? `耗时 ${Math.round(m.batch_elapsed)}s` : '',
-    isToday ? `现在 ${jst.clock} JST` : '',
+    isToday ? `现在 ${jst.clock} JST${jst.wrapped ? '（跨零点，仍算这一天）' : ''}` : '',
   ].filter(Boolean).join('　·　');
 
   const segs = data.segments.map(s => {
@@ -328,6 +328,9 @@ function topicBlock(s, shares) {
   </div>`;
 }
 
+// 日程逻辑日的起点（分钟）。骨架各天首段都是 02:00。
+const DAY_START = 2 * 60;
+
 // 「现在」一律按 Mittes 那边的时间（JST）算，不看打开页面的人在哪个时区。
 // 原来的写法把两个时区混着用：日期取 toISOString（UTC）、时刻取 getHours（浏览器本地），
 // 结果连在这台 JST 机器上都是错的——00:00~09:00 JST 之间 UTC 还停在前一天。
@@ -337,11 +340,17 @@ function jstNow() {
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', hour12: false,
   }).formatToParts(new Date()).reduce((o, x) => (o[x.type] = x.value, o), {});
+  // 逻辑日：日程从 02:00 起算，跨零点那段在骨架里写成 24:00-26:00。
+  // 所以 00:00~02:00 属于**前一天**，分钟数要 +1440 才落得进那个区间。
+  const raw = (+p.hour % 24) * 60 + +p.minute;
+  const wrapped = raw < DAY_START;
+  const d = new Date(`${p.year}-${p.month}-${p.day}T00:00:00Z`);
+  if (wrapped) d.setUTCDate(d.getUTCDate() - 1);
   return {
-    date: `${p.year}-${p.month}-${p.day}`,
-    // 午夜在某些引擎下会格式化成 24，取模压回 0
-    minutes: (+p.hour % 24) * 60 + +p.minute,
-    clock: `${p.hour % 24 < 10 ? '0' : ''}${+p.hour % 24}:${p.minute}`,
+    date: d.toISOString().slice(0, 10),
+    minutes: wrapped ? raw + 1440 : raw,
+    clock: `${(+p.hour % 24) < 10 ? '0' : ''}${+p.hour % 24}:${p.minute}`,
+    wrapped,
   };
 }
 boot();

@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.2.0
+版本：3.3.0
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """
@@ -184,7 +184,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         await asyncio.sleep(10)  # 等主程序其余部分起来，避免抢启动资源
         try:
             store = self._require_store()
-            today = now_jst().date()
+            today = self._today()
             # 系统要维持的不变量是「今天和明天都有日程」，12:00 那次批次负责往前推进；
             # 冷启动（首次部署、库被删、连着几天没跑成）应当把这个不变量整个补回来，
             # 而不是只补今天——只补今天的话，过了零点明天那几段全是底稿。
@@ -203,10 +203,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 run_at = await self._run_at()
                 if now.time() < run_at:
                     continue
-                if self._last_batch_day == now.date():
+                # run_at 默认 12:00，那个点逻辑日和日历日本来就重合；
+                # 仍然走 _today() 是为了 run_at 万一被改到凌晨也不会错日子
+                today = self._today()
+                if self._last_batch_day == today:
                     continue
-                self._last_batch_day = now.date()
-                target = now.date() + timedelta(days=1)
+                self._last_batch_day = today
+                target = today + timedelta(days=1)
                 # 冷启动可能已经把明天补出来了（重启发生在 run_at 之后就会这样），
                 # 不查一下会白跑一整轮
                 if store.day_cache(target) is not None:
@@ -427,10 +430,27 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         return f"【{name}】" if name else ""
 
     # ── 事实层与状态层的取值 ──
-    def _current(self) -> tuple[datetime, Segment, SegmentState]:
+    def _today(self) -> date:
+        """此刻所属的**逻辑日**（00:00~02:00 算前一天）。
+
+        凡是「今天的日程」都要用它，不能用 ``now_jst().date()``——
+        否则午夜到 02:00 之间，冷启动会去补一个还没到的日子，
+        `/status day` 会显示错的一天。
+        """
+        return self._require_store().resolve_moment(now_jst())[0]
+
+    def _current(self) -> tuple[datetime, date, Segment, SegmentState]:
+        """取此刻的 (真实时刻, **逻辑日**, 时段, 状态)。
+
+        逻辑日不等于 ``moment.date()``——00:00~02:00 属于前一天（见
+        ``ScheduleStore.resolve_moment``）。凡是拿它去查日程、标记谈资、
+        写库的地方都必须用这个逻辑日，否则每天午夜到 02:00 之间会错一整天。
+        """
         moment = now_jst()
-        segment, state = self._require_store().state_at(moment)
-        return moment, segment, state
+        store = self._require_store()
+        day, _minutes = store.resolve_moment(moment)
+        segment, state = store.state_at(moment)
+        return moment, day, segment, state
 
     def _planner_block(self, moment: datetime, segment: Segment, state: SegmentState) -> str:
         """planner 注入文本（设计文档 3.1）。
@@ -475,10 +495,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     )
     async def tool_get_schedule(self, **kwargs: Any) -> dict[str, str]:
         del kwargs
-        moment, segment, state = self._current()
+        moment, day, segment, state = self._current()
         content = (
             "【Mittes 当前日程】\n"
-            f"{moment:%Y-%m-%d} 周{weekday_name(moment.date())} {moment:%H:%M}\n"
+            f"{day:%Y-%m-%d} 周{weekday_name(day)} {moment:%H:%M}\n"
             "\n"
             f"{segment.slot}　{segment.title}\n"
             f"{state.story}\n"
@@ -524,7 +544,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if not items:
             return _hook_response(items, kwargs)
 
-        moment, segment, state = self._current()
+        moment, day, segment, state = self._current()
         block = self._planner_block(moment, segment, state)
 
         index = _find_item_index(items, lambda text: text.startswith(_PLANNER_ANCHOR_PREFIX))
@@ -562,13 +582,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if not items:
             return {"success": True, "action": "continue"}
 
-        moment, segment, state = self._current()
+        moment, day, segment, state = self._current()
         store = self._require_store()
 
         # A：说话方式。C：今天那件可说的小事，说出口之后就不再注入（5.11）。
         blocks = [state.manner] if state.manner else []
         share_pending = False
-        if state.topic and session_id and not store.is_shared(moment.date(), segment.slot, session_id):
+        if state.topic and session_id and not store.is_shared(day, segment.slot, session_id):
             blocks.append(self._topic_block(state.topic))
             share_pending = True
         if not blocks:
@@ -591,7 +611,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             updated.insert(index + offset, _new_user_item(text))
 
         if share_pending:
-            store.mark_injected(moment.date(), segment.slot, session_id)
+            store.mark_injected(day, segment.slot, session_id)
 
         return _hook_response(
             updated,
@@ -631,12 +651,12 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if not response or not session_id:
             return {"success": True, "action": "continue"}
 
-        moment, segment, state = self._current()
+        moment, day, segment, state = self._current()
         if not state.topic or not state.topic_keys:
             return {"success": True, "action": "continue"}
 
         store = self._require_store()
-        if store.is_shared(moment.date(), segment.slot, session_id):
+        if store.is_shared(day, segment.slot, session_id):
             return {"success": True, "action": "continue"}
 
         hit = next((key for key in state.topic_keys if key and key in response), "")
@@ -644,7 +664,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             return {"success": True, "action": "continue"}
 
         store.mark_shared(
-            moment.date(),
+            day,
             segment.slot,
             session_id,
             moment.isoformat(),
@@ -653,7 +673,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
         _logger.info(
             "[谈资] %s %s 在会话 %s 说出口了（命中「%s」），不再注入",
-            moment.date(),
+            day,
             segment.slot,
             session_id,
             hit,
@@ -669,12 +689,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     )
     async def cmd_status(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
-        moment, segment, state = self._current()
+        moment, day, segment, state = self._current()
         store = self._require_store()
         run_at = await self._run_at()
         trail = _render_trail(state) or "（没有时段轴，退回骨架地点）"
         lines = [
-            f"{moment:%Y-%m-%d} 周{weekday_name(moment.date())} {moment:%H:%M}（JST）",
+            f"{day:%Y-%m-%d} 周{weekday_name(day)} {moment:%H:%M}（JST）　"
+            f"{'（跨零点，仍算前一天）' if day != moment.date() else ''}",
             f"当前时段：{segment.slot}　{segment.title}",
             f"　骨架地点：{segment.place}　服装：{segment.outfit}",
             f"　同处：{segment.company}　性质：{segment.kind}",
@@ -701,7 +722,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     )
     async def cmd_status_prompt(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
-        moment, segment, state = self._current()
+        moment, day, segment, state = self._current()
         text = (
             "── planner 注入（插在「时间：」之后）──\n"
             f"{self._planner_block(moment, segment, state)}\n"
@@ -726,7 +747,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         store = self._require_store()
         negative = self._require_negative()
         moment = now_jst()
-        today = moment.date()
+        today, _minutes = store.resolve_moment(moment)
         current = store.segment_at(moment)
 
         lines = [f"【今日日程】{today.isoformat()} 周{weekday_name(today)}"]
@@ -754,9 +775,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     )
     async def cmd_status_regen(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
-        moment, segment, old_state = self._current()
+        moment, day, segment, old_state = self._current()
         await self.ctx.send.text(f"正在重生成 {segment.slot}　{segment.title}……", stream_id)
-        self._spawn(self._regen_text(moment.date(), segment, old_state), stream_id)
+        self._spawn(self._regen_text(day, segment, old_state), stream_id)
         return True, "已开始重生成当前时段", True
 
     async def _regen_text(self, day: date, segment: Segment, old_state: SegmentState) -> str:
@@ -780,7 +801,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         del kwargs
         store = self._require_store()
         moment = now_jst()
-        today = moment.date()
+        today, _minutes = store.resolve_moment(moment)
         segments = store.segments_of(today)
         index = segments.index(store.segment_at(moment))
         if index + 1 < len(segments):
@@ -812,8 +833,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def cmd_status_topic(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
         store = self._require_store()
-        moment, segment, state = self._current()
-        today = moment.date().isoformat()
+        moment, day, segment, state = self._current()
+        today = day.isoformat()
 
         lines = [f"【谈资】{segment.slot}　{segment.title}"]
         if not state.topic:
@@ -843,7 +864,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self, stream_id: str = "", **kwargs: Any
     ) -> tuple[bool, str, bool]:
         day = self._group(kwargs, "day")
-        target = date.fromisoformat(day) if day else now_jst().date()
+        target = date.fromisoformat(day) if day else self._today()
         await self.ctx.send.text(f"开始重跑 {target.isoformat()} 的地点与话题……", stream_id)
         self._spawn(self._topics_text(target), stream_id)
         return True, "第二轮抽取已在后台开始", True
@@ -918,7 +939,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     )
     async def cmd_status_neg(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
-        await self.ctx.send.text(self._render_week(now_jst().date()), stream_id)
+        await self.ctx.send.text(self._render_week(self._today()), stream_id)
         return True, "已输出负面事件排期", True
 
     @Command(
@@ -930,7 +951,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def cmd_status_neg_reroll(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
         store = self._require_store()
-        today = now_jst().date()
+        today = self._today()
         self._require_negative().reroll_week(today, store.segments_of)
         await self.ctx.send.text("已重摇。\n" + self._render_week(today), stream_id)
         return True, "已重摇负面事件排期", True
@@ -943,7 +964,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     )
     async def cmd_status_neg_clear(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
-        today = now_jst().date()
+        today = self._today()
         self._require_negative().replace_week(today, [])
         await self.ctx.send.text("本周负面事件排期已清空。", stream_id)
         return True, "已清空负面事件排期", True
@@ -990,7 +1011,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         **kwargs: Any,
     ) -> tuple[bool, str, bool]:
         day = self._group(kwargs, "day")
-        today = now_jst().date()
+        today = self._today()
         if day == "today":
             target = today
         elif day:
