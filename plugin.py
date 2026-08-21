@@ -114,7 +114,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 max_records=int(await self._get_config("observability.prompt_preview_limit", 256)),
             ),
             model=str(await self._get_config("generation.model", "claude-sonnet-5")),
-            digest_model=str(await self._get_config("generation.digest_model", "glm-5.2")),
             topic_model=str(await self._get_config("generation.topic_model", "glm-5.2")),
             base_task=str(await self._get_config("generation.base_task", "memory")),
             temperature=float(await self._get_config("generation.temperature", 0.9)),
@@ -247,7 +246,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         return dt_time(int(hour), int(minute))
 
     async def run_batch(self, day: date, *, reason: str) -> dict[str, Any]:
-        """跑一天的批次：顺序生成每一段，滚动更新当日概要，最后报告。
+        """跑一天的批次：一次调用出全天，不合格的段逐段定向重写，最后报告。
 
         Args:
             day: 要生成的日期。
@@ -271,60 +270,66 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
             segments = store.segments_of(day)
             day_cache = store.ensure_day_cache(day)
-            # 凌晨那段承接的是前一天最后一段，概要也从前一天末尾接上
-            previous_cache = store.day_cache(day - timedelta(days=1))
-            digest = previous_cache.day_digest if previous_cache is not None else ""
+            # 凌晨那段承接的是前一天最后一段
+            previous = self._previous_state(day, segments[0]) if segments else None
+            levels = {segment.slot: negative.level_of(day, segment.slot) for segment in segments}
+
+            outcome = await generator.generate_day(
+                day=day,
+                segments=segments,
+                weather=weather,
+                holiday=holiday,
+                previous=previous,
+                negative_levels=levels,
+            )
 
             failures: list[tuple[Segment, str]] = []
             aborted = ""
-            # 连续几段都在调用层失败 → 模型是真的挂了，别再往下打十几次。
-            # 只失败一段则继续：偶发的超时不该赔上一整天。
-            consecutive_fatal = 0
-            for segment in segments:
-                previous = self._previous_state(day, segment)
-                level = negative.level_of(day, segment.slot)
-                outcome = await generator.generate_segment(
-                    day=day,
-                    segment=segment,
-                    weather=weather,
-                    holiday=holiday,
-                    previous=previous,
-                    day_digest=digest,
-                    negative_level=level,
-                )
-                outcome.state.generated_at = now_jst().isoformat()
-                day_cache.segments[segment.slot] = outcome.state
-                # 这一段换了新内容，旧 topic 的分享状态必须跟着作废，
-                # 否则 is_shared 会拿"上一版说过了"把新谈资一直摁住。
-                store.reset_shares(day, segment.slot)
+            by_slot = {segment.slot: segment for segment in segments}
+            stamp = now_jst().isoformat()
 
-                if outcome.fatal:
-                    consecutive_fatal += 1
-                    failures.append((segment, outcome.reason))
-                    if consecutive_fatal < 2:
-                        _logger.warning(
-                            "[批次] %s %s 调用失败（%s），继续下一段",
-                            day, segment.slot, outcome.reason,
-                        )
-                        continue
-                    # 连着两段都打不通，模型是真的挂了。剩余时段直接铺底稿，
-                    # 让库里留下「今天已经试过」的痕迹，重启不会再空转一轮。
-                    aborted = outcome.reason
-                    for rest in segments[segments.index(segment) :]:
-                        day_cache.segments.setdefault(rest.slot, store.fallback_for(rest))
-                    break
-                consecutive_fatal = 0
+            if not outcome.ok:
+                # 整次调用没成功：全天铺底稿，库里留下「今天已经试过」的痕迹，
+                # 重启不会再空转一轮。
+                aborted = outcome.reason
+                for segment in segments:
+                    day_cache.segments.setdefault(segment.slot, store.fallback_for(segment))
+                    store.reset_shares(day, segment.slot)
+            else:
+                day_cache.outline = outcome.outline
+                for slot, state in outcome.states.items():
+                    state.generated_at = stamp
+                    day_cache.segments[slot] = state
+                    # 这一段换了新内容，旧 topic 的分享状态必须跟着作废，
+                    # 否则 is_shared 会拿"上一版说过了"把新谈资一直摁住。
+                    store.reset_shares(day, slot)
 
-                if not outcome.ok:
-                    failures.append((segment, outcome.reason))
-                    continue
-                if segment.kind == "睡眠":
-                    # 概要写的是「醒着的这一天里做过什么」，跨过睡眠段就该归零
-                    digest = ""
-                else:
-                    digest = await generator.update_digest(digest, outcome.state.story)
-
-            day_cache.day_digest = digest
+                # 不合格的段逐段重写。重写时把已经收下的段当上下文，所以放在上面之后。
+                for slot, defect in outcome.failures:
+                    segment = by_slot[slot]
+                    _logger.info("[批次] %s %s 待重写：%s", day, slot, defect)
+                    rewritten = await generator.rewrite_segment(
+                        day=day,
+                        segment=segment,
+                        segments=segments,
+                        outline=outcome.outline,
+                        states=day_cache.segments,
+                        weather=weather,
+                        holiday=holiday,
+                        negative_level=levels.get(slot, ""),
+                        defect=defect,
+                    )
+                    rewritten.state.generated_at = stamp
+                    day_cache.segments[slot] = rewritten.state
+                    store.reset_shares(day, slot)
+                    if not rewritten.ok:
+                        failures.append((segment, f"{defect}；重写仍不合格：{rewritten.reason}"))
+                    if rewritten.fatal:
+                        # 重写都打不通说明模型这会儿是真的挂了，剩下的别再试
+                        aborted = rewritten.reason
+                        for rest in segments:
+                            day_cache.segments.setdefault(rest.slot, store.fallback_for(rest))
+                        break
 
             # 第二轮：全天一次调用，为每段提炼一句谈资（5.10）。
             # 放在主生成之后，因为它要读全天的 story。
@@ -510,17 +515,31 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     def _topic_block(topic: str) -> str:
         """replyer 侧的谈资文案（C）。
 
-        措辞要明确留出不说的余地——它是常驻注入的，如果写成硬性要求，
-        她会在任何语境下硬插一句。
+        写成「状态 + 条件分支」，不写成「指令 + 否定」。旧版是
+        「有件小事可以说」+「聊不上就别硬插」——前一句在上下文里立了一件待办，
+        后一句想把它取消掉。否定取消不了待办（和 5.11 里「说完撤掉」而不是
+        「注入别再提」是同一个道理），结果是任何语境下都要硬插一句。
+
+        现在第一句只陈述状态：这件事还没说过。说出口之后本 block 就不再注入，
+        所以这句永远为真。要不要说交给后面的条件判断，判断不通过就没有下文，
+        不存在一件悬着等着被消掉的事。
+
+        「别照搬上面这段」针对的是 topic 的形态：它是第三人称 50~80 字的叙述，
+        最省力的用法就是整段搬进回复，读起来就是念稿。
         """
-        return f"有件小事可以说：{topic}\n聊得上就提一句，聊不上就别硬插。"
+        return (
+            f"刚才这件事你还没跟谁说起过：{topic}\n"
+            "判断这件事是否可以自然融入当前话题，如果不行就不要强行扯出这件事。"
+            "融入时用你自己的话说，别照搬上面这段，表达逻辑要通顺。"
+        )
 
     # ── Tool ──
     @Tool(
         "get_mittes_schedule",
         brief_description=(
-            "当需要描述 Mittes 在做什么时，必须调用此工具获取真实日程，不得推测。"
-            "不填 time 就是此刻；填了可以查她今天早些时候、昨天或明天的安排。"
+            "查 Mittes 某个时刻的行程与经过：几点在哪、做什么、和谁在一起，"
+            "以及那段时间实际发生了什么。要讲她的行程或经历时调用，不要凭印象说。"
+            "不填 time 就是此刻；填了可以查她今天早些时候、昨天或明天。"
         ),
         parameters=[
             ToolParameterInfo(
@@ -1224,18 +1243,24 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         return "\n".join(lines)
 
     async def _regenerate(self, day: date, segment: Segment) -> SegmentState:
-        """重生成单段并写回缓存。"""
+        """重生成单段并写回缓存。
+
+        走的是批次里那条定向重写：把全天骨架、脉络和前后段一起给模型，只换这一段。
+        比早先的「单段从头生成」接得上——那时候它只看得见上一段。
+        """
         store = self._require_store()
         generator = self._require_generator()
         negative = self._require_negative()
+        cached = store.day_cache(day)
 
-        outcome = await generator.generate_segment(
+        outcome = await generator.rewrite_segment(
             day=day,
             segment=segment,
+            segments=store.segments_of(day),
+            outline=cached.outline if cached else "",
+            states=cached.segments if cached else {},
             weather=await self._forecast_for(day),
             holiday=await self._holiday_name(day),
-            previous=self._previous_state(day, segment),
-            day_digest=(store.day_cache(day).day_digest if store.day_cache(day) else ""),
             negative_level=negative.level_of(day, segment.slot),
         )
         outcome.state.generated_at = now_jst().isoformat()

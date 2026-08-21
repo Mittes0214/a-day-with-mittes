@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS days (
     weekday        INTEGER NOT NULL,   -- 0=周一 … 6=周日
     holiday        TEXT NOT NULL DEFAULT '',
     weather        TEXT NOT NULL DEFAULT '',
-    day_digest     TEXT NOT NULL DEFAULT '',
+    day_digest     TEXT NOT NULL DEFAULT '',   -- 历史遗留：一段一调用时代的当日概要，只读不写
+    outline        TEXT NOT NULL DEFAULT '',   -- 脉络：模型动笔前给自己写的全天规划
     batch_reason   TEXT NOT NULL DEFAULT '',   -- 每日批次 / 冷启动补跑 / 手动触发
     batch_at       TEXT NOT NULL DEFAULT '',   -- 批次结束时刻（JST，ISO8601）
     batch_elapsed  REAL NOT NULL DEFAULT 0,    -- 批次耗时（秒）
@@ -109,6 +110,9 @@ _EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
         "topic_keys": "TEXT NOT NULL DEFAULT '[]'",
         "places": "TEXT NOT NULL DEFAULT '[]'",
     },
+    "days": {
+        "outline": "TEXT NOT NULL DEFAULT ''",
+    },
     "shares": {
         "reply_text": "TEXT NOT NULL DEFAULT ''",
         "hit_key": "TEXT NOT NULL DEFAULT ''",
@@ -177,7 +181,7 @@ class ScheduleDB:
             "weekday": day.weekday(),
             "holiday": str(fields.get("holiday") or ""),
             "weather": str(fields.get("weather") or ""),
-            "day_digest": str(fields.get("day_digest") or ""),
+            "outline": str(fields.get("outline") or ""),
             "batch_reason": str(fields.get("batch_reason") or ""),
             "batch_at": str(fields.get("batch_at") or ""),
             "batch_elapsed": float(fields.get("batch_elapsed") or 0),
@@ -239,16 +243,20 @@ class ScheduleDB:
         """读最近若干天，供启动时填充内存热路径。
 
         Returns:
-            dict: ``{日期: {"day_digest": str, "segments": {slot: 五字段dict}}}``
+            dict: ``{日期: {"outline": str, "segments": {slot: 五字段dict}}}``
+
+        ``outline`` 为空时回落到 ``day_digest``：那是一段一调用时代的当日概要，
+        换成一次出全天之后不再写入，但老记录里还留着，viewer 翻旧日期得有东西可显示。
         """
         days = self._db.execute(
-            "SELECT date, day_digest FROM days ORDER BY date DESC LIMIT ?", (limit,)
+            "SELECT date, outline, day_digest FROM days ORDER BY date DESC LIMIT ?", (limit,)
         ).fetchall()
         if not days:
             return {}
 
         result: dict[str, dict[str, Any]] = {
-            row["date"]: {"day_digest": row["day_digest"], "segments": {}} for row in days
+            row["date"]: {"outline": row["outline"] or row["day_digest"], "segments": {}}
+            for row in days
         }
         placeholders = ",".join("?" for _ in result)
         rows = self._db.execute(

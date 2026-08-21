@@ -357,7 +357,8 @@ function render(day, data) {
       <h2>${day} 周${WD[m.weekday]}${m.aborted ? ' —— 批次中止' : ''}</h2>
       <div class="meta">${meta}</div>
       ${m.aborted ? `<div class="digest">中止原因：${esc(m.aborted)}</div>` : ''}
-      ${m.day_digest ? `<div class="digest">当日概要：${esc(m.day_digest)}</div>` : ''}
+      ${m.outline ? `<div class="digest">脉络：${esc(m.outline)}</div>`
+        : m.day_digest ? `<div class="digest">当日概要：${esc(m.day_digest)}</div>` : ''}
     </div>${segs}`;
 }
 

@@ -135,13 +135,13 @@ class DayCache:
     """某一天的生成结果。"""
 
     segments: dict[str, SegmentState] = field(default_factory=dict)
-    # 批次跑到最后时的当日概要，供次日凌晨那段承接
-    day_digest: str = ""
+    # 脉络：模型写正文之前给自己列的全天规划。不进任何注入，只落库供回看和定向重写。
+    outline: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "segments": {slot: state.to_dict() for slot, state in self.segments.items()},
-            "day_digest": self.day_digest,
+            "outline": self.outline,
         }
 
     @classmethod
@@ -152,7 +152,9 @@ class DayCache:
             for slot, value in raw_segments.items():
                 if isinstance(value, dict):
                     segments[str(slot)] = SegmentState.from_dict(value)
-        return cls(segments=segments, day_digest=str(data.get("day_digest") or ""))
+        # day_digest 是旧字段，老记录里才有，读到就当脉络显示
+        outline = data.get("outline") or data.get("day_digest") or ""
+        return cls(segments=segments, outline=str(outline))
 
 
 class ScheduleStore:
@@ -343,7 +345,7 @@ class ScheduleStore:
         if cached is None:
             return
 
-        self._db.upsert_day(day, day_digest=cached.day_digest, **day_fields)
+        self._db.upsert_day(day, outline=cached.outline, **day_fields)
         for seq, segment in enumerate(self.segments_of(day)):
             state = cached.segments.get(segment.slot)
             if state is None:

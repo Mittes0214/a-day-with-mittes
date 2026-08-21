@@ -18,7 +18,7 @@ enable_get_weather = true
 # 00:00~12:00 那几段早就过去了。
 run_at = "12:00"
 
-# 三处 LLM 调用**直接指定模型名**（`model_config.toml` 的 `[[models]].name`），
+# 两处 LLM 调用**直接指定模型名**（`model_config.toml` 的 `[[models]].name`），
 # 不再填任务名。
 #
 # 为什么：任务名只决定候选池，不决定具体模型。`replyer` 的 selection_strategy
@@ -27,19 +27,17 @@ run_at = "12:00"
 # 的质量方差压过 prompt 本身的影响。
 model = "claude-sonnet-5"
 
-# 当日概要滚动压缩，输入永远只有三百来字，用便宜的就行。
-digest_model = "glm-5.2"
-
-# 话题提炼（第二轮）。和 digest 分开配：压缩只要能概括，提炼要能看出哪件事
-# 值得讲、并把前因后果说清楚，对模型的要求更高。
-topic_model = "glm-5.2"
+# 话题提炼（第二轮）。和主生成分开配：创作和抽取是两件事，本可以用便宜模型。
+# 这里仍然填同一档，是因为 topic 常驻注入到 replyer——写得糙一点，她开口就糙一点。
+topic_model = "claude-sonnet-5"
 
 # 基座任务名：模型、温度、max_tokens 全由上面几个键覆盖，这里真正借用的是它的
 # hard_timeout 和统计管线。
 #
 # **选 memory 是为了超时**：它的 hard_timeout 是 240 秒，而 replyer 只有 60 秒、
-# utils 只有 20 秒。实测有过 36.9 秒的单段调用，话题提炼更是一次吞十段 story
-# 再吐十条 topic，20 秒根本不够。
+# utils 只有 20 秒。主生成一次要吐全天十来段，实测 147~195 秒；话题提炼一次吞十段
+# story 再吐十条 topic。240 秒只剩两成余量，顶穿了就整天退底稿——那时候该换一个
+# hard_timeout 更宽的基座任务，而不是缩这边。
 base_task = "memory"
 
 temperature = 0.9
@@ -56,8 +54,9 @@ negative_medium_ratio = 0.3
 # 主程序的预览开关只管主程序自己写的记录，管不到插件，所以这里必须自带一个。
 prompt_preview_enabled = true
 
-# 每个目录保留多少条记录。一天约写二十几条（每段一次生成 + 一次概要压缩，另加一次第二轮抽取），
-# 256 条大约覆盖十来天，跟主程序的 maisaka_prompt_preview_limit 默认值对齐。
+# 每个目录保留多少条记录。改成一次出全天之后，一天只写三五条（全天生成一次 +
+# 不合格段的定向重写若干 + 第二轮抽取一次），256 条能覆盖两个月，
+# 上限沿用主程序 maisaka_prompt_preview_limit 的默认值。
 prompt_preview_limit = 256
 
 # 批次结果报到哪个群；留空则不报告。成功和失败都报——静默成功等于没有监控。

@@ -4,8 +4,9 @@ MaiBot 插件。给角色一份每天自动生成的日程，让它影响她的�
 
 ## 它做什么
 
-- 每天自动生成次日全天日程。一天切成十来个变长时段，每段由 LLM 写出当时的
-  故事、心情、所在地点和说话方式。
+- 每天自动生成次日全天日程，**一次调用出十来段**。一天切成十来个变长时段，
+  每段有当时的故事、心情、所在地点和说话方式。写手看得见全天骨架，
+  所以一件事可以跨几段发展再收，而不是十段各写各的。
 - 说话方式跟着时段走。累了话短，忙起来回得慢，刚睡醒有点迷糊。
   但她不会把日程内容念出来（"我现在正在洗碗呢"那种）。
 - 每段挑一件值得说的小事。聊到相关的就提一句，说过之后就不再提。
@@ -29,9 +30,8 @@ MaiBot 插件。给角色一份每天自动生成的日程，让它影响她的�
 ```toml
 [generation]
 run_at       = "12:00"             # 每天几点跑批次，生成的是次日全天
-model        = "claude-sonnet-5"   # 时段生成
-digest_model = "glm-5.2"           # 当日概要压缩
-topic_model  = "glm-5.2"           # 第二轮抽取
+model        = "claude-sonnet-5"   # 全天生成
+topic_model  = "claude-sonnet-5"   # 第二轮抽取
 base_task    = "memory"            # 基座任务，见下
 temperature  = 0.9
 
@@ -48,9 +48,9 @@ enable_get_mittes_outfit   = true
 enable_get_weather         = true
 ```
 
-三个 `*_model` 填的是 `model_config.toml` 里 `[[models]].name` 的模型名，不是任务名。
+两个 `*_model` 填的是 `model_config.toml` 里 `[[models]].name` 的模型名，不是任务名。
 `base_task` 填任务名，只用来借它的 `hard_timeout`，挑一个超时够宽的
-（时段生成实测出现过 36.9 秒）。原因见 [DESIGN.md](DESIGN.md)。
+（全天生成实测 147~195 秒，240 秒只剩两成余量）。原因见 [DESIGN.md](DESIGN.md)。
 
 ## 两份手写资产
 
@@ -80,7 +80,7 @@ LLM 只负责写"这些事实今天具体表现成什么样"，绝不回写骨�
 | `/status db` | 归档库覆盖范围、段数、文件大小 |
 | `/status batch [日期\|today]` | 立即跑一次批次，默认次日 |
 | `/status topics [日期]` | 只重跑第二轮（地点时段轴 + 话题） |
-| `/status regen` | 强制重生成当前时段，新旧并排 |
+| `/status regen` | 定向重写当前时段，新旧并排 |
 | `/status next` | 提前生成下一段但不切换 |
 | `/status neg` | 本周"不顺心的事"排期 |
 | `/status neg reroll` / `clear` | 重摇 / 清空本周排期 |
@@ -113,7 +113,7 @@ python viewer.py --lan --port 9000
 
 | 表 | 一行是什么 |
 |---|---|
-| `days` | 一天，存批次元信息（天气、节假日、耗时、当日概要） |
+| `days` | 一天，存批次元信息（天气、节假日、耗时、脉络） |
 | `segments` | 一个时段，存骨架快照 + 生成出来的 story / manner / mood / places / topic |
 | `shares` | 某条话题在某个会话的状态：注入过几次、有没有说出口、说的原话 |
 
