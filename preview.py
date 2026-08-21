@@ -138,6 +138,8 @@ class PromptPreview:
                 "prompt_tokens": _nonnegative_int(result.get("prompt_tokens")),
                 "completion_tokens": _nonnegative_int(result.get("completion_tokens")),
                 "total_tokens": _nonnegative_int(result.get("total_tokens")),
+                # 详情页的耗时列。WebUI 按 duration_ms 读，缺了就不显示耗时
+                "duration_ms": float(result.get("duration_ms") or 0.0),
             },
             "presentation": {"output_title": output_title},
             "request_items": _serialize_prompt(prompt, now),

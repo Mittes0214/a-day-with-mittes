@@ -26,6 +26,7 @@ from typing import Any
 import json
 import logging
 import re
+import time
 
 from .negative_events import LEVEL_HINTS
 from .schedule_store import (
@@ -232,6 +233,7 @@ class SegmentGenerator:
         from src.common.data_models.llm_service_data_models import LLMGenerationOptions
         from src.services.llm_service import LLMServiceClient
 
+        started = time.monotonic()
         try:
             client = LLMServiceClient(
                 task_name=self._base_task,
@@ -248,19 +250,29 @@ class SegmentGenerator:
         except Exception as exc:
             return {"success": False, "error": f"{type(exc).__name__}: {exc}", "response": ""}
 
-        text = str(getattr(result, "response", "") or "")
+        # 用量和耗时透传给推理记录。WebUI 那页的 token 列和耗时列读的就是这几个键
+        # （``metadata.prompt_tokens`` / ``completion_tokens`` / ``total_tokens`` /
+        # ``duration_ms``），不带上去页面就一路显示 0 Token、没有耗时。
+        usage = {
+            "prompt_tokens": result.prompt_tokens,
+            "completion_tokens": result.completion_tokens,
+            "total_tokens": result.total_tokens,
+            "duration_ms": (time.monotonic() - started) * 1000,
+        }
+
+        text = result.response
         if not text.strip():
             # 空响应最常见的成因不是模型罢工，而是**推理把 max_tokens 吃光了**：
             # 推理模型的 reasoning 和正文共用这一个预算，想得太久就一个字正文都吐不出来，
             # 而 status 仍是 completed，主程序不当失败。实测 glm-5.2 跑全天话题提炼时
             # 4000 token 全烧在 reasoning 上。这两种情况要分开报，否则排查会走偏。
-            used = int(getattr(result, "completion_tokens", 0) or 0)
+            used = result.completion_tokens
             if used >= _MAX_TOKENS:
                 reason = f"输出被 max_tokens 截断：{used}/{_MAX_TOKENS} token 全部用于推理，未产出正文"
             else:
                 reason = f"模型返回空响应（completion_tokens={used}）"
-            return {"success": False, "error": reason, "response": "", "model": model}
-        return {"success": True, "response": text, "model": getattr(result, "model_name", model)}
+            return {"success": False, "error": reason, "response": "", "model": model, **usage}
+        return {"success": True, "response": text, "model": result.model_name or model, **usage}
 
     # ── 全天生成 ──
     async def generate_day(
