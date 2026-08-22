@@ -17,7 +17,7 @@
 - Tool ``get_current_schedule``：事实层，返回当前时段的故事化文本
 - Tool ``get_weather``：实时天气查询
 - Hook ``maisaka.planner.before_request``：planner 状态层注入
-- Hook ``maisaka.replyer.before_model_request``：replyer 语气与谈资注入
+- Hook ``maisaka.replyer.before_model_request``：replyer 语气注入
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
@@ -38,7 +38,6 @@ import uuid
 from maibot_sdk import Command, HookHandler, MaiBotPlugin, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
-from . import prompts
 from .generator import SegmentGenerator
 from .negative_events import LEVEL_MILD, NegativeEntry, NegativeScheduler
 from .preview import PromptPreview
@@ -502,13 +501,15 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         而 Tool 是「该聊她在干嘛」时才调用的，那时候给已经晚了。观察项见设计文档 7。
         """
         store = self._require_store()
+        lines = [
+            "【Mittes 此刻】",
+            f"所在：{store.place_at(moment, segment, state)}",
+            f"心情：{state.mood}",
+        ]
         trail = _render_trail(state)
-        return prompts.render(
-            "planner_inject",
-            place=store.place_at(moment, segment, state),
-            mood=state.mood,
-            trail=prompts.render("planner_inject", "trail", trail=trail) if trail else "",
-        )
+        if trail:
+            lines.append(f"这一段的行程：{trail}")
+        return "\n".join(lines)
 
     @staticmethod
     def _topic_block(topic: str) -> str:
@@ -526,17 +527,30 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         「别照搬上面这段」针对的是 topic 的形态：它是第三人称 50~80 字的叙述，
         最省力的用法就是整段搬进回复，读起来就是念稿。
         """
-        return prompts.render("topic_inject", topic=topic)
+        return (
+            f"刚才这件事你还没跟谁说起过：{topic}\n"
+            "判断这件事是否可以自然融入当前话题，如果不行就不要强行扯出这件事。"
+            "融入时用你自己的话说，别照搬上面这段，表达逻辑要通顺。"
+        )
 
     # ── Tool ──
     @Tool(
         "get_mittes_schedule",
-        brief_description=prompts.render("tool_schedule", "brief"),
+        brief_description=(
+            "查 Mittes 某个时刻的行程与经过：几点在哪、做什么、和谁在一起，"
+            "以及那段时间实际发生了什么。要讲她的行程或经历时调用，不要凭印象说。"
+            "不填 time 就是此刻；填了可以查她今天早些时候、昨天或明天。"
+        ),
         parameters=[
             ToolParameterInfo(
                 name="time",
                 param_type=ToolParamType.STRING,
-                description=prompts.render("tool_schedule", "param_time"),
+                description=(
+                    "要查的时刻，留空表示现在。写法："
+                    "「HH:MM」查今天的某一刻；「YYYY-MM-DD HH:MM」查指定某天；"
+                    "「YYYY-MM-DD」只给日期时按中午算。"
+                    "她的一天从凌晨两点算起，所以凌晨一点问「23:00」指的是几十分钟前。"
+                ),
                 required=False,
             ),
         ],
@@ -558,45 +572,53 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if raw_time.strip():
             parsed = parse_moment(raw_time)
             if parsed is None:
-                return prompts.render("tool_schedule", "bad_time", raw=raw_time.strip())
+                return (
+                    f"看不懂「{raw_time.strip()}」这个时间。"
+                    "请用「HH:MM」或「YYYY-MM-DD HH:MM」，比如 19:30、2026-08-19 19:30。"
+                )
             moment = parsed
 
         day, _minutes = store.resolve_moment(moment)
         try:
             segment = store.segment_at(moment)
         except LookupError:
-            return prompts.render(
-                "tool_schedule", "out_of_range", time=f"{moment:%Y-%m-%d %H:%M}"
-            )
+            return f"{moment:%Y-%m-%d %H:%M} 不在骨架覆盖的范围里，查不到。"
 
         state = store.state_of(day, segment)
-        head = prompts.render(
-            "tool_schedule",
-            date=f"{day:%Y-%m-%d}",
-            weekday=weekday_name(day),
-            now_mark="此刻 " if moment is now else "",
-            time=f"{moment:%H:%M}",
-            slot=segment.slot,
-            title=segment.title,
-            place=segment.place,
-            outfit=segment.outfit,
-            company=segment.company,
+        head = (
+            f"【Mittes 的日程】{day:%Y-%m-%d} 周{weekday_name(day)}　"
+            f"{'此刻 ' if moment is now else ''}{moment:%H:%M}\n"
+            f"{segment.slot}　{segment.title}\n"
+            f"地点：{segment.place}　穿着：{segment.outfit}　同处：{segment.company}"
         )
 
         if moment > now:
-            return f"{head}\n\n" + prompts.render("tool_schedule", "future")
+            return (
+                f"{head}\n\n"
+                "这是**还没到的时间**，只有安排、没有经过——别把它当成已经发生的事来讲。"
+            )
         if state is None or not state.story:
-            return f"{head}\n\n" + prompts.render("tool_schedule", "no_record")
-        return f"{head}\n\n" + prompts.render("tool_schedule", "recorded", story=state.story)
+            return f"{head}\n\n这一段的细节没有记录，只有上面的安排。"
+        return (
+            f"{head}\n\n{state.story}\n\n"
+            "以上是她真实经历过的，可以据此回答；不要复述原文，也不要在没人问的时候主动提起。"
+        )
 
     @Tool(
         "get_mittes_outfit",
-        brief_description=prompts.render("tool_outfit", "brief"),
+        brief_description=(
+            "当需要描述 Mittes 穿什么时，必须调用此工具获取真实穿搭，不得推测。"
+            "从头到脚都有；不填 time 就是此刻。"
+        ),
         parameters=[
             ToolParameterInfo(
                 name="time",
                 param_type=ToolParamType.STRING,
-                description=prompts.render("tool_outfit", "param_time"),
+                description=(
+                    "要查的时刻，留空表示现在。写法同日程工具："
+                    "「HH:MM」或「YYYY-MM-DD HH:MM」。她一天里会换好几次衣服，"
+                    "问的是别的时段就要把时刻填上。"
+                ),
                 required=False,
             ),
         ],
@@ -618,36 +640,34 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if raw_time.strip():
             parsed = parse_moment(raw_time)
             if parsed is None:
-                return prompts.render("tool_outfit", "bad_time", raw=raw_time.strip())
+                return (
+                    f"看不懂「{raw_time.strip()}」这个时间。"
+                    "请用「HH:MM」或「YYYY-MM-DD HH:MM」，比如 19:30、2026-08-19 19:30。"
+                )
             moment = parsed
 
         day, _minutes = store.resolve_moment(moment)
         try:
             segment = store.segment_at(moment)
         except LookupError:
-            return prompts.render(
-                "tool_outfit", "out_of_range", time=f"{moment:%Y-%m-%d %H:%M}"
-            )
+            return f"{moment:%Y-%m-%d %H:%M} 不在骨架覆盖的范围里，查不到。"
 
-        return prompts.render(
-            "tool_outfit",
-            date=f"{day:%Y-%m-%d}",
-            weekday=weekday_name(day),
-            now_mark="此刻 " if moment is now else "",
-            time=f"{moment:%H:%M}",
-            slot=segment.slot,
-            title=segment.title,
-            detail=wardrobe.render(segment.outfit),
+        return (
+            f"【Mittes 的穿搭】{day:%Y-%m-%d} 周{weekday_name(day)}　"
+            f"{'此刻 ' if moment is now else ''}{moment:%H:%M}　"
+            f"（{segment.slot}　{segment.title}）\n\n"
+            f"{wardrobe.render(segment.outfit)}\n\n"
+            "问到哪儿说哪儿，别把整份清单报一遍——没有人会那样描述自己的衣服。"
         )
 
     @Tool(
         "get_weather",
-        brief_description=prompts.render("tool_weather"),
+        brief_description="查询指定城市的实时天气和近 3 天预报；用户询问天气，或回复需要参考当前天气时调用。",
         parameters=[
             ToolParameterInfo(
                 name="location",
                 param_type=ToolParamType.STRING,
-                description=prompts.render("tool_weather", "param_location"),
+                description="城市的英文/罗马字名称（如：东京→Tokyo、上海→Shanghai），不要直接传中文，否则可能匹配到同名小地名。",
                 required=True,
             ),
         ],
@@ -703,12 +723,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         session_id: str = "",
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """把 A（说话方式）和 C（谈资）放到各自合适的位置。
-
-        A 是本轮的表达要求，仍紧贴 planner 的 reply_reference。C 只是
-        可能用得上的背景经历，放在 system item 之后、聊天记录之前；
-        后面的真实对话和目标消息会重新取得注意力，避免 C 和
-        reply_reference 挨在一起时被误读成必须执行的任务。
+        """在 planner 的 reply_reference item 之前插入 A（说话方式）和 C（谈资）。
 
         锚点从 hook 载荷算出来，不是猜位置：reference item 的正文由主程序按固定规则
         拼装（maisaka_generator_base.py:574-594）——``reply_tool_args["reply_reference"]``
@@ -724,36 +739,32 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         store = self._require_store()
 
         # A：说话方式。C：今天那件可说的小事，说出口之后就不再注入（5.11）。
-        manner = state.manner.strip()
-        topic = ""
+        blocks = [state.manner] if state.manner else []
+        share_pending = False
         if state.topic and session_id and not store.is_shared(day, segment.slot, session_id):
-            topic = self._topic_block(state.topic)
-        if not manner and not topic:
+            blocks.append(self._topic_block(state.topic))
+            share_pending = True
+        if not blocks:
             return {"success": True, "action": "continue"}
 
-        updated = list(items)
-
-        # C 是低优先级背景：紧跟 system，但放在所有聊天记录之前。
-        # 不把它塞进 system 正文，否则权重反而会更高。
-        if topic:
-            system_index = _find_item_type_index(updated, "SystemMessageItem")
-            updated.insert(system_index + 1 if system_index >= 0 else 0, _new_user_item(topic))
-            store.mark_injected(day, segment.slot, session_id)
-
-        # A 仍是本轮要求：放在 reply_reference 之前。
         reference = str((reply_tool_args or {}).get("reply_reference") or "").strip()
         expected = reference or (f"当前思考：\n{reply_reason}".strip() if reply_reason else "")
 
-        if manner:
-            index = -1
-            if expected:
-                index = _find_item_index(updated, lambda text: expected in text)
-            if index < 0:
-                index = _find_item_index(updated, lambda text: text.startswith(_REPLYER_FALLBACK_PREFIX))
-            if index < 0:
-                _logger.warning("[replyer] 两个锚点都没匹配上，本次跳过说话方式注入")
-            else:
-                updated.insert(index, _new_user_item(manner))
+        index = -1
+        if expected:
+            index = _find_item_index(items, lambda text: expected in text)
+        if index < 0:
+            index = _find_item_index(items, lambda text: text.startswith(_REPLYER_FALLBACK_PREFIX))
+        if index < 0:
+            _logger.warning("[replyer] 两个锚点都没匹配上，本次不注入")
+            return {"success": True, "action": "continue"}
+
+        updated = list(items)
+        for offset, text in enumerate(blocks):
+            updated.insert(index + offset, _new_user_item(text))
+
+        if share_pending:
+            store.mark_injected(day, segment.slot, session_id)
 
         return _hook_response(
             updated,
@@ -872,7 +883,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             "── replyer A 说话方式（插在 reply_reference 之前）──\n"
             f"{state.manner}\n"
             "\n"
-            "── replyer C 谈资（system 之后、聊天记录之前；说出口后撤掉）──\n"
+            "── replyer C 谈资（A 之后；说出口后就不再注入）──\n"
             + (self._topic_block(state.topic) if state.topic else "（这段没什么好说的，不注入）")
         )
         await self.ctx.send.text(text, stream_id)
@@ -1321,14 +1332,6 @@ def _find_item_index(items: list[Any], predicate: Any) -> int:
     for index in range(len(items) - 1, -1, -1):
         text = _item_text(items[index])
         if text and predicate(text):
-            return index
-    return -1
-
-
-def _find_item_type_index(items: list[Any], item_type: str) -> int:
-    """从前往后找第一个指定类型的 Item，返回下标；找不到返回 -1。"""
-    for index, item in enumerate(items):
-        if isinstance(item, dict) and item.get("item_type") == item_type:
             return index
     return -1
 

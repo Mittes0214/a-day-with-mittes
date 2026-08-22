@@ -59,7 +59,7 @@ enable_get_weather         = true
 |---|---|
 | `schedule_skeleton.toml` | 一周的时段骨架：每段的时间、名称、地点、穿搭名、同处的人、性质 |
 | `wardrobe.toml` | 几套穿搭，每套一个名字 + 从头到脚的细节 |
-| `prompts/` | 给模型看的全部文字，一次请求一个文件。改配方不用碰 Python，见 [prompts/README.md](prompts/README.md) |
+| `prompts/` | 三次 LLM 调用的完整 prompt，一次请求一个文件。改配方不用碰 Python，见 [prompts/README.md](prompts/README.md) |
 
 骨架的 `outfit` 填的是衣柜里的套装名。名字进 prompt 给 story 用，
 从头到脚的细节只给查询工具。两种粒度为什么分开，见 [DESIGN.md](DESIGN.md)。
