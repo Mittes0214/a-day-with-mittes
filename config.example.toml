@@ -5,7 +5,7 @@
 
 [plugin]
 enabled = true
-config_version = "3.5.2"
+config_version = "3.6.0"
 
 [components]
 # 关掉的 Tool 完全不会出现在 LLM 的 tool_definitions 里；改动需要重启 MaiBot 才生效
@@ -18,8 +18,8 @@ enable_get_weather = true
 # 00:00~12:00 那几段早就过去了。
 run_at = "12:00"
 
-# 两处 LLM 调用**直接指定模型名**（`model_config.toml` 的 `[[models]].name`），
-# 不再填任务名。
+# 各轮 LLM 调用**直接指定模型名**（`model_config.toml` 的 `[[models]].name`），
+# 不再填任务名。第三轮表达方式沿用 model。
 #
 # 为什么：任务名只决定候选池，不决定具体模型。`replyer` 的 selection_strategy
 # 是 random，四个模型随机挑，sonnet 5 只有 1/4 的概率——而整套 prompt 的判据
@@ -36,7 +36,8 @@ topic_model = "claude-sonnet-5"
 #
 # **选 memory 是为了超时**：它的 hard_timeout 是 240 秒，而 replyer 只有 60 秒、
 # utils 只有 20 秒。主生成一次要吐全天十来段，实测 147~195 秒；话题提炼一次吞十段
-# story 再吐十条 topic。240 秒只剩两成余量，顶穿了就整天退底稿——那时候该换一个
+# story 再吐十条 topic。第三轮每个时段单独生成表达方式。240 秒只剩两成余量，
+# 顶穿了就整天退底稿——那时候该换一个
 # hard_timeout 更宽的基座任务，而不是缩这边。
 base_task = "memory"
 

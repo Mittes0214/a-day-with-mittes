@@ -1,11 +1,12 @@
-"""日程归档浏览器。
+"""日程归档与管理页面。
 
-起一个只读的小服务，把 ``data/schedule.db`` 里的日程按天翻出来看。
+把 ``data/schedule.db`` 里的日程按天翻出来看，也能通过任务队列编辑表达方式、
+生成日程和重跑 topic。任务由正在运行的插件领取，viewer 自己不调用 LLM。
 
     uv run python plugins/04_a_day_with_mittes/viewer.py          # 只有本机能开
     uv run python plugins/04_a_day_with_mittes/viewer.py --lan    # 局域网内可开
 
-只用标准库，不引任何依赖；数据库以只读方式打开，不会跟正在运行的 bot 抢写锁。
+只用标准库，不引任何依赖；每个请求短连接 SQLite，WAL 模式下不会长期占写锁。
 
 **``--lan`` 没有任何鉴权**：同一局域网里知道地址的人都能看到全部日程内容。
 这是自用小工具的取舍，别往公网端口映射。
@@ -30,10 +31,14 @@ WARDROBE_PATH = Path(__file__).parent / "wardrobe.toml"
 WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
-    """以只读方式打开归档库。"""
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, check_same_thread=False)
+def _connect(db_path: Path, *, readonly: bool = True) -> sqlite3.Connection:
+    """每个 HTTP 请求使用自己的短连接，避免 ThreadingHTTPServer 共享连接。"""
+    if readonly:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    else:
+        conn = sqlite3.connect(db_path, isolation_level=None)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
 
@@ -98,8 +103,51 @@ def _load_wardrobe(path: Path) -> dict[str, Any]:
     }
 
 
+_ALLOWED_ACTIONS = {
+    "set_expression",
+    "generate_day",
+    "regenerate_day",
+    "regenerate_topics",
+}
+
+
+def _enqueue_job(conn: sqlite3.Connection, payload: dict[str, Any]) -> int:
+    action = str(payload.get("action") or "")
+    if action not in _ALLOWED_ACTIONS:
+        raise ValueError("不支持的操作")
+    target = str(payload.get("date") or "")
+    date.fromisoformat(target)
+    slot = str(payload.get("slot") or "")
+    body: dict[str, Any] = {}
+    if action == "set_expression":
+        manner = str(payload.get("manner") or "").strip()
+        if not slot:
+            raise ValueError("缺少时段")
+        if not manner:
+            raise ValueError("表达方式不能为空")
+        if len(manner) > 200:
+            raise ValueError("表达方式不能超过 200 字")
+        exists = conn.execute(
+            "SELECT 1 FROM segments WHERE date=? AND slot=?",
+            (target, slot),
+        ).fetchone()
+        if exists is None:
+            raise ValueError("这一天或时段不存在")
+        body["manner"] = manner
+    cursor = conn.execute(
+        "INSERT INTO admin_jobs (action, target_date, slot, payload) VALUES (?, ?, ?, ?)",
+        (action, target, slot, json.dumps(body, ensure_ascii=False)),
+    )
+    return int(cursor.lastrowid)
+
+
+def _load_job(conn: sqlite3.Connection, job_id: int) -> dict[str, Any] | None:
+    row = conn.execute("SELECT * FROM admin_jobs WHERE id=?", (job_id,)).fetchone()
+    return dict(row) if row is not None else None
+
+
 class Handler(BaseHTTPRequestHandler):
-    conn: sqlite3.Connection
+    db_path: Path
     wardrobe_path: Path
 
     def do_GET(self) -> None:  # noqa: N802 —— BaseHTTPRequestHandler 的固定签名
@@ -111,17 +159,51 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(_load_wardrobe(self.wardrobe_path))
             return
         if path == "/api/days":
-            self._send_json(_list_days(self.conn))
+            with _connect(self.db_path) as conn:
+                self._send_json(_list_days(conn))
             return
         if path.startswith("/api/day/"):
             day = path.rsplit("/", 1)[-1]
-            data = _load_day(self.conn, day)
+            with _connect(self.db_path) as conn:
+                data = _load_day(conn, day)
             if data is None:
                 self._send_json({"error": "没有这一天的记录"}, status=404)
                 return
             self._send_json(data)
             return
+        if path.startswith("/api/job/"):
+            try:
+                job_id = int(path.rsplit("/", 1)[-1])
+            except ValueError:
+                self._send_json({"error": "任务编号不正确"}, status=400)
+                return
+            with _connect(self.db_path) as conn:
+                job = _load_job(conn, job_id)
+            if job is None:
+                self._send_json({"error": "任务不存在"}, status=404)
+                return
+            self._send_json(job)
+            return
         self._send(404, "text/plain; charset=utf-8", "Not Found".encode("utf-8"))
+
+    def do_POST(self) -> None:  # noqa: N802 —— BaseHTTPRequestHandler 的固定签名
+        path = urlparse(self.path).path
+        if path != "/api/jobs":
+            self._send_json({"error": "Not Found"}, status=404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length <= 0 or length > 8192:
+                raise ValueError("请求内容为空或过长")
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("请求格式不正确")
+            with _connect(self.db_path, readonly=False) as conn:
+                job_id = _enqueue_job(conn, payload)
+        except (ValueError, json.JSONDecodeError, sqlite3.Error) as exc:
+            self._send_json({"error": str(exc)}, status=400)
+            return
+        self._send_json({"id": job_id, "status": "pending"}, status=202)
 
     def _send_json(self, payload: Any, status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -130,6 +212,7 @@ class Handler(BaseHTTPRequestHandler):
     def _send(self, status: int, content_type: str, body: bytes) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -163,7 +246,7 @@ body {
   display: flex; min-height: 100vh;
 }
 aside {
-  width: 210px; flex: none; border-right: 1px solid var(--line);
+  width: 238px; flex: none; border-right: 1px solid var(--line);
   padding: 16px 0; overflow-y: auto; height: 100vh; position: sticky; top: 0;
 }
 aside h1 { font-size: 15px; margin: 0 16px 12px; letter-spacing: .05em; }
@@ -225,6 +308,32 @@ main { flex: 1; padding: 28px 32px 64px; max-width: 900px; }
 }
 .topic .said.none { color: var(--muted); border-left-color: var(--line); font-style: italic; }
 .empty { color: var(--muted); padding: 40px 0; }
+.create-day { padding: 0 16px 14px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.create-day label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 5px; }
+.create-day input { width: 100%; margin-bottom: 7px; }
+input, textarea, button { font: inherit; }
+input, textarea {
+  color: var(--text); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 7px 9px;
+}
+button.action {
+  border: 1px solid var(--line); color: var(--text); background: var(--badge);
+  border-radius: 6px; padding: 6px 10px; cursor: pointer;
+}
+button.action:hover { border-color: var(--accent); }
+button.action.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
+button.action:disabled { opacity: .55; cursor: wait; }
+.create-day button { width: 100%; }
+.job-status { color: var(--muted); font-size: 12px; margin-top: 6px; min-height: 1.4em; }
+.job-status.error { color: var(--accent); }
+.day-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.expression { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 11px; }
+.expression label { display: block; color: var(--muted); font-size: 12.5px; margin-bottom: 5px; }
+.expression textarea {
+  display: block; width: 100%; min-height: 62px; resize: vertical; line-height: 1.55;
+}
+.expression-foot { display: flex; align-items: center; gap: 9px; margin-top: 7px; }
+.expression-foot .job-status { margin: 0; flex: 1; }
 
 /* 骨架行里可点的穿搭名 */
 .skeleton .outfit {
@@ -262,29 +371,41 @@ main { flex: 1; padding: 28px 32px 64px; max-width: 900px; }
 </style>
 </head>
 <body>
-<aside><h1>Mittes 的一天</h1><nav id="days"></nav></aside>
+<aside>
+  <h1>Mittes 的一天</h1>
+  <div class="create-day">
+    <label for="generate-date">指定日期</label>
+    <input id="generate-date" type="date">
+    <button id="generate-day" class="action primary">生成指定日期日程</button>
+    <div id="generate-status" class="job-status"></div>
+  </div>
+  <nav id="days"></nav>
+</aside>
 <main id="main"><p class="empty">加载中…</p></main>
 <div id="modal"></div>
 <script>
 const WD = ['一','二','三','四','五','六','日'];
 const esc = s => (s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
-async function boot() {
-  const days = await (await fetch('/api/days')).json();
+let knownDays = [];
+
+async function loadDays() {
+  const days = await api('/api/days');
+  knownDays = days.map(d => d.date);
   const nav = document.getElementById('days');
-  if (!days.length) {
-    document.getElementById('main').innerHTML =
-      '<p class="empty">归档库里还没有数据。等 12:00 的批次跑完，或者用 /status batch today 手动生成。</p>';
-    return;
-  }
   nav.innerHTML = days.map(d => {
     const bad = d.aborted ? '中止' : (d.ok_count < d.total_count ? `${d.ok_count}/${d.total_count}` : '');
     const neg = d.negative_count ? ' ※' : '';
     return `<a href="#${d.date}" data-d="${d.date}">${d.date.slice(5)} 周${WD[d.weekday]}
       <span class="sub">${bad}${neg}</span></a>`;
   }).join('') + `<a href="#wardrobe" data-d="wardrobe" class="wardrobe-link">衣柜　<span class="sub">全部搭配</span></a>`;
+}
+
+async function boot() {
+  document.getElementById('generate-date').value = jstNow().date;
+  await loadDays();
   window.addEventListener('hashchange', route);
-  route();
+  await route();
 }
 
 async function route() {
@@ -294,12 +415,16 @@ async function route() {
     window.scrollTo(0, 0);
     return;
   }
-  const known = [...document.querySelectorAll('#days a')].map(a => a.dataset.d).filter(d => d !== 'wardrobe');
   const today = jstNow().date;
   const day = location.hash.slice(1)
-    || (known.includes(today) ? today : known[0]);
+    || (knownDays.includes(today) ? today : knownDays[0]);
+  if (!day) {
+    document.getElementById('main').innerHTML =
+      '<p class="empty">归档库里还没有数据，可以从左侧指定日期生成。</p>';
+    return;
+  }
   document.querySelectorAll('#days a').forEach(a => a.classList.toggle('on', a.dataset.d === day));
-  const data = await (await fetch('/api/day/' + day)).json();
+  const data = await api('/api/day/' + day);
   if (data.error) { document.getElementById('main').innerHTML = `<p class="empty">${esc(data.error)}</p>`; return; }
   render(day, data);
   focusNow();
@@ -346,8 +471,15 @@ function render(day, data) {
       <p class="story">${esc(s.story)}</p>
       <dl class="fields">
         <dt>心情</dt><dd>${esc(s.mood)}</dd>
-        <dt>说话方式</dt><dd>${esc(s.manner)}</dd>
       </dl>
+      <div class="expression">
+        <label>表达方式</label>
+        <textarea maxlength="200" data-expression>${esc(s.manner)}</textarea>
+        <div class="expression-foot">
+          <button class="action save-expression" data-day="${day}" data-slot="${esc(s.slot)}">保存</button>
+          <span class="job-status"></span>
+        </div>
+      </div>
       ${topicBlock(s, (data.shares || {})[s.slot] || [])}
     </article>`;
   }).join('');
@@ -359,7 +491,58 @@ function render(day, data) {
       ${m.aborted ? `<div class="digest">中止原因：${esc(m.aborted)}</div>` : ''}
       ${m.outline ? `<div class="digest">脉络：${esc(m.outline)}</div>`
         : m.day_digest ? `<div class="digest">当日概要：${esc(m.day_digest)}</div>` : ''}
+      <div class="day-actions">
+        <button class="action primary" id="regen-day" data-day="${day}">重新生成当日日程</button>
+        <button class="action" id="regen-topics" data-day="${day}">重新生成 topic</button>
+        <span id="day-job-status" class="job-status"></span>
+      </div>
     </div>${segs}`;
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, options);
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(data.error || `请求失败：${response.status}`);
+  return data;
+}
+
+async function enqueue(payload, statusNode, button) {
+  statusNode.classList.remove('error');
+  statusNode.textContent = '已排队，等待 bot 处理…';
+  button.disabled = true;
+  try {
+    const created = await api('/api/jobs', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    while (true) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const job = await api('/api/job/' + created.id);
+      if (job.status === 'pending') {
+        statusNode.textContent = '已排队，等待 bot 处理…';
+      } else if (job.status === 'running') {
+        statusNode.textContent = 'bot 正在处理…';
+      } else if (job.status === 'completed') {
+        statusNode.textContent = job.result || '已完成';
+        return job;
+      } else if (job.status === 'failed') {
+        throw new Error(job.error || '任务执行失败');
+      }
+    }
+  } catch (error) {
+    statusNode.classList.add('error');
+    statusNode.textContent = error.message;
+    throw error;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function refreshDay(day) {
+  await loadDays();
+  location.hash = day;
+  await route();
 }
 
 // 地点时段轴。当前那一段高亮——只在"现在"落在这个时段里时才标。
@@ -476,8 +659,47 @@ function jstNow() {
 document.addEventListener('click', e => {
   const btn = e.target.closest('.outfit');
   if (btn) { showOutfit(btn.dataset.o); return; }
+
+  const save = e.target.closest('.save-expression');
+  if (save) {
+    const box = save.closest('.expression');
+    const status = box.querySelector('.job-status');
+    const manner = box.querySelector('[data-expression]').value.trim();
+    enqueue({action: 'set_expression', date: save.dataset.day, slot: save.dataset.slot, manner}, status, save)
+      .catch(() => {});
+    return;
+  }
+
+  const regenDay = e.target.closest('#regen-day');
+  if (regenDay) {
+    const status = document.getElementById('day-job-status');
+    enqueue({action: 'regenerate_day', date: regenDay.dataset.day}, status, regenDay)
+      .then(() => refreshDay(regenDay.dataset.day)).catch(() => {});
+    return;
+  }
+
+  const regenTopics = e.target.closest('#regen-topics');
+  if (regenTopics) {
+    const status = document.getElementById('day-job-status');
+    enqueue({action: 'regenerate_topics', date: regenTopics.dataset.day}, status, regenTopics)
+      .then(() => refreshDay(regenTopics.dataset.day)).catch(() => {});
+    return;
+  }
+
   const modal = document.getElementById('modal');
   if (e.target.closest('.close') || e.target === modal) modal.classList.remove('on');
+});
+document.getElementById('generate-day').addEventListener('click', () => {
+  const day = document.getElementById('generate-date').value;
+  const status = document.getElementById('generate-status');
+  const button = document.getElementById('generate-day');
+  if (!day) {
+    status.classList.add('error');
+    status.textContent = '请先选择日期';
+    return;
+  }
+  enqueue({action: 'generate_day', date: day}, status, button)
+    .then(() => refreshDay(day)).catch(() => {});
 });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') document.getElementById('modal').classList.remove('on');
@@ -524,7 +746,7 @@ def main() -> int:
 
     host = args.host or ("0.0.0.0" if args.lan else "127.0.0.1")  # noqa: S104 —— --lan 就是要对局域网开放
 
-    Handler.conn = _connect(args.db)
+    Handler.db_path = args.db
     Handler.wardrobe_path = args.wardrobe
     today = date.today()
     # flush 是必要的：输出重定向到文件或被 systemd 接管时，
@@ -535,7 +757,7 @@ def main() -> int:
         if lan:
             lines.append(f"　局域网：http://{lan}:{args.port}")
         lines.append(f"　本机　：http://127.0.0.1:{args.port}")
-        lines.append("　注意：没有鉴权，同一局域网里知道地址的人都能看到全部日程内容")
+        lines.append("　注意：没有鉴权，局域网用户可查看、编辑并触发生成")
     else:
         lines.append(f"　http://{host}:{args.port}")
     lines.append(f"　库：{args.db}")

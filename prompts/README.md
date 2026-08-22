@@ -1,6 +1,6 @@
 # prompts/
 
-**三次 LLM 调用**的完整 prompt。改配方不用碰 Python。
+**三阶段生成**用到的完整 prompt。改配方不用碰 Python。
 
 注入 planner / replyer 的那两小段、以及工具的说明和返回，**不在这儿**——它们是嵌在
 代码流程里的短句，不是一次独立请求，留在 `plugin.py` 里离用它的地方更近。
@@ -14,6 +14,7 @@
 | `day.prompt` | 全天生成，每天一次（`generate_day`） |
 | `rewrite.prompt` | 定向重写单段（`rewrite_segment`），批次补不合格段、`/status regen`、`/status next` 都走它 |
 | `round2.prompt` | 第二轮抽取地点时段轴和谈资（`extract_round2`） |
+| `expression.prompt` | 第三轮根据一个时段的 story + mood 单独生成表达方式（`generate_expression`） |
 
 > **文件内容是原样发给模型的，别在 `.prompt` 里写注释。** 设计理由写在这份 README 里。
 
@@ -33,7 +34,7 @@
 **prompt 的行数和正文的篇幅在抢同一份预算。**
 
 **为什么是第三人称。** 这些 prompt 是对"写手"说话，不是对 Mittes 说话；
-第二人称的"你"会和 manner 要求输出的"你"撞车。
+第一轮现在不再生成 manner；第三轮的 `expression.prompt` 才使用第二人称“你”。
 
 **不要写"猫耳女仆装"。** 人设档案 6.4 写明猫耳、猫尾、铃铛都是**道具**，
 猫耳只是偶尔在店里戴。写进角色块的话，story 会天天给她戴上——这跟旧骨架把 outfit
@@ -49,7 +50,7 @@
 
 ## 共享文字是抄的，不是引的
 
-`day.prompt` 和 `rewrite.prompt` 里的角色设定、人称表、三段字段规则**各存一份**。
+`day.prompt` 和 `rewrite.prompt` 里的角色设定、人称表、两段字段规则**各存一份**。
 故意的：一个文件就是一次完整请求，读的时候不用跳转。代价是改规则要改两处，
 改完记得对一遍——真分叉了，两条链路的产出会以很难察觉的方式互相偏移。
 

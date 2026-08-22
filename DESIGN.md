@@ -40,7 +40,7 @@
 谈资只有两个互斥出口：直接回答/举证目标消息，或在目标消息即使不接也不算
 漏答时，整条抢占成一次独立的吐槽/分享。不允许「先完成原回复，再追加谈资」这个第三出口。
 为了让这层真正像可忽略的背景，它放在 replyer 的 system item 之后、聊天记录之前；
-说话方式仍紧贴 `reply_reference`。
+表达方式仍紧贴 `reply_reference`。
 
 ---
 
@@ -120,7 +120,7 @@
 
 ## prompt 放在哪
 
-三次 LLM 调用的 prompt 在 `prompts/` 下，**一次请求一个文件**：`day.prompt` 就是全天
+三阶段生成的 prompt 在 `prompts/` 下，**一次请求一个文件**：`day.prompt` 就是全天
 生成那一次调用的全文。Python 侧只负责填空，占位符用 `{名字}`，可选块和重复项写成
 `@@ 片段名` 附在文件末尾。加载器是 `prompts.py`，几十行。
 
@@ -140,7 +140,7 @@
 | Tool | `get_mittes_outfit` | 那一刻从头到脚的穿搭 |
 | Tool | `get_weather` | 查询指定城市的实时天气和近 3 天预报 |
 | Hook | `maisaka.planner.before_request` | 在「时间：」那条 item 后插入所在地点、心情与这一段的行程 |
-| Hook | `maisaka.replyer.before_model_request` | 谈资放在 system 后/聊天记录前，说话方式放在 `reply_reference` 前 |
+| Hook | `maisaka.replyer.before_model_request` | 谈资放在 system 后/聊天记录前，表达方式放在 `reply_reference` 前 |
 | Hook | `maisaka.replyer.after_response` | `observe` 模式只读，检测谈资有没有被说出口 |
 | Command | `/status *` | 调试命令，仅 operator |
 
@@ -203,6 +203,7 @@ story 可以让她出门顺手抓件开衫，而工具回答「她穿着那条�
 
 - 生成的是次日：12:00 才生成当天的话，00:00~12:00 那几段早就过去了
 - 主生成跑完后，再用便宜模型跑一次话题提炼，全天十段一起出
+- 最后根据每段 story + mood 单独生成表达方式，一段失败不回头改正文
 - 天气用预报不用实时，提前一天生成拿不到实时天气
 - 冷启动时今天和明天缺哪天补哪天，期间用底稿顶着
 
@@ -222,8 +223,9 @@ story 可以让她出门顺手抓件开衫，而工具回答「她穿着那条�
 ### 可观测性
 
 每次 LLM 调用都落盘到 WebUI 推理过程页，分类 `a_day_with_mittes`、会话 `schedule_batch`。
-三种调用靠 `request.kind` 区分：`schedule_day`（全天生成）、
-`schedule_rewrite`（定向重写）、`schedule_topics`（话题提炼）。
+四种调用靠 `request.kind` 区分：`schedule_day`（全天生成）、
+`schedule_rewrite`（定向重写）、`schedule_topics`（话题提炼）、
+`schedule_expression`（逐时段表达方式）。
 
 WebUI 那个页面没有上报接口，它是在扫 `logs/maisaka_prompt/` 目录树，
 payload 格式（`schema_version: 6`）写死在主程序里，所以 `preview.py` 自带一份拼装代码。

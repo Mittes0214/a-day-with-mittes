@@ -4,9 +4,9 @@
 
 1. ``schedule_skeleton.toml`` 的手写骨架和底稿——纳入版本库，LLM 绝不回写。
 2. ``data/schedule.db`` 的生成结果——每天 12:00 批量写入，**永久归档**。
-3. 运行时更新——本期不做。
+3. 运行时更新——前端编辑表达方式时，由插件任务队列同步修改内存与归档。
 
-运行期只读内存副本：按当前时刻查表取出那一段，取不到就用底稿顶上，
+回复热路径只读内存副本：按当前时刻查表取出那一段，取不到就用底稿顶上，
 任何情况下都不能因为日程没生成好而阻塞回复。
 """
 
@@ -81,8 +81,9 @@ class Segment:
 class SegmentState:
     """一个时段的生成结果。
 
-    ``story`` / ``manner`` / ``mood`` 来自主生成（第一轮），
-    ``places`` / ``topic`` / ``topic_keys`` 来自第二轮抽取。
+    ``story`` / ``mood`` 来自主生成（第一轮），
+    ``places`` / ``topic`` / ``topic_keys`` 来自第二轮抽取，
+    ``manner`` 来自逐时段的第三轮表达方式生成。
     """
 
     story: str
@@ -373,6 +374,29 @@ class ScheduleStore:
 
     def ensure_day_cache(self, day: date) -> DayCache:
         return self._cache.setdefault(day.isoformat(), DayCache())
+
+    def load_day_cache(self, day: date) -> DayCache | None:
+        """把归档中的任意一天按需装进内存，供前端管理任务使用。"""
+        key = day.isoformat()
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        raw = self._db.load_day(day)
+        if raw is None:
+            return None
+        cached = DayCache.from_dict(raw)
+        self._cache[key] = cached
+        return cached
+
+    def update_manner(self, day: date, slot: str, manner: str) -> bool:
+        """热更新表达方式：当前缓存与归档库在同一调用里一起更新。"""
+        changed = self._db.update_manner(day, slot, manner)
+        if not changed:
+            return False
+        cached = self._cache.get(day.isoformat())
+        if cached is not None and slot in cached.segments:
+            cached.segments[slot].manner = manner
+        return True
 
     def state_at(self, moment: datetime) -> tuple[Segment, SegmentState]:
         """取某一时刻的时段骨架和状态，缓存缺失时回落到底稿。"""

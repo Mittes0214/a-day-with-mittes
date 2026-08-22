@@ -9,12 +9,8 @@ ORM 里已注册的模型，用它就得往主程序加表——本插件的既�
 ``addon/photowall/data/library.db``（Blog 只读它）是同一个套路。
 
 **读写分工**：运行期的热路径（每轮 planner / replyer 注入）走
-``ScheduleStore`` 的内存字典，不碰数据库；数据库只在批次生成后写入、
-启动时读一次。所以这里用同步的 ``sqlite3`` 是安全的——每次也就几十行。
-
-外部前端只读时请用只读方式打开，别持有写锁：
-
-    sqlite3.connect("file:schedule.db?mode=ro", uri=True)
+``ScheduleStore`` 的内存字典，不碰数据库；批次、手动编辑和管理任务才写库。
+前端通过 ``admin_jobs`` 递交操作，运行中的插件领取后同时更新内存和归档。
 """
 
 from datetime import date
@@ -52,7 +48,7 @@ CREATE TABLE IF NOT EXISTS segments (
     company        TEXT NOT NULL,
     kind           TEXT NOT NULL,
 
-    -- 第一轮主生成
+    -- 第一轮主生成（story / mood）+ 第三轮逐时段生成（manner）
     story          TEXT NOT NULL DEFAULT '',
     manner         TEXT NOT NULL DEFAULT '',
     mood           TEXT NOT NULL DEFAULT '',
@@ -90,6 +86,24 @@ CREATE TABLE IF NOT EXISTS shares (
 );
 
 CREATE INDEX IF NOT EXISTS idx_shares_date ON shares(date);
+
+-- viewer 与运行中插件之间的管理任务队列。viewer 只投递和查状态，真正改日程、
+-- 调 LLM 的工作都由插件进程完成，保证内存热路径与 SQLite 始终一致。
+CREATE TABLE IF NOT EXISTS admin_jobs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    action      TEXT NOT NULL,
+    target_date TEXT NOT NULL DEFAULT '',
+    slot        TEXT NOT NULL DEFAULT '',
+    payload     TEXT NOT NULL DEFAULT '{}',
+    status      TEXT NOT NULL DEFAULT 'pending',
+    result      TEXT NOT NULL DEFAULT '',
+    error       TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at  TEXT NOT NULL DEFAULT '',
+    finished_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_jobs_status ON admin_jobs(status, id);
 """
 
 
@@ -137,6 +151,9 @@ class ScheduleDB:
         conn.executescript(_SCHEMA)
         self._conn = conn
         self._migrate()
+        # 插件热重载或进程退出时，正在执行的任务来不及回写完成状态。
+        # 新实例接手后重新排队，避免前端永远卡在“执行中”。
+        conn.execute("UPDATE admin_jobs SET status='pending', started_at='' WHERE status='running'")
 
     def _migrate(self) -> None:
         """给已存在的表补上新增的列。
@@ -238,6 +255,38 @@ class ScheduleDB:
             row,
         )
 
+    def update_manner(self, day: date, slot: str, manner: str) -> bool:
+        """只更新一个时段的表达方式；用于前端编辑，不改其他生成字段。"""
+        changed = self._db.execute(
+            "UPDATE segments SET manner = ? WHERE date = ? AND slot = ?",
+            (manner, day.isoformat(), slot),
+        ).rowcount
+        return bool(changed)
+
+    def has_day(self, day: date) -> bool:
+        row = self._db.execute("SELECT 1 FROM days WHERE date = ?", (day.isoformat(),)).fetchone()
+        return row is not None
+
+    def load_day(self, day: date) -> dict[str, Any] | None:
+        """读取一天供管理任务临时装入内存；历史日期也可用。"""
+        row = self._db.execute(
+            "SELECT date, outline, day_digest FROM days WHERE date = ?",
+            (day.isoformat(),),
+        ).fetchone()
+        if row is None:
+            return None
+        result: dict[str, Any] = {
+            "outline": row["outline"] or row["day_digest"],
+            "segments": {},
+        }
+        rows = self._db.execute(
+            "SELECT * FROM segments WHERE date = ? ORDER BY seq",
+            (day.isoformat(),),
+        ).fetchall()
+        for item in rows:
+            result["segments"][item["slot"]] = self._segment_state_dict(item)
+        return result
+
     # ── 读 ──
     def load_days(self, limit: int) -> dict[str, dict[str, Any]]:
         """读最近若干天，供启动时填充内存热路径。
@@ -264,18 +313,52 @@ class ScheduleDB:
             tuple(result),
         ).fetchall()
         for row in rows:
-            result[row["date"]]["segments"][row["slot"]] = {
-                "story": row["story"],
-                "manner": row["manner"],
-                "mood": row["mood"],
-                "busy": row["busy"],
-                "places": json.loads(row["places"] or "[]"),
-                "topic": row["topic"],
-                "topic_keys": json.loads(row["topic_keys"] or "[]"),
-                "generated": bool(row["generated"]),
-                "generated_at": row["generated_at"],
-            }
+            result[row["date"]]["segments"][row["slot"]] = self._segment_state_dict(row)
         return result
+
+    @staticmethod
+    def _segment_state_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "story": row["story"],
+            "manner": row["manner"],
+            "mood": row["mood"],
+            "busy": row["busy"],
+            "places": json.loads(row["places"] or "[]"),
+            "topic": row["topic"],
+            "topic_keys": json.loads(row["topic_keys"] or "[]"),
+            "generated": bool(row["generated"]),
+            "generated_at": row["generated_at"],
+        }
+
+    # ── viewer 管理任务 ──
+    def claim_admin_job(self) -> dict[str, Any] | None:
+        """原子领取最早一条待处理任务。"""
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._db.execute(
+                "SELECT * FROM admin_jobs WHERE status = 'pending' ORDER BY id LIMIT 1"
+            ).fetchone()
+            if row is None:
+                self._db.execute("COMMIT")
+                return None
+            changed = self._db.execute(
+                "UPDATE admin_jobs SET status='running', started_at=CURRENT_TIMESTAMP "
+                "WHERE id=? AND status='pending'",
+                (row["id"],),
+            ).rowcount
+            self._db.execute("COMMIT")
+            return dict(row) if changed else None
+        except Exception:
+            self._db.execute("ROLLBACK")
+            raise
+
+    def finish_admin_job(self, job_id: int, *, result: str = "", error: str = "") -> None:
+        status = "failed" if error else "completed"
+        self._db.execute(
+            "UPDATE admin_jobs SET status=?, result=?, error=?, finished_at=CURRENT_TIMESTAMP "
+            "WHERE id=?",
+            (status, result, error, job_id),
+        )
 
     def load_shares(self, dates: list[str]) -> dict[tuple[str, str, str], tuple[int, str]]:
         """读若干天的谈资分享状态，供启动时填充内存。

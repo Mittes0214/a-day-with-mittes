@@ -11,12 +11,13 @@
 
 字段分工（4.3）：
 - ``story``            → 事实层工具结果，被问才吐，可以有活动名词
-- ``manner``           → replyer 常驻注入（A），**一个具体名词都不能有**
-- ``mood``            → planner 注入，同样不含活动名词
+- ``mood``             → planner 注入，第一轮随 story 生成
 - ``topic``            → replyer 常驻注入（C），第二轮提炼，说出口后撤掉
+- ``manner``           → replyer 常驻注入（A），第三轮逐时段从 story + mood 生成
 - ``outline``（脉络）  → 模型动笔前给自己写的规划，落进 ``days.outline``，不进任何注入
 
 第二轮见 ``extract_round2``：从 story 里抽地点时段轴和谈资，全天十段一次调用，用便宜模型。
+第三轮见 ``generate_expression``：每个时段单独生成表达方式，失败只影响本段 manner。
 """
 
 from dataclasses import dataclass
@@ -53,7 +54,8 @@ PREVIEW_SESSION = "schedule_batch"
 _MAX_TOKENS = 32000
 
 # 给模型看的文字全在 ``prompts/`` 下，一次请求一个文件：``day.prompt``（全天生成）、
-# ``rewrite.prompt``（定向重写）、``round2.prompt``（第二轮抽取）。
+# ``rewrite.prompt``（定向重写）、``round2.prompt``（第二轮抽取）、
+# ``expression.prompt``（第三轮逐时段表达方式）。
 # 为什么这么配、哪些东西**不能**写进去，见 ``prompts/README.md``——那些理由不能放在
 # ``.prompt`` 里，文件内容是原样发给模型的。
 
@@ -102,6 +104,16 @@ class DayOutcome:
     outline: str
     states: dict[str, SegmentState]
     failures: list[tuple[str, str]]
+    ok: bool
+    reason: str = ""
+    fatal: bool = False
+
+
+@dataclass
+class ExpressionOutcome:
+    """第三轮单个时段的表达方式结果。"""
+
+    manner: str
     ok: bool
     reason: str = ""
     fatal: bool = False
@@ -207,7 +219,7 @@ class SegmentGenerator:
         previous: tuple[Segment, SegmentState] | None,
         negative_levels: dict[str, str],
     ) -> DayOutcome:
-        """一次调用生成全天的脉络和每一段的三个字段。
+        """一次调用生成全天的脉络和每一段的 story / mood。
 
         **校验按段做。** 某一段不合格只把它记进 ``failures``，其余段照常收下——
         调用方拿 ``failures`` 逐段走 ``rewrite_segment``，不用整天重来。
@@ -328,13 +340,13 @@ class SegmentGenerator:
                     fatal=True,
                 )
 
-            payload = _extract_sections(str(result.get("response") or ""), ("story", "manner", "mood"))
+            payload = _extract_sections(str(result.get("response") or ""), ("story", "mood"))
             if payload is None:
                 last_reason = "输出里找不到 ### 分节"
             else:
                 state = SegmentState(
                     story=str(payload.get("story") or "").strip(),
-                    manner=str(payload.get("manner") or "").strip(),
+                    manner="",
                     mood=str(payload.get("mood") or "").strip(),
                 )
                 last_reason = self._validate_state(state, segment, previous_story)
@@ -492,26 +504,19 @@ class SegmentGenerator:
         return "\n".join(lines)
 
     def _validate_state(self, state: SegmentState, segment: Segment, previous_story: str) -> str:
-        """校验一段的三个字段，返回不合格原因；空串表示通过（设计文档 5.7）。
+        """校验第一轮的一段 story / mood，返回不合格原因；空串表示通过。
 
-        硬校验（不过就重写）：缺字段，manner 超长，manner / mood 含地点/服装/场所词，
-        首句与上一段雷同。
+        硬校验（不过就重写）：缺字段，mood 含地点/服装/场所词，首句与上一段雷同。
         只告警不重写：story 字数越界——它是被问才吐的事实层，长一点没有副作用，
         为字数烧一次调用不值得。
         """
-        missing = [name for name in ("story", "manner", "mood") if not getattr(state, name)]
+        missing = [name for name in ("story", "mood") if not getattr(state, name)]
         if missing:
             return f"缺字段：{'/'.join(missing)}"
 
-        if len(state.manner) > 60:
-            return f"manner 超长（{len(state.manner)} 字）"
-
-        # manner 进 replyer、mood 进 planner，两个都是常驻注入，
-        # 所以禁名词这条纪律对两个都成立。
-        for name in ("manner", "mood"):
-            hit = _find_banned_word(getattr(state, name), segment)
-            if hit:
-                return f"{name} 含具体事项名词「{hit}」"
+        hit = _find_banned_word(state.mood, segment)
+        if hit:
+            return f"mood 含具体事项名词「{hit}」"
 
         # 首句跟上一段雷同 = 模型把某个句子当模板锁死了。
         # 实测发生过：prompt 里演示「首句要出现 Mittes」的那个例句被原样照抄，
@@ -522,6 +527,75 @@ class SegmentGenerator:
         if not 150 <= len(state.story) <= 380:
             _logger.warning("[生成] %s story 字数 %d 越界，仅告警", segment.slot, len(state.story))
 
+        return ""
+
+    # ── 第三轮：逐时段表达方式 ──
+    async def generate_expression(
+        self,
+        day: date,
+        segment: Segment,
+        state: SegmentState,
+    ) -> ExpressionOutcome:
+        """根据一个时段已经生成的 story + mood，单独生成 replyer 表达方式。
+
+        每个时段是一次独立调用。校验失败只重试本时段，不回头改 story / mood；
+        调用层失败立即返回 fatal，让调用方停止继续烧同类请求并保留旧值或底稿。
+        """
+        prompt = prompts.render(
+            "expression",
+            slot=segment.slot,
+            story=state.story,
+            mood=state.mood,
+        )
+        last_reason = ""
+        for attempt in range(2):
+            result = await self._call_llm(
+                prompt,
+                model=self._model,
+                temperature=self._temperature,
+            )
+            self._record_preview(
+                request_kind="schedule_expression",
+                prompt=prompt,
+                result=result,
+                selection_reason=(
+                    f"{day.isoformat()} {segment.slot} 表达方式"
+                    + (f"　第 {attempt + 1} 次" if attempt else "")
+                ),
+                output_title="时段表达方式",
+            )
+            if not result.get("success", True):
+                reason = str(result.get("error") or result.get("response") or "").strip()
+                return ExpressionOutcome(
+                    manner="",
+                    ok=False,
+                    reason=reason or "模型调用失败",
+                    fatal=True,
+                )
+
+            manner = _clean_expression(str(result.get("response") or ""))
+            last_reason = self._validate_expression(manner, segment)
+            if not last_reason:
+                return ExpressionOutcome(manner=manner, ok=True)
+            _logger.warning(
+                "[第三轮] %s %s 第 %d 次不合格：%s",
+                day,
+                segment.slot,
+                attempt + 1,
+                last_reason,
+            )
+
+        return ExpressionOutcome(manner="", ok=False, reason=last_reason)
+
+    @staticmethod
+    def _validate_expression(manner: str, segment: Segment) -> str:
+        if not manner:
+            return "表达方式为空"
+        if len(manner) > 60:
+            return f"表达方式超长（{len(manner)} 字）"
+        hit = _find_banned_word(manner, segment)
+        if hit:
+            return f"表达方式含具体事项名词「{hit}」"
         return ""
 
     # ── 第二轮：地点时段轴 + 话题提炼 ──
@@ -708,7 +782,7 @@ class SegmentGenerator:
 
 
 def _parse_day(text: str, segments: list[Segment]) -> tuple[str, dict[str, SegmentState]]:
-    """从全天输出里拆出脉络和每段的三个字段。
+    """从全天输出里拆出脉络和每段的 story / mood。
 
     只认骨架里存在的 slot：模型偶尔会自己多写一段或把时间写错，那种段直接丢掉，
     对应的骨架段会落进 ``failures`` 走重写，比悄悄收下一段对不上号的内容安全。
@@ -726,12 +800,12 @@ def _parse_day(text: str, segments: list[Segment]) -> tuple[str, dict[str, Segme
         slot = match.group(1)
         if slot not in valid or slot in states:
             continue
-        payload = _extract_sections(match.group(2), ("story", "manner", "mood"))
+        payload = _extract_sections(match.group(2), ("story", "mood"))
         if payload is None:
             continue
         states[slot] = SegmentState(
             story=str(payload.get("story") or "").strip(),
-            manner=str(payload.get("manner") or "").strip(),
+            manner="",
             mood=str(payload.get("mood") or "").strip(),
         )
     return outline, states
@@ -780,6 +854,17 @@ def _extract_json_array(text: str) -> list[Any] | None:
     except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, list) else None
+
+
+def _clean_expression(text: str) -> str:
+    """把第三轮偶发的围栏、引号和换行收成可直接注入的一句话。"""
+    value = text.strip()
+    if value.startswith("```"):
+        value = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", value).strip()
+    value = re.sub(r"\s+", " ", value).strip()
+    if len(value) >= 2 and value[0] in "\"“" and value[-1] in "\"”":
+        value = value[1:-1].strip()
+    return value
 
 
 def _find_banned_word(text: str, segment: Segment) -> str:

@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.5.2
+版本：3.6.0
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """
@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 import asyncio
+import json
 import logging
 import tomllib
 import uuid
@@ -80,6 +81,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._negative: NegativeScheduler | None = None
         self._holidays: ScheduleGenerator | None = None
         self._batch_task: asyncio.Task[None] | None = None
+        self._admin_task: asyncio.Task[None] | None = None
         self._batch_lock = asyncio.Lock()
         # 后台任务的强引用；不持有的话事件循环可能把它当垃圾回收掉
         self._background: set[asyncio.Task[None]] = set()
@@ -121,17 +123,21 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._holidays = ScheduleGenerator(self.ctx)
 
         self._batch_task = asyncio.create_task(self._scheduler_loop())
-        _logger.info("[加载] 骨架就绪，批量生成守护已启动")
+        self._admin_task = asyncio.create_task(self._admin_job_loop())
+        _logger.info("[加载] 骨架就绪，批量生成与前端管理守护已启动")
 
     async def on_unload(self) -> None:
-        if self._store is not None:
-            self._store.close_db()
-        if self._batch_task is not None:
-            self._batch_task.cancel()
-            self._batch_task = None
+        lifecycle = [task for task in (self._batch_task, self._admin_task) if task is not None]
+        for task in lifecycle:
+            task.cancel()
         for task in list(self._background):
             task.cancel()
+        await asyncio.gather(*lifecycle, *self._background, return_exceptions=True)
+        self._batch_task = None
+        self._admin_task = None
         self._background.clear()
+        if self._store is not None:
+            self._store.close_db()
 
     async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
         del scope, config_data, version
@@ -270,6 +276,11 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
             segments = store.segments_of(day)
             day_cache = store.ensure_day_cache(day)
+            # 重生成某个已有日期时，第三轮如果临时失败，要保住上一版表达方式。
+            # 新日期则退回骨架底稿，不让 replyer 收到空注入。
+            previous_manners = {
+                slot: state.manner for slot, state in day_cache.segments.items() if state.manner
+            }
             # 凌晨那段承接的是前一天最后一段
             previous = self._previous_state(day, segments[0]) if segments else None
             levels = {segment.slot: negative.level_of(day, segment.slot) for segment in segments}
@@ -298,6 +309,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             else:
                 day_cache.outline = outcome.outline
                 for slot, state in outcome.states.items():
+                    segment = by_slot[slot]
+                    state.manner = previous_manners.get(slot) or store.fallback_for(segment).manner
                     state.generated_at = stamp
                     day_cache.segments[slot] = state
                     # 这一段换了新内容，旧 topic 的分享状态必须跟着作废，
@@ -319,6 +332,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                         negative_level=levels.get(slot, ""),
                         defect=defect,
                     )
+                    rewritten.state.manner = (
+                        previous_manners.get(slot) or store.fallback_for(segment).manner
+                    )
                     rewritten.state.generated_at = stamp
                     day_cache.segments[slot] = rewritten.state
                     store.reset_shares(day, slot)
@@ -338,6 +354,34 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 round2, round2_error = await generator.extract_round2(
                     day, segments, day_cache.segments
                 )
+
+            # 第三轮：每个时段独立根据 story + mood 生成表达方式。失败只保留该段
+            # 上一版或底稿，不回头重写已经合格的 story / mood。
+            round3 = {"expressions": 0, "total": 0}
+            round3_failures: list[tuple[Segment, str]] = []
+            if not aborted:
+                candidates = [
+                    segment
+                    for segment in segments
+                    if (state := day_cache.segments.get(segment.slot)) is not None and state.generated
+                ]
+                round3["total"] = len(candidates)
+                for segment in candidates:
+                    state = day_cache.segments[segment.slot]
+                    expression = await generator.generate_expression(day, segment, state)
+                    if expression.ok:
+                        state.manner = expression.manner
+                        round3["expressions"] += 1
+                        continue
+                    round3_failures.append((segment, expression.reason))
+                    if expression.fatal:
+                        _logger.error(
+                            "[第三轮] %s %s 调用失败，剩余时段保留旧值或底稿：%s",
+                            day,
+                            segment.slot,
+                            expression.reason,
+                        )
+                        break
 
             elapsed = (now_jst() - started).total_seconds()
             generated = store.day_generated_count(day)
@@ -363,6 +407,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 "negative": negative.entries_of_day(day),
                 "round2": round2,
                 "round2_error": round2_error,
+                "round3": round3,
+                "round3_failures": round3_failures,
                 "reason": reason,
             }
             _logger.info(
@@ -411,6 +457,12 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             round2 = summary.get("round2") or {}
             lines.append(f"地点：{round2.get('places', 0)}/{round2.get('total', 0)} 段")
             lines.append(f"可说的话题：{round2.get('topics', 0)} 条")
+            round3 = summary.get("round3") or {}
+            lines.append(
+                f"表达方式：{round3.get('expressions', 0)}/{round3.get('total', 0)} 段"
+            )
+            for segment, reason in summary.get("round3_failures") or []:
+                lines.append(f"表达方式保留旧值：{segment.slot}　{reason}")
         for entry in summary["negative"]:
             lines.append(f"负面事件：{entry.slot}（{entry.level}）")
 
@@ -713,7 +765,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         updated.insert(index + 1 if index >= 0 else len(updated), _new_user_item(block))
         return _hook_response(updated, kwargs)
 
-    # ── Hook：replyer 语气注入 ──
+    # ── Hook：replyer 表达方式注入 ──
     @HookHandler(
         "maisaka.replyer.before_model_request",
         name="schedule_manner_replyer",
@@ -730,7 +782,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         session_id: str = "",
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """把 A（说话方式）和 C（谈资）放到各自合适的位置。
+        """把 A（表达方式）和 C（谈资）放到各自合适的位置。
 
         A 是本轮的表达要求，仍紧贴 planner 的 reply_reference。C 只是
         可能用得上的背景经历，放在 system item 之后、聊天记录之前；
@@ -750,7 +802,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         moment, day, segment, state = self._current()
         store = self._require_store()
 
-        # A：说话方式。C：今天那件可说的小事，说出口之后就不再注入（5.11）。
+        # A：表达方式。C：今天那件可说的小事，说出口之后就不再注入（5.11）。
         manner = state.manner.strip()
         topic = ""
         if state.topic and session_id and not store.is_shared(day, segment.slot, session_id):
@@ -778,7 +830,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             if index < 0:
                 index = _find_item_index(updated, lambda text: text.startswith(_REPLYER_FALLBACK_PREFIX))
             if index < 0:
-                _logger.warning("[replyer] 两个锚点都没匹配上，本次跳过说话方式注入")
+                _logger.warning("[replyer] 两个锚点都没匹配上，本次跳过表达方式注入")
             else:
                 updated.insert(index, _new_user_item(manner))
 
@@ -873,7 +925,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             f"行程：{trail}",
             "",
             f"story：{state.story}",
-            f"manner：{state.manner}",
+            f"表达方式：{state.manner}",
             f"mood：{state.mood}",
             f"topic：{state.topic or '（这段没什么好说的）'}",
             "",
@@ -896,7 +948,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             "── planner 注入（插在「时间：」之后）──\n"
             f"{self._planner_block(moment, segment, state)}\n"
             "\n"
-            "── replyer A 说话方式（插在 reply_reference 之前）──\n"
+            "── replyer A 表达方式（插在 reply_reference 之前）──\n"
             f"{state.manner}\n"
             "\n"
             "── replyer C 谈资（system 之后、聊天记录之前；说出口后撤掉）──\n"
@@ -990,7 +1042,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             "\n"
             f"{state.story}\n"
             "\n"
-            f"manner：{state.manner}\nmood：{state.mood}"
+            f"表达方式：{state.manner}\nmood：{state.mood}"
         )
 
     @Command(
@@ -1038,32 +1090,55 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._spawn(self._topics_text(target), stream_id)
         return True, "第二轮抽取已在后台开始", True
 
-    async def _topics_text(self, day: date) -> str:
-        """重跑某天的第二轮抽取并渲染结果。"""
-        store = self._require_store()
-        generator = self._require_generator()
-        cached = store.day_cache(day)
-        if cached is None:
-            return f"{day.isoformat()} 还没有日程，先跑 /status batch {day.isoformat()}。"
+    async def _topics_text(self, day: date, *, topics_only: bool = False) -> str:
+        """重跑某天的第二轮抽取；前端可只采用其中的 topic 结果。"""
+        async with self._batch_lock:
+            store = self._require_store()
+            generator = self._require_generator()
+            cached = store.load_day_cache(day)
+            if cached is None:
+                return f"{day.isoformat()} 还没有日程，先生成这一天的日程。"
 
-        segments = store.segments_of(day)
-        round2, error = await generator.extract_round2(day, segments, cached.segments)
-        # topic 变了，绑在旧 topic 上的分享状态同样作废
-        for segment in segments:
-            store.reset_shares(day, segment.slot)
-        store.flush(
-            day,
-            model=str(await self._get_config("generation.model", "replyer")),
-            negative_level_of=lambda slot: self._require_negative().level_of(day, slot),
-            batch_reason="第二轮重跑",
-            batch_at=now_jst().isoformat(),
-        )
-        if error:
-            return f"第二轮抽取失败：{error}"
+            segments = store.segments_of(day)
+            previous = {
+                slot: (list(state.places), state.topic, list(state.topic_keys))
+                for slot, state in cached.segments.items()
+            }
+            # 重新抽取必须允许模型把一段判成“没有 topic”。不先清空的话，空结果
+            # 会被旧 topic 顶住，看起来像按钮没有生效。
+            for state in cached.segments.values():
+                state.topic = ""
+                state.topic_keys = []
+                if not topics_only:
+                    state.places = []
+            round2, error = await generator.extract_round2(day, segments, cached.segments)
+            if error:
+                for slot, values in previous.items():
+                    if state := cached.segments.get(slot):
+                        state.places, state.topic, state.topic_keys = values
+                return f"第二轮抽取失败：{error}"
+            if topics_only:
+                for slot, values in previous.items():
+                    if state := cached.segments.get(slot):
+                        state.places = values[0]
+            # topic 变了，绑在旧 topic 上的分享状态同样作废
+            for segment in segments:
+                store.reset_shares(day, segment.slot)
+            store.flush(
+                day,
+                model=str(await self._get_config("generation.model", "replyer")),
+                negative_level_of=lambda slot: self._require_negative().level_of(day, slot),
+                batch_reason="topic 重跑" if topics_only else "第二轮重跑",
+                batch_at=now_jst().isoformat(),
+            )
 
         lines = [
-            f"【第二轮】{day.isoformat()}　"
-            f"地点 {round2['places']}/{round2['total']} 段　话题 {round2['topics']} 条"
+            (
+                f"【topic】{day.isoformat()}　话题 {round2['topics']} 条"
+                if topics_only
+                else f"【第二轮】{day.isoformat()}　"
+                f"地点 {round2['places']}/{round2['total']} 段　话题 {round2['topics']} 条"
+            )
         ]
         for segment in segments:
             state = cached.segments.get(segment.slot)
@@ -1220,6 +1295,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if not isinstance(groups, dict):
             return ""
         return str(groups.get(name) or "").strip()
+
     def _spawn(self, coro: Any, stream_id: str) -> None:
         """把耗时的活儿丢到后台，命令本身立刻返回。
 
@@ -1267,7 +1343,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         store = self._require_store()
         generator = self._require_generator()
         negative = self._require_negative()
-        cached = store.day_cache(day)
+        cached = store.load_day_cache(day)
+        old_state = cached.segments.get(segment.slot) if cached else None
 
         outcome = await generator.rewrite_segment(
             day=day,
@@ -1279,8 +1356,23 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             holiday=await self._holiday_name(day),
             negative_level=negative.level_of(day, segment.slot),
         )
+        outcome.state.manner = (
+            old_state.manner if old_state and old_state.manner else store.fallback_for(segment).manner
+        )
+        if outcome.state.generated:
+            expression = await generator.generate_expression(day, segment, outcome.state)
+            if expression.ok:
+                outcome.state.manner = expression.manner
+            else:
+                _logger.warning(
+                    "[单段重生成] %s %s 表达方式生成失败，保留旧值或底稿：%s",
+                    day,
+                    segment.slot,
+                    expression.reason,
+                )
         outcome.state.generated_at = now_jst().isoformat()
         store.ensure_day_cache(day).segments[segment.slot] = outcome.state
+        store.reset_shares(day, segment.slot)
         store.flush(
             day,
             model=str(await self._get_config("generation.model", "replyer")),
@@ -1289,6 +1381,79 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             batch_at=now_jst().isoformat(),
         )
         return outcome.state
+
+    # ── 前端管理任务 ──
+
+    async def _admin_job_loop(self) -> None:
+        """领取 viewer 写入 SQLite 的任务，让编辑与生成都在 bot 进程内生效。"""
+        await asyncio.sleep(2)
+        while True:
+            try:
+                store = self._require_store()
+                job = store.db.claim_admin_job()
+                if job is None:
+                    await asyncio.sleep(1)
+                    continue
+                try:
+                    result = await self._execute_admin_job(job)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    _logger.exception("[前端任务] #%s 执行失败", job.get("id"))
+                    store.db.finish_admin_job(
+                        int(job["id"]),
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                else:
+                    store.db.finish_admin_job(int(job["id"]), result=result)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _logger.exception("[前端任务] 守护循环异常，稍后继续")
+                await asyncio.sleep(2)
+
+    async def _execute_admin_job(self, job: dict[str, Any]) -> str:
+        action = str(job.get("action") or "")
+        target = date.fromisoformat(str(job.get("target_date") or ""))
+        store = self._require_store()
+
+        if action == "set_expression":
+            payload = json.loads(str(job.get("payload") or "{}"))
+            manner = str(payload.get("manner") or "").strip()
+            slot = str(job.get("slot") or "")
+            if not manner:
+                raise ValueError("表达方式不能为空")
+            if len(manner) > 200:
+                raise ValueError("表达方式不能超过 200 字")
+            async with self._batch_lock:
+                if store.load_day_cache(target) is None:
+                    raise ValueError("这一天不存在")
+                if not store.update_manner(target, slot, manner):
+                    raise ValueError("时段不存在")
+            _logger.info("[前端任务] %s %s 表达方式已热更新", target, slot)
+            return "表达方式已保存并热加载"
+
+        if action == "generate_day":
+            if store.db.has_day(target):
+                raise ValueError("这一天已经有日程，请使用重新生成")
+            summary = await self.run_batch(target, reason="前端指定日期生成")
+            if summary["aborted"]:
+                raise RuntimeError(f"日程生成中止：{summary['aborted']}")
+            return f"日程生成完成：{summary['ok']}/{summary['total']} 段"
+
+        if action == "regenerate_day":
+            if not store.db.has_day(target):
+                raise ValueError("这一天还没有日程，请使用生成指定日期日程")
+            store.load_day_cache(target)
+            summary = await self.run_batch(target, reason="前端重新生成当日日程")
+            if summary["aborted"]:
+                raise RuntimeError(f"日程生成中止：{summary['aborted']}")
+            return f"日程重新生成完成：{summary['ok']}/{summary['total']} 段"
+
+        if action == "regenerate_topics":
+            return await self._topics_text(target, topics_only=True)
+
+        raise ValueError(f"不支持的管理任务：{action}")
 
     def _require_store(self) -> ScheduleStore:
         if self._store is None:
