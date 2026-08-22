@@ -1,6 +1,0 @@
-日程归档浏览器
-　局域网：http://192.168.41.228:8765
-　本机　：http://127.0.0.1:8765
-　注意：没有鉴权，同一局域网里知道地址的人都能看到全部日程内容
-　库：/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/04_a_day_with_mittes/data/schedule.db
-　今天是 2026-08-21 周五　（Ctrl-C 退出）

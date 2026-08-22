@@ -28,6 +28,7 @@ import logging
 import re
 import time
 
+from . import prompts
 from .negative_events import LEVEL_HINTS
 from .schedule_store import (
     ScheduleStore,
@@ -51,89 +52,10 @@ PREVIEW_SESSION = "schedule_batch"
 # 上限给高不额外花钱（按实际用量计费），但能挡住这类静默截断。
 _MAX_TOKENS = 32000
 
-# 人设固定文本，只保留写 story 用得上的几个支点，外加一句性格概述。
-#
-# 为什么不用人设档案全文：那些章节讲的是"她怎么做人"，而这里要的是
-# "她此刻在做什么"。喂进去模型会往人格演绎上使劲，story 里就会冒出心理旁白，
-# 把"发生了一件事"稀释成一段内心戏。
-#
-# 但**一句话的性格概述要留**（末行那句调色盘）。实测拿掉它，模型会退回通用妹系模板：
-# 「哼了一声」「顺走一块马卡龙也毫不心虚」「带着点撒娇的劲儿」，一天里冒出六处。
-# 概述是索引，不是演绎材料，一行的代价换掉整套模板很划算。
-#
-# 反过来，**别把档案的行为清单整段搬进来**。试过一版 24 行的（做事方式 / 和身边人 /
-# 情绪起落），确实压住了模板，但把正文字数从 279 挤到 207，十段里四段跌破 200 字下限。
-# prompt 的行数和正文的篇幅是在抢同一份预算。
-# 为什么是第三人称：这个 prompt 是对"写手"说话，不是对 Mittes 说话；
-# 第二人称的"你"会和 manner 要求输出的"你"撞车。
-#
-# **不写"猫耳女仆装"。** 人设档案 6.4 写明猫耳、猫尾、铃铛都是**道具**，
-# 猫耳只是偶尔在店里戴。写进这里的话，story 会天天给她戴上——
-# 这跟旧骨架把 outfit 写成"猫耳女仆装"是同一个毛病，只是换了个地方。
-# 穿什么由骨架的 outfit 逐段给，不在这里定。
-PERSONA = """Mittes，16 岁的女子高中生，和店长 Sweyn 一同住在东京新宿区一家咖啡店的楼上。
-银白色长发，发梢过渡成浅樱粉，红眼睛，身量娇小。
-店长 Sweyn，是她最亲近的哥哥。
-她课余在楼下店里帮忙；喜欢二次元，也做 Cos，接少量平面模特的拍摄。
-Mittes的性格就像调色盘：天然あざとさ是Mittes的底色，得体从容是她的主色调，对店长Sweyn近乎执念的兄控情结是隐藏辅色。由这些性格衍生组合而成的，才是活生生的Mittes。"""
-
-# 脉络：动笔前先规划，和正文同在一次调用里产出。
-#
-# 一次调用不等于一次思考——模型仍然是逐字往下写的，直接从第一段落笔时它并不知道
-# 傍晚会发生什么，和逐段生成的困境是同一个。先把全局决策落成文字，正文才有依据。
-#
-# 它**不跨调用传递**（定向重写除外），所以不构成「示范」：它是模型给自己写的备忘，
-# 写完自己用掉。真要拆成两次调用喂给十段，那就等于给每段打了样，另说。
-_OUTLINE_RULES = """## 第一步：脉络
-三到五行，写清楚今天有哪 1~2 件事是跨段的：在哪一段起头、哪几段推进、哪一段收，
-或者干脆不收、留到明天。除此之外的时段各自独立就好——一天里大部分时候是没有情节的，
-不要给每段都安排事情。
-
-这一节只写事情和它的走向，**不写措辞、不写细节、不写情绪词**。它是你给自己的规划，
-不是正文的草稿。"""
-
-_STORY_RULES = """## story —— 这段时间里发生了什么
-- **第三人称叙述，主语是 Mittes**，每段 200~300 字，首句里要出现「Mittes」这个名字
-- 当成一段小说来写，这段时间里真的发生了一件事——是日常里的小事，不是戏剧性的大事
-- 必须和骨架的地点、服装、同处一致；同处里有人时，让这个人真的参与进事情里
-- **只有脉络里登记的线索可以跨段。** 没登记的物件、话头，一两段之内就该退场
-- **大多数段不要收尾。** 时间到了就断在半路，让下一段接着往下写。一整天里只有最后一段是真的结束
-- **叙述者不要跳出角色去解释动作的用意。** 动作写出来就够了，后面别再补一句它意味着什么
-- **每段结尾不要用总结性的感悟或升华。** 时间到了就停，不替这一段做小结
-- **情绪写成行为，不写成形容词"""
-
-_MANNER_RULES = """## manner —— 这段时间她说话是什么样
-**这段文字会出现在她每一条回复的上下文里，所以规则很严：**
-- 第二人称"你"，两句以内，50 字以内
-- 写她现在的状态，以及这会怎么影响她说话
-- **禁止出现任何具体事项的名词**：地点、服装、物件、动作都不行
-  - ✗ 你端了一晚上盘子，脚很酸
-  - ✓ 你忙了一晚上，脚有点酸
-  - ✗ 你正在更衣室换衣服，心思在待会儿的班上
-  - ✓ 你心思有一半已经在待会儿的事上
-  - ✗ 你上了一晚上的班，这会儿刚回到家
-  - ✓ 你刚从一段很满的时间里退出来，整个人还没落地
-  - 抽象的强度可以写（"忙了一晚上"），可辨认的具体事不行（"端盘子"）；**"班""店里""学校""家"这类身份/场所词同样算具体事**"""
-
-_MOOD_RULES = """## mood —— 一个短语，十字以内，写情绪不写事由
-- **默认是正向的。** 她的底色是明亮的，多数时段应该落在"平静满足"到"雀跃"之间。只有当这个时段真的发生了不愉快的事，才写负面情绪——不要为了显得有起伏而无端低落
-- 正向也有层次，和上一个时段的强度拉开一点
-- **用词必须具体，写出这份情绪的质地，禁止一般化的情绪词**
-  - ✗ 开心 / 心情不错 / 有点烦 / 难过
-- **但具体只能落在情绪上，不能落在事由上**——这条和上一条同等重要：
-  - ✗ 手心发痒想画画　（"画画"是事由）
-  - ✗ 因为被夸而高兴　（"被夸"是事由）
-  - ✓ 小鹿乱撞（写出了是哪种心动，但看不出她在看什么）
-- 如果上一个时段有不愉快，这一段的恢复要有过程，不要一到点就完全没事了"""
-
-_PERSON_TABLE = """# 人称
-下面几个字段的人称各不相同，别串：
-
-| 字段 | 人称 | 说的是谁、对谁说 |
-|---|---|---|
-| story | 第三人称 | 讲 Mittes 的事，讲给读者听 |
-| manner | 第二人称「你」 | 直接对 Mittes 说话 |
-| mood | 不带人称 | 对她当前情绪的客观描述 |"""
+# 给模型看的文字全在 ``prompts/`` 下，一次请求一个文件：``day.prompt``（全天生成）、
+# ``rewrite.prompt``（定向重写）、``round2.prompt``（第二轮抽取）。
+# 为什么这么配、哪些东西**不能**写进去，见 ``prompts/README.md``——那些理由不能放在
+# ``.prompt`` 里，文件内容是原样发给模型的。
 
 # 常驻注入的两个字段（manner / mood）里出现就判定不合格的
 # 通用场所/身份词。骨架的 place / outfit 会另行拆成词一起查。
@@ -440,50 +362,45 @@ class SegmentGenerator:
         previous: tuple[Segment, SegmentState] | None,
         negative_levels: dict[str, str],
     ) -> str:
-        """拼装全天生成 prompt。"""
-        blocks = [
-            "你在为一个虚拟角色生成她一整天的状态。",
-            f"# 角色\n{PERSONA}",
-            f"# 今天\n{day.isoformat()} 星期{weekday_name(day)}"
-            + (f"　{holiday}" if holiday else "")
-            + (f"\n天气：{weather}" if weather else ""),
-        ]
-
+        """拼装全天生成 prompt（``prompts/day.prompt``）。"""
+        previous_block = ""
         if previous is not None:
             prev_segment, prev_state = previous
-            blocks.append(
-                "# 昨天最后一段（承接用）\n"
-                f"{prev_segment.slot}　{prev_segment.title}\n"
-                f"{prev_state.story}\n"
-                f"当时状态：{prev_state.mood}"
+            previous_block = prompts.render(
+                "day",
+                "previous",
+                slot=prev_segment.slot,
+                title=prev_segment.title,
+                story=prev_state.story,
+                mood=prev_state.mood,
             )
 
-        blocks.append(
-            "# 今天的骨架（不可改动，一段都不能增删或合并）\n" + self._skeleton_block(day, segments)
-        )
-
-        marked = [
-            f"- {segment.slot}　{LEVEL_HINTS.get(negative_levels[segment.slot], negative_levels[segment.slot])}"
+        marked = "\n".join(
+            prompts.render(
+                "day",
+                "negative_item",
+                slot=segment.slot,
+                hint=LEVEL_HINTS.get(negative_levels[segment.slot], negative_levels[segment.slot]),
+            )
             for segment in segments
             if negative_levels.get(segment.slot)
-        ]
-        if marked:
-            blocks.append(
-                "# 这几段里要发生不顺心的事\n"
-                + "\n".join(marked)
-                + "\n自己想是什么事。规模要小，**不要写重大事件**："
-                "生病、受伤、和人吵架、丢掉要紧的东西，都不行——"
-                "这套设定扛不住跨天的情绪线。"
-            )
-
-        blocks.append(_PERSON_TABLE)
-        blocks.append("# 要做的事\n\n" + _OUTLINE_RULES)
-        blocks.append(
-            "## 第二步：为每一段生成三个字段\n\n"
-            + "\n\n".join([_STORY_RULES, _MANNER_RULES, _MOOD_RULES])
         )
-        blocks.append(_output_block(segments))
-        return "\n\n".join(blocks)
+
+        return prompts.render(
+            "day",
+            date=day.isoformat(),
+            weekday=weekday_name(day),
+            holiday=f"　{holiday}" if holiday else "",
+            weather=prompts.render("day", "weather", weather=weather) if weather else "",
+            previous=previous_block,
+            skeleton=self._skeleton_block("day", day, segments),
+            negative=prompts.render("day", "negative", marked=marked) if marked else "",
+            # 只示范前两段，剩下的让它照推
+            output_sample="\n\n".join(
+                prompts.render("day", "output_sample_item", slot=segment.slot)
+                for segment in segments[:2]
+            ),
+        )
 
     def _build_rewrite_prompt(
         self,
@@ -498,64 +415,80 @@ class SegmentGenerator:
         negative_level: str,
         defect: str,
     ) -> str:
-        """拼装定向重写 prompt：全天骨架 + 脉络 + 前后段原文。"""
+        """拼装定向重写 prompt（``prompts/rewrite.prompt``）：全天骨架 + 脉络 + 前后段原文。"""
         index = segments.index(segment) if segment in segments else -1
-        blocks = [
-            f"下面是一份已经写好的日程，其中 {segment.slot} 这一段要重写。别的段不用动，也不要输出。",
-            f"# 角色\n{PERSONA}",
-            f"# 今天\n{day.isoformat()} 星期{weekday_name(day)}"
-            + (f"　{holiday}" if holiday else "")
-            + (f"\n天气：{weather}" if weather else ""),
-            "# 今天的骨架（不可改动）\n" + self._skeleton_block(day, segments),
-        ]
-        if outline:
-            blocks.append("# 今天的脉络\n" + outline)
 
-        for label, offset in (("上一段", -1), ("下一段", 1)):
-            neighbour = segments[index + offset] if 0 <= index + offset < len(segments) else None
-            state = states.get(neighbour.slot) if neighbour else None
-            if neighbour is not None and state is not None and state.story:
-                blocks.append(f"# {label}（{neighbour.slot}　{neighbour.title}）\n{state.story}")
-
-        current = states.get(segment.slot)
-        if current is not None and current.story:
-            blocks.append("# 这一段现在的写法（要替换掉）\n" + current.story)
-        if defect:
-            blocks.append(f"# 为什么要重写\n{defect}")
-        if negative_level:
-            blocks.append(
-                "# 这一段里要发生一件不顺心的事\n"
-                f"强度：{LEVEL_HINTS.get(negative_level, negative_level)}\n"
-                "自己想一件事。规模要小，**不要写重大事件**。"
+        def neighbour(label: str, offset: int) -> str:
+            other = segments[index + offset] if 0 <= index + offset < len(segments) else None
+            if other is None:
+                return ""
+            state = states.get(other.slot)
+            if state is None or not state.story:
+                return ""
+            return prompts.render(
+                "rewrite", "neighbour", label=label, slot=other.slot, title=other.title, story=state.story
             )
 
-        blocks.append(_PERSON_TABLE)
-        blocks.append(
-            "# 重写这一段\n"
-            f"时间：{segment.slot}　名称：{segment.title}\n"
-            f"地点：{segment.place}｜服装：{segment.outfit}｜同处：{segment.company}｜性质：{segment.kind}\n\n"
-            + "\n\n".join([_STORY_RULES, _MANNER_RULES, _MOOD_RULES])
+        current = states.get(segment.slot)
+        return prompts.render(
+            "rewrite",
+            date=day.isoformat(),
+            weekday=weekday_name(day),
+            holiday=f"　{holiday}" if holiday else "",
+            weather=prompts.render("rewrite", "weather", weather=weather) if weather else "",
+            skeleton=self._skeleton_block("rewrite", day, segments),
+            outline=prompts.render("rewrite", "outline", outline=outline) if outline else "",
+            previous_neighbour=neighbour("上一段", -1),
+            next_neighbour=neighbour("下一段", 1),
+            current=(
+                prompts.render("rewrite", "current", story=current.story)
+                if current is not None and current.story
+                else ""
+            ),
+            defect=prompts.render("rewrite", "defect", defect=defect) if defect else "",
+            negative=(
+                prompts.render(
+                    "rewrite", "negative", hint=LEVEL_HINTS.get(negative_level, negative_level)
+                )
+                if negative_level
+                else ""
+            ),
+            slot=segment.slot,
+            title=segment.title,
+            place=segment.place,
+            outfit=segment.outfit,
+            company=segment.company,
+            kind=segment.kind,
         )
-        blocks.append(
-            "# 输出\n"
-            "只输出这一段的三个小节，每节用一行「### 字段名」开头。\n\n"
-            "### story\n（正文）\n\n### manner\n（正文）\n\n### mood\n（正文）"
-        )
-        return "\n\n".join(blocks)
 
-    def _skeleton_block(self, day: date, segments: list[Segment]) -> str:
-        """全天骨架清单。清醒/工作小时数逐段给，写手才知道这会儿该有多累。"""
+    def _skeleton_block(self, name: str, day: date, segments: list[Segment]) -> str:
+        """全天骨架清单。清醒/工作小时数逐段给，写手才知道这会儿该有多累。
+
+        Args:
+            name: 用哪个文件里的片段——``day`` 和 ``rewrite`` 各存一份，见
+                ``prompts/README.md`` 里「共享文字是抄的」那一节。
+        """
         lines = []
         for index, segment in enumerate(segments, 1):
             awake, work = self._store.awake_and_work_hours(day, segment)
-            line = (
-                f"{index}. {segment.slot}　{segment.title}\n"
-                f"　　地点：{segment.place}｜服装：{segment.outfit}｜"
-                f"同处：{segment.company}｜性质：{segment.kind}"
+            lines.append(
+                prompts.render(
+                    name,
+                    "skeleton_item",
+                    index=index,
+                    slot=segment.slot,
+                    title=segment.title,
+                    place=segment.place,
+                    outfit=segment.outfit,
+                    company=segment.company,
+                    kind=segment.kind,
+                    awake=(
+                        ""
+                        if segment.kind == "睡眠"
+                        else prompts.render(name, "skeleton_awake", awake=awake, work=work)
+                    ),
+                )
             )
-            if segment.kind != "睡眠":
-                line += f"\n　　到这一段为止：自上次睡眠起已清醒 {awake} 小时，其中工作 {work} 小时"
-            lines.append(line)
         return "\n".join(lines)
 
     def _validate_state(self, state: SegmentState, segment: Segment, previous_story: str) -> str:
@@ -732,57 +665,23 @@ class SegmentGenerator:
     def _build_round2_prompt(
         self, day: date, segments: list[Segment], states: dict[str, SegmentState]
     ) -> str:
-        """拼装第二轮 prompt：地点时段轴 + 话题提炼（设计文档 5.10）。"""
-        listing = "\n\n".join(
-            f"{index + 1}. {segment.slot}　{segment.title}\n{states[segment.slot].story}"
-            for index, segment in enumerate(segments)
+        """拼装第二轮 prompt（``prompts/round2.prompt``）：地点时段轴 + 话题提炼（设计文档 5.10）。"""
+        return prompts.render(
+            "round2",
+            date=day.isoformat(),
+            weekday=weekday_name(day),
+            listing="\n\n".join(
+                prompts.render(
+                    "round2",
+                    "listing_item",
+                    index=index + 1,
+                    slot=segment.slot,
+                    title=segment.title,
+                    story=states[segment.slot].story,
+                )
+                for index, segment in enumerate(segments)
+            ),
         )
-        return f"""你要从一份日程里抽两样东西：她每一段待过哪些地方，以及这一段有没有值得说给人听的事。
-
-# 角色
-{PERSONA}
-
-# 今天
-{day.isoformat()} 星期{weekday_name(day)}
-
-# 各时段
-{listing}
-
-# 要做的事
-为上面每一段排出 places，并判断有没有一件事是她之后跟人聊天时会顺口提起的——
-有就写一句 topic，没有就把 topic 留成空字符串。
-
-## places 怎么写
-- 从 story 里看出她这段时间待过哪些地方，按先后排成一条时段轴，地点用 story 里的说法
-- 每段从几点到几点由你定
-- 第一条从这个时段的开始时刻起，最后一条到结束时刻止，相邻两条首尾相接
-- 从头到尾没挪过地方就只写一条，占满整段
-
-## topic 怎么写
-- **是从 story 里挑一件事，不是把 story 概括一遍**。一段 story 里可能有好几件事在发生，
-  挑出其中最像会被人接话的那一件，照它原本的样子写；
-  其余的不用带上，也不要为了都装进去而压缩
-- **人称跟 story 一致**：第三人称，主语是 Mittes
-- 50~80 字，要有**起因 → 发生了什么 → 结果或转折**
-  - ✗ Sweyn 给了根皮筋（压成名词短语，看不出为什么、后来怎样）
-  - ✓ Mittes 临营业前发现围裙带子开了线，越扯越松，翻遍抽屉只找出一枚别针，她把断口折进去别住，蝴蝶结往那边挪半寸盖着
-- **同一天的几个话题不要都围着同一样东西转**。一件小物件贯穿全天是 story 的事，
-  拿出来当谈资会变成把同一件事讲三遍——只在最有意思的那一段留话题
-
-## topic_keys 怎么写
-- 2~4 个词，用来事后检测她有没有把这件事说出来
-- 挑这件事**独有**的名词，不要用通用词（今天、客人、店里、时候）——
-  通用词会让检测在她根本没提这件事的时候误判
-- topic 为空时，keys 也给空数组
-
-# 输出
-严格的 JSON 数组，不要包在代码块里。一段一个对象，slot 必须和上面完全一致。
-没什么好说的那几段也要出现在数组里，只是 topic 给空字符串：
-[{{"slot":"21:30-23:00",
-  "places":[{{"from":"21:30","to":"22:00","place":"KTV 洗手间"}},
-            {{"from":"22:00","to":"22:45","place":"街区夜路"}},
-            {{"from":"22:45","to":"23:00","place":"家门口"}}],
-  "topic":"…","topic_keys":["…","…"]}}]"""
 
     def _record_preview(
         self,
@@ -806,20 +705,6 @@ class SegmentGenerator:
             )
         except Exception as exc:
             _logger.warning("[推理记录] 写入失败：%s", type(exc).__name__)
-
-
-def _output_block(segments: list[Segment]) -> str:
-    """输出格式说明。只示范前两段，剩下的让它照推。"""
-    sample = "\n\n".join(
-        f"## {segment.slot}\n### story\n（正文）\n### manner\n（正文）\n### mood\n（正文）"
-        for segment in segments[:2]
-    )
-    return (
-        "# 输出\n"
-        "先一节脉络，再按骨架顺序写完每一段，一段都不能少，时间必须和骨架完全一致。\n"
-        "正文里想用引号、破折号、换行都可以，不用管转义。\n\n"
-        "### 脉络\n（正文）\n\n" + sample + "\n\n（……以此类推，直到最后一段）"
-    )
 
 
 def _parse_day(text: str, segments: list[Segment]) -> tuple[str, dict[str, SegmentState]]:

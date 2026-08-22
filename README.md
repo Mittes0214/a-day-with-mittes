@@ -52,12 +52,13 @@ enable_get_weather         = true
 `base_task` 填任务名，只用来借它的 `hard_timeout`，挑一个超时够宽的
 （全天生成实测 147~195 秒，240 秒只剩两成余量）。原因见 [DESIGN.md](DESIGN.md)。
 
-## 两份手写资产
+## 三份手写资产
 
 | 文件 | 装什么 |
 |---|---|
 | `schedule_skeleton.toml` | 一周的时段骨架：每段的时间、名称、地点、穿搭名、同处的人、性质 |
 | `wardrobe.toml` | 几套穿搭，每套一个名字 + 从头到脚的细节 |
+| `prompts/` | 给模型看的全部文字，一次请求一个文件。改配方不用碰 Python，见 [prompts/README.md](prompts/README.md) |
 
 骨架的 `outfit` 填的是衣柜里的套装名。名字进 prompt 给 story 用，
 从头到脚的细节只给查询工具。两种粒度为什么分开，见 [DESIGN.md](DESIGN.md)。

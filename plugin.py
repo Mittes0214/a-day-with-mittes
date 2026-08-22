@@ -38,6 +38,7 @@ import uuid
 from maibot_sdk import Command, HookHandler, MaiBotPlugin, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
+from . import prompts
 from .generator import SegmentGenerator
 from .negative_events import LEVEL_MILD, NegativeEntry, NegativeScheduler
 from .preview import PromptPreview
@@ -501,15 +502,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         而 Tool 是「该聊她在干嘛」时才调用的，那时候给已经晚了。观察项见设计文档 7。
         """
         store = self._require_store()
-        lines = [
-            "【Mittes 此刻】",
-            f"所在：{store.place_at(moment, segment, state)}",
-            f"心情：{state.mood}",
-        ]
         trail = _render_trail(state)
-        if trail:
-            lines.append(f"这一段的行程：{trail}")
-        return "\n".join(lines)
+        return prompts.render(
+            "planner_inject",
+            place=store.place_at(moment, segment, state),
+            mood=state.mood,
+            trail=prompts.render("planner_inject", "trail", trail=trail) if trail else "",
+        )
 
     @staticmethod
     def _topic_block(topic: str) -> str:
@@ -527,30 +526,17 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         「别照搬上面这段」针对的是 topic 的形态：它是第三人称 50~80 字的叙述，
         最省力的用法就是整段搬进回复，读起来就是念稿。
         """
-        return (
-            f"刚才这件事你还没跟谁说起过：{topic}\n"
-            "判断这件事是否可以自然融入当前话题，如果不行就不要强行扯出这件事。"
-            "融入时用你自己的话说，别照搬上面这段，表达逻辑要通顺。"
-        )
+        return prompts.render("topic_inject", topic=topic)
 
     # ── Tool ──
     @Tool(
         "get_mittes_schedule",
-        brief_description=(
-            "查 Mittes 某个时刻的行程与经过：几点在哪、做什么、和谁在一起，"
-            "以及那段时间实际发生了什么。要讲她的行程或经历时调用，不要凭印象说。"
-            "不填 time 就是此刻；填了可以查她今天早些时候、昨天或明天。"
-        ),
+        brief_description=prompts.render("tool_schedule", "brief"),
         parameters=[
             ToolParameterInfo(
                 name="time",
                 param_type=ToolParamType.STRING,
-                description=(
-                    "要查的时刻，留空表示现在。写法："
-                    "「HH:MM」查今天的某一刻；「YYYY-MM-DD HH:MM」查指定某天；"
-                    "「YYYY-MM-DD」只给日期时按中午算。"
-                    "她的一天从凌晨两点算起，所以凌晨一点问「23:00」指的是几十分钟前。"
-                ),
+                description=prompts.render("tool_schedule", "param_time"),
                 required=False,
             ),
         ],
@@ -572,53 +558,45 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if raw_time.strip():
             parsed = parse_moment(raw_time)
             if parsed is None:
-                return (
-                    f"看不懂「{raw_time.strip()}」这个时间。"
-                    "请用「HH:MM」或「YYYY-MM-DD HH:MM」，比如 19:30、2026-08-19 19:30。"
-                )
+                return prompts.render("tool_schedule", "bad_time", raw=raw_time.strip())
             moment = parsed
 
         day, _minutes = store.resolve_moment(moment)
         try:
             segment = store.segment_at(moment)
         except LookupError:
-            return f"{moment:%Y-%m-%d %H:%M} 不在骨架覆盖的范围里，查不到。"
+            return prompts.render(
+                "tool_schedule", "out_of_range", time=f"{moment:%Y-%m-%d %H:%M}"
+            )
 
         state = store.state_of(day, segment)
-        head = (
-            f"【Mittes 的日程】{day:%Y-%m-%d} 周{weekday_name(day)}　"
-            f"{'此刻 ' if moment is now else ''}{moment:%H:%M}\n"
-            f"{segment.slot}　{segment.title}\n"
-            f"地点：{segment.place}　穿着：{segment.outfit}　同处：{segment.company}"
+        head = prompts.render(
+            "tool_schedule",
+            date=f"{day:%Y-%m-%d}",
+            weekday=weekday_name(day),
+            now_mark="此刻 " if moment is now else "",
+            time=f"{moment:%H:%M}",
+            slot=segment.slot,
+            title=segment.title,
+            place=segment.place,
+            outfit=segment.outfit,
+            company=segment.company,
         )
 
         if moment > now:
-            return (
-                f"{head}\n\n"
-                "这是**还没到的时间**，只有安排、没有经过——别把它当成已经发生的事来讲。"
-            )
+            return f"{head}\n\n" + prompts.render("tool_schedule", "future")
         if state is None or not state.story:
-            return f"{head}\n\n这一段的细节没有记录，只有上面的安排。"
-        return (
-            f"{head}\n\n{state.story}\n\n"
-            "以上是她真实经历过的，可以据此回答；不要复述原文，也不要在没人问的时候主动提起。"
-        )
+            return f"{head}\n\n" + prompts.render("tool_schedule", "no_record")
+        return f"{head}\n\n" + prompts.render("tool_schedule", "recorded", story=state.story)
 
     @Tool(
         "get_mittes_outfit",
-        brief_description=(
-            "当需要描述 Mittes 穿什么时，必须调用此工具获取真实穿搭，不得推测。"
-            "从头到脚都有；不填 time 就是此刻。"
-        ),
+        brief_description=prompts.render("tool_outfit", "brief"),
         parameters=[
             ToolParameterInfo(
                 name="time",
                 param_type=ToolParamType.STRING,
-                description=(
-                    "要查的时刻，留空表示现在。写法同日程工具："
-                    "「HH:MM」或「YYYY-MM-DD HH:MM」。她一天里会换好几次衣服，"
-                    "问的是别的时段就要把时刻填上。"
-                ),
+                description=prompts.render("tool_outfit", "param_time"),
                 required=False,
             ),
         ],
@@ -640,34 +618,36 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if raw_time.strip():
             parsed = parse_moment(raw_time)
             if parsed is None:
-                return (
-                    f"看不懂「{raw_time.strip()}」这个时间。"
-                    "请用「HH:MM」或「YYYY-MM-DD HH:MM」，比如 19:30、2026-08-19 19:30。"
-                )
+                return prompts.render("tool_outfit", "bad_time", raw=raw_time.strip())
             moment = parsed
 
         day, _minutes = store.resolve_moment(moment)
         try:
             segment = store.segment_at(moment)
         except LookupError:
-            return f"{moment:%Y-%m-%d %H:%M} 不在骨架覆盖的范围里，查不到。"
+            return prompts.render(
+                "tool_outfit", "out_of_range", time=f"{moment:%Y-%m-%d %H:%M}"
+            )
 
-        return (
-            f"【Mittes 的穿搭】{day:%Y-%m-%d} 周{weekday_name(day)}　"
-            f"{'此刻 ' if moment is now else ''}{moment:%H:%M}　"
-            f"（{segment.slot}　{segment.title}）\n\n"
-            f"{wardrobe.render(segment.outfit)}\n\n"
-            "问到哪儿说哪儿，别把整份清单报一遍——没有人会那样描述自己的衣服。"
+        return prompts.render(
+            "tool_outfit",
+            date=f"{day:%Y-%m-%d}",
+            weekday=weekday_name(day),
+            now_mark="此刻 " if moment is now else "",
+            time=f"{moment:%H:%M}",
+            slot=segment.slot,
+            title=segment.title,
+            detail=wardrobe.render(segment.outfit),
         )
 
     @Tool(
         "get_weather",
-        brief_description="查询指定城市的实时天气和近 3 天预报；用户询问天气，或回复需要参考当前天气时调用。",
+        brief_description=prompts.render("tool_weather"),
         parameters=[
             ToolParameterInfo(
                 name="location",
                 param_type=ToolParamType.STRING,
-                description="城市的英文/罗马字名称（如：东京→Tokyo、上海→Shanghai），不要直接传中文，否则可能匹配到同名小地名。",
+                description=prompts.render("tool_weather", "param_location"),
                 required=True,
             ),
         ],
