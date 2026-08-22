@@ -37,6 +37,11 @@
 写得再好的 story 也用不上。谈资层给她一个主动出口，防复读的方式和状态层不同，
 说出口就从上下文里撤掉，一件事只说一次。
 
+谈资只有两个互斥出口：直接回答/举证目标消息，或在目标消息即使不接也不算
+漏答时，整条抢占成一次独立的吐槽/分享。不允许「先完成原回复，再追加谈资」这个第三出口。
+为了让这层真正像可忽略的背景，它放在 replyer 的 system item 之后、聊天记录之前；
+说话方式仍紧贴 `reply_reference`。
+
 ---
 
 ## 写 prompt 的两条原则
@@ -132,7 +137,7 @@
 | Tool | `get_mittes_outfit` | 那一刻从头到脚的穿搭 |
 | Tool | `get_weather` | 查询指定城市的实时天气和近 3 天预报 |
 | Hook | `maisaka.planner.before_request` | 在「时间：」那条 item 后插入所在地点、心情与这一段的行程 |
-| Hook | `maisaka.replyer.before_model_request` | 在 `reply_reference` 之前插入说话方式与谈资 |
+| Hook | `maisaka.replyer.before_model_request` | 谈资放在 system 后/聊天记录前，说话方式放在 `reply_reference` 前 |
 | Hook | `maisaka.replyer.after_response` | `observe` 模式只读，检测谈资有没有被说出口 |
 | Command | `/status *` | 调试命令，仅 operator |
 

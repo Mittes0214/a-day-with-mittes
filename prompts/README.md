@@ -12,7 +12,7 @@
 | `rewrite.prompt` | 定向重写单段（`rewrite_segment`），批次补不合格段、`/status regen`、`/status next` 都走它 |
 | `round2.prompt` | 第二轮抽取地点时段轴和谈资（`extract_round2`） |
 | `planner_inject.prompt` | 每轮注入 planner 的所在与心情 |
-| `topic_inject.prompt` | 注入 replyer 的谈资，说出口后撤掉 |
+| `topic_inject.prompt` | 注入 replyer 的谈资；只能直接回应目标或整条抢占换题，说出口后撤掉 |
 | `tool_schedule.prompt` | `get_mittes_schedule` 的工具说明和三种返回 |
 | `tool_outfit.prompt` | `get_mittes_outfit` 的工具说明和返回 |
 | `tool_weather.prompt` | `get_weather` 的工具说明 |
