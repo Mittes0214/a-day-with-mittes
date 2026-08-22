@@ -30,11 +30,12 @@ MaiBot 插件。给角色一份每天自动生成的日程，让它影响她的�
 
 ```toml
 [generation]
-run_at       = "12:00"             # 每天几点跑批次，生成的是次日全天
-model        = "claude-sonnet-5"   # 全天生成
-topic_model  = "claude-sonnet-5"   # 第二轮抽取
-base_task    = "memory"            # 基座任务，见下
-temperature  = 0.9
+run_at          = "12:00"             # 每天几点跑批次，生成的是次日全天
+model           = "claude-sonnet-5"   # 全天生成
+topic_model     = "claude-sonnet-5"   # 第二轮抽取
+expression_model = "claude-sonnet-5"  # 第三轮表达方式
+base_task       = "memory"             # 基座任务，见下
+temperature     = 0.9
 
 negative_event_quota  = 2          # 每周安排几次"不顺心的事"
 negative_medium_ratio = 0.3        # 其中判为"中等"强度的比例
@@ -49,17 +50,24 @@ enable_get_mittes_outfit   = true
 enable_get_weather         = true
 ```
 
-两个 `*_model` 填的是 `model_config.toml` 里 `[[models]].name` 的模型名，不是任务名。
+三个 `*_model` 填的是 `model_config.toml` 里 `[[models]].name` 的模型名，不是任务名。
 `base_task` 填任务名，只用来借它的 `hard_timeout`，挑一个超时够宽的
 （全天生成实测 147~195 秒，240 秒只剩两成余量）。原因见 [DESIGN.md](DESIGN.md)。
 
-## 三份手写资产
+## 目录
 
-| 文件 | 装什么 |
+| 目录 | 内容 |
 |---|---|
-| `schedule_skeleton.toml` | 一周的时段骨架：每段的时间、名称、地点、穿搭名、同处的人、性质 |
-| `wardrobe.toml` | 几套穿搭，每套一个名字 + 从头到脚的细节 |
-| `prompts/` | 三阶段生成的完整 prompt，一次请求一个文件。改配方不用碰 Python，见 [prompts/README.md](prompts/README.md) |
+| `generation/` | 三阶段 LLM 生成管线、prompt 加载器与完整 prompt |
+| `schedule/` | 日程骨架、内存状态、SQLite 归档、节假日和负面事件排期 |
+| `character/` | 衣柜查询代码与衣柜资产 |
+| `weather/` | 实时天气和预报查询 |
+| `observability/` | WebUI 推理过程记录 |
+| `frontend/` | 日程归档与管理页面 |
+| `data/` | 数据库、节假日缓存等运行时数据，不进版本库 |
+
+三份手写资产分别是 `schedule/skeleton.toml`、`character/wardrobe.toml` 和
+`generation/prompts/*.prompt`。prompt 一次请求使用一个完整文件，改配方不用碰 Python。
 
 骨架的 `outfit` 填的是衣柜里的套装名。名字进 prompt 给 story 用，
 从头到脚的细节只给查询工具。两种粒度为什么分开，见 [DESIGN.md](DESIGN.md)。
@@ -97,9 +105,9 @@ LLM 只负责写"这些事实今天具体表现成什么样"，绝不回写骨�
 ## 查看与管理日程
 
 ```bash
-python viewer.py                    # 只有本机能开
-python viewer.py --lan              # 局域网内可开，启动时打印地址
-python viewer.py --lan --port 9000
+python frontend/viewer.py                    # 只有本机能开
+python frontend/viewer.py --lan              # 局域网内可开，启动时打印地址
+python frontend/viewer.py --lan --port 9000
 ```
 
 纯标准库，不需要装依赖，也不需要 bot 的虚拟环境。左侧可以指定日期生成日程；
@@ -126,7 +134,7 @@ python viewer.py --lan --port 9000
 con = sqlite3.connect("file:.../data/schedule.db?mode=ro", uri=True)
 ```
 
-往表里加列时要同步往 `schedule_db.py` 的 `_EXPECTED_COLUMNS` 加一条。
+往表里加列时要同步往 `schedule/db.py` 的 `_EXPECTED_COLUMNS` 加一条。
 不能靠删库重建，`CREATE TABLE IF NOT EXISTS` 对已存在的表不做任何改动。
 
 ## 更多

@@ -29,9 +29,9 @@ import logging
 import re
 import time
 
-from . import prompts
-from .negative_events import LEVEL_HINTS
-from .schedule_store import (
+from . import prompt_loader as prompts
+from ..schedule.negative_events import LEVEL_HINTS
+from ..schedule.store import (
     ScheduleStore,
     Segment,
     SegmentState,
@@ -53,10 +53,10 @@ PREVIEW_SESSION = "schedule_batch"
 # 上限给高不额外花钱（按实际用量计费），但能挡住这类静默截断。
 _MAX_TOKENS = 32000
 
-# 给模型看的文字全在 ``prompts/`` 下，一次请求一个文件：``day.prompt``（全天生成）、
-# ``rewrite.prompt``（定向重写）、``round2.prompt``（第二轮抽取）、
-# ``expression.prompt``（第三轮逐时段表达方式）。
-# 为什么这么配、哪些东西**不能**写进去，见 ``prompts/README.md``——那些理由不能放在
+# 给模型看的文字全在 ``prompts/`` 下，一次请求一个文件：
+# ``01_生成全天故事与情绪.prompt``、``01_重写单个时段.prompt``、
+# ``02_提取地点与话题.prompt``、``03_生成表达方式.prompt``。
+# 为什么这么配、哪些东西**不能**写进去，见根目录 ``DESIGN.md``——那些理由不能放在
 # ``.prompt`` 里，文件内容是原样发给模型的。
 
 # 常驻注入的两个字段（manner / mood）里出现就判定不合格的
@@ -129,6 +129,7 @@ class SegmentGenerator:
         preview: Any,
         model: str,
         topic_model: str,
+        expression_model: str,
         base_task: str,
         temperature: float,
     ) -> None:
@@ -137,6 +138,7 @@ class SegmentGenerator:
         self._preview = preview
         self._model = model
         self._topic_model = topic_model
+        self._expression_model = expression_model
         self._base_task = base_task
         self._temperature = temperature
 
@@ -374,12 +376,12 @@ class SegmentGenerator:
         previous: tuple[Segment, SegmentState] | None,
         negative_levels: dict[str, str],
     ) -> str:
-        """拼装全天生成 prompt（``prompts/day.prompt``）。"""
+        """拼装全天生成 prompt（``prompts/01_生成全天故事与情绪.prompt``）。"""
         previous_block = ""
         if previous is not None:
             prev_segment, prev_state = previous
             previous_block = prompts.render(
-                "day",
+                "01_生成全天故事与情绪",
                 "previous",
                 slot=prev_segment.slot,
                 title=prev_segment.title,
@@ -389,7 +391,7 @@ class SegmentGenerator:
 
         marked = "\n".join(
             prompts.render(
-                "day",
+                "01_生成全天故事与情绪",
                 "negative_item",
                 slot=segment.slot,
                 hint=LEVEL_HINTS.get(negative_levels[segment.slot], negative_levels[segment.slot]),
@@ -399,17 +401,23 @@ class SegmentGenerator:
         )
 
         return prompts.render(
-            "day",
+            "01_生成全天故事与情绪",
             date=day.isoformat(),
             weekday=weekday_name(day),
             holiday=f"　{holiday}" if holiday else "",
-            weather=prompts.render("day", "weather", weather=weather) if weather else "",
+            weather=prompts.render("01_生成全天故事与情绪", "weather", weather=weather)
+            if weather
+            else "",
             previous=previous_block,
-            skeleton=self._skeleton_block("day", day, segments),
-            negative=prompts.render("day", "negative", marked=marked) if marked else "",
+            skeleton=self._skeleton_block("01_生成全天故事与情绪", day, segments),
+            negative=(
+                prompts.render("01_生成全天故事与情绪", "negative", marked=marked)
+                if marked
+                else ""
+            ),
             # 只示范前两段，剩下的让它照推
             output_sample="\n\n".join(
-                prompts.render("day", "output_sample_item", slot=segment.slot)
+                prompts.render("01_生成全天故事与情绪", "output_sample_item", slot=segment.slot)
                 for segment in segments[:2]
             ),
         )
@@ -427,7 +435,7 @@ class SegmentGenerator:
         negative_level: str,
         defect: str,
     ) -> str:
-        """拼装定向重写 prompt（``prompts/rewrite.prompt``）：全天骨架 + 脉络 + 前后段原文。"""
+        """拼装定向重写 prompt（``prompts/01_重写单个时段.prompt``）：全天骨架 + 脉络 + 前后段原文。"""
         index = segments.index(segment) if segment in segments else -1
 
         def neighbour(label: str, offset: int) -> str:
@@ -438,29 +446,46 @@ class SegmentGenerator:
             if state is None or not state.story:
                 return ""
             return prompts.render(
-                "rewrite", "neighbour", label=label, slot=other.slot, title=other.title, story=state.story
+                "01_重写单个时段",
+                "neighbour",
+                label=label,
+                slot=other.slot,
+                title=other.title,
+                story=state.story,
             )
 
         current = states.get(segment.slot)
         return prompts.render(
-            "rewrite",
+            "01_重写单个时段",
             date=day.isoformat(),
             weekday=weekday_name(day),
             holiday=f"　{holiday}" if holiday else "",
-            weather=prompts.render("rewrite", "weather", weather=weather) if weather else "",
-            skeleton=self._skeleton_block("rewrite", day, segments),
-            outline=prompts.render("rewrite", "outline", outline=outline) if outline else "",
+            weather=prompts.render("01_重写单个时段", "weather", weather=weather)
+            if weather
+            else "",
+            skeleton=self._skeleton_block("01_重写单个时段", day, segments),
+            outline=(
+                prompts.render("01_重写单个时段", "outline", outline=outline)
+                if outline
+                else ""
+            ),
             previous_neighbour=neighbour("上一段", -1),
             next_neighbour=neighbour("下一段", 1),
             current=(
-                prompts.render("rewrite", "current", story=current.story)
+                prompts.render("01_重写单个时段", "current", story=current.story)
                 if current is not None and current.story
                 else ""
             ),
-            defect=prompts.render("rewrite", "defect", defect=defect) if defect else "",
+            defect=(
+                prompts.render("01_重写单个时段", "defect", defect=defect)
+                if defect
+                else ""
+            ),
             negative=(
                 prompts.render(
-                    "rewrite", "negative", hint=LEVEL_HINTS.get(negative_level, negative_level)
+                    "01_重写单个时段",
+                    "negative",
+                    hint=LEVEL_HINTS.get(negative_level, negative_level),
                 )
                 if negative_level
                 else ""
@@ -477,8 +502,8 @@ class SegmentGenerator:
         """全天骨架清单。清醒/工作小时数逐段给，写手才知道这会儿该有多累。
 
         Args:
-            name: 用哪个文件里的片段——``day`` 和 ``rewrite`` 各存一份，见
-                ``prompts/README.md`` 里「共享文字是抄的」那一节。
+            name: 用哪个文件里的片段——两个第一轮 prompt 各存一份，见
+                根目录 ``DESIGN.md`` 里「prompt 放在哪」一节。
         """
         lines = []
         for index, segment in enumerate(segments, 1):
@@ -542,7 +567,7 @@ class SegmentGenerator:
         调用层失败立即返回 fatal，让调用方停止继续烧同类请求并保留旧值或底稿。
         """
         prompt = prompts.render(
-            "expression",
+            "03_生成表达方式",
             slot=segment.slot,
             story=state.story,
             mood=state.mood,
@@ -551,7 +576,7 @@ class SegmentGenerator:
         for attempt in range(2):
             result = await self._call_llm(
                 prompt,
-                model=self._model,
+                model=self._expression_model,
                 temperature=self._temperature,
             )
             self._record_preview(
@@ -739,14 +764,14 @@ class SegmentGenerator:
     def _build_round2_prompt(
         self, day: date, segments: list[Segment], states: dict[str, SegmentState]
     ) -> str:
-        """拼装第二轮 prompt（``prompts/round2.prompt``）：地点时段轴 + 话题提炼（设计文档 5.10）。"""
+        """拼装第二轮 prompt（``prompts/02_提取地点与话题.prompt``）：地点时段轴 + 话题提炼。"""
         return prompts.render(
-            "round2",
+            "02_提取地点与话题",
             date=day.isoformat(),
             weekday=weekday_name(day),
             listing="\n\n".join(
                 prompts.render(
-                    "round2",
+                    "02_提取地点与话题",
                     "listing_item",
                     index=index + 1,
                     slot=segment.slot,

@@ -1,6 +1,6 @@
 # Mittes 的一天 — 插件配置
 #
-# 这里只放开关和参数。日程骨架、底稿都在 schedule_skeleton.toml（纳入版本库），
+# 这里只放开关和参数。日程骨架、底稿都在 schedule/skeleton.toml（纳入版本库），
 # 因为 config.toml 被 gitignore，手写资产放这里会丢失版本历史。
 
 [plugin]
@@ -19,7 +19,7 @@ enable_get_weather = true
 run_at = "12:00"
 
 # 各轮 LLM 调用**直接指定模型名**（`model_config.toml` 的 `[[models]].name`），
-# 不再填任务名。第三轮表达方式沿用 model。
+# 不再填任务名。
 #
 # 为什么：任务名只决定候选池，不决定具体模型。`replyer` 的 selection_strategy
 # 是 random，四个模型随机挑，sonnet 5 只有 1/4 的概率——而整套 prompt 的判据
@@ -30,6 +30,9 @@ model = "claude-sonnet-5"
 # 话题提炼（第二轮）。和主生成分开配：创作和抽取是两件事，本可以用便宜模型。
 # 这里仍然填同一档，是因为 topic 常驻注入到 replyer——写得糙一点，她开口就糙一点。
 topic_model = "claude-sonnet-5"
+
+# 表达方式生成（第三轮）。每个时段根据已生成的 story 和 mood 单独生成。
+expression_model = "claude-sonnet-5"
 
 # 基座任务名：模型、温度、max_tokens 全由上面几个键覆盖，这里真正借用的是它的
 # hard_timeout 和统计管线。

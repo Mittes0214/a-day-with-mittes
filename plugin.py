@@ -39,12 +39,12 @@ import uuid
 from maibot_sdk import Command, HookHandler, MaiBotPlugin, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
-from .generator import SegmentGenerator
-from .negative_events import LEVEL_MILD, NegativeEntry, NegativeScheduler
-from .preview import PromptPreview
-from .schedule_generator import ScheduleGenerator
-from .wardrobe import Wardrobe
-from .schedule_store import (
+from .character.wardrobe import Wardrobe
+from .generation.pipeline import SegmentGenerator
+from .observability.prompt_preview import PromptPreview
+from .schedule.holidays import ScheduleGenerator
+from .schedule.negative_events import LEVEL_MILD, NegativeEntry, NegativeScheduler
+from .schedule.store import (
     ScheduleStore,
     parse_moment,
     Segment,
@@ -52,7 +52,7 @@ from .schedule_store import (
     now_jst,
     weekday_name,
 )
-from .weather_fetcher import fetch_daily_forecast, fetch_weather
+from .weather.fetcher import fetch_daily_forecast, fetch_weather
 
 
 _logger = logging.getLogger("a_day_with_mittes")
@@ -93,7 +93,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         data_dir = self._plugin_dir / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
 
-        self._store = ScheduleStore(self._plugin_dir, data_dir)
+        self._store = ScheduleStore(self._plugin_dir / "schedule" / "skeleton.toml", data_dir)
         self._store.load_skeleton()
         self._store.open_db()
 
@@ -104,7 +104,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
         self._negative.load()
 
-        self._wardrobe = Wardrobe(self._plugin_dir)
+        self._wardrobe = Wardrobe(self._plugin_dir / "character" / "wardrobe.toml")
         self._wardrobe.load()
         self._warn_unknown_outfits()
 
@@ -117,10 +117,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             ),
             model=str(await self._get_config("generation.model", "claude-sonnet-5")),
             topic_model=str(await self._get_config("generation.topic_model", "glm-5.2")),
+            expression_model=str(
+                await self._get_config("generation.expression_model", "claude-sonnet-5")
+            ),
             base_task=str(await self._get_config("generation.base_task", "memory")),
             temperature=float(await self._get_config("generation.temperature", 0.9)),
         )
-        self._holidays = ScheduleGenerator(self.ctx)
+        self._holidays = ScheduleGenerator(self.ctx, data_dir)
 
         self._batch_task = asyncio.create_task(self._scheduler_loop())
         self._admin_task = asyncio.create_task(self._admin_job_loop())
@@ -670,7 +673,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     def _render_outfit_at(self, raw_time: str) -> str:
         """渲染某一时刻的穿搭。
 
-        穿搭来自骨架的 ``outfit``（一个套装名），细节来自 ``wardrobe.toml``。
+        穿搭来自骨架的 ``outfit``（一个套装名），细节来自 ``character/wardrobe.toml``。
         名字查不到不算错误——周五拍摄现场那身是当天临时定的，衣柜里本来就没有。
         """
         store = self._require_store()

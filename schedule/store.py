@@ -2,7 +2,7 @@
 
 数据分三层（见设计文档 5.4）：
 
-1. ``schedule_skeleton.toml`` 的手写骨架和底稿——纳入版本库，LLM 绝不回写。
+1. ``schedule/skeleton.toml`` 的手写骨架和底稿——纳入版本库，LLM 绝不回写。
 2. ``data/schedule.db`` 的生成结果——每天 12:00 批量写入，**永久归档**。
 3. 运行时更新——前端编辑表达方式时，由插件任务队列同步修改内存与归档。
 
@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 import logging
 import tomllib
 
-from .schedule_db import ScheduleDB
+from .db import ScheduleDB
 
 
 _logger = logging.getLogger("a_day_with_mittes.store")
@@ -166,8 +166,8 @@ class ScheduleStore:
     都要取当前状态，走内存比走 SQL 稳妥。
     """
 
-    def __init__(self, plugin_dir: Path, data_dir: Path) -> None:
-        self._skeleton_path = plugin_dir / "schedule_skeleton.toml"
+    def __init__(self, skeleton_path: Path, data_dir: Path) -> None:
+        self._skeleton_path = skeleton_path
         self._data_dir = data_dir
         self._db = ScheduleDB(data_dir / "schedule.db")
         self._days: dict[str, list[Segment]] = {}

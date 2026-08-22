@@ -11,7 +11,7 @@
 """
 
 import json
-import os
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -37,20 +37,19 @@ FIXED_HOLIDAYS = {
 class ScheduleGenerator:
     """节假日数据的下载、缓存与查询。"""
 
-    def __init__(self, ctx):
+    def __init__(self, ctx: Any, data_dir: Path) -> None:
         """初始化生成器
 
         Args:
             ctx: 插件上下文 (PluginContext)
         """
         self.ctx = ctx
-        self._base_dir = os.path.dirname(os.path.abspath(__file__))
-        self._cache_dir = os.path.join(self._base_dir, "data", "holidays")
+        self._cache_dir = data_dir / "holidays"
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
         """确保缓存目录存在"""
-        os.makedirs(self._cache_dir, exist_ok=True)
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
 
     def get_holiday_name(self, date_str: str, holiday_map: dict[str, Any]) -> str:
         """从缓存中获取节假日名称
@@ -105,10 +104,10 @@ class ScheduleGenerator:
         Returns:
             Dict[str, Any]: 节假日数据映射
         """
-        cache_file = os.path.join(self._cache_dir, f"{year}.json")
-        if os.path.exists(cache_file):
+        cache_file = self._cache_dir / f"{year}.json"
+        if cache_file.exists():
             try:
-                with open(cache_file, "r", encoding="utf-8") as f:
+                with cache_file.open("r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception:
                 pass
@@ -122,9 +121,9 @@ class ScheduleGenerator:
             data: 节假日数据
         """
         self._ensure_dirs()
-        cache_file = os.path.join(self._cache_dir, f"{year}.json")
+        cache_file = self._cache_dir / f"{year}.json"
         try:
-            with open(cache_file, "w", encoding="utf-8") as f:
+            with cache_file.open("w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
             pass

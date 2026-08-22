@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS segments (
     seq            INTEGER NOT NULL,   -- 当天第几段，从 0 起
 
     -- 骨架快照。骨架本身会随换季整份替换，所以这里存当时的值，
-    -- 不要指望回看时还能从 schedule_skeleton.toml 反查出来。
+    -- 不要指望回看时还能从 schedule/skeleton.toml 反查出来。
     title          TEXT NOT NULL,
     place          TEXT NOT NULL,
     outfit         TEXT NOT NULL,

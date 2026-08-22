@@ -3,8 +3,8 @@
 把 ``data/schedule.db`` 里的日程按天翻出来看，也能通过任务队列编辑表达方式、
 生成日程和重跑 topic。任务由正在运行的插件领取，viewer 自己不调用 LLM。
 
-    uv run python plugins/04_a_day_with_mittes/viewer.py          # 只有本机能开
-    uv run python plugins/04_a_day_with_mittes/viewer.py --lan    # 局域网内可开
+    uv run python plugins/04_a_day_with_mittes/frontend/viewer.py          # 只有本机能开
+    uv run python plugins/04_a_day_with_mittes/frontend/viewer.py --lan    # 局域网内可开
 
 只用标准库，不引任何依赖；每个请求短连接 SQLite，WAL 模式下不会长期占写锁。
 
@@ -26,8 +26,9 @@ import sys
 import tomllib
 
 
-DB_PATH = Path(__file__).parent / "data" / "schedule.db"
-WARDROBE_PATH = Path(__file__).parent / "wardrobe.toml"
+PLUGIN_DIR = Path(__file__).resolve().parent.parent
+DB_PATH = PLUGIN_DIR / "data" / "schedule.db"
+WARDROBE_PATH = PLUGIN_DIR / "character" / "wardrobe.toml"
 WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
 
 

@@ -44,7 +44,7 @@ class PromptPreview:
             max_records: 每个目录最多保留多少条记录。
             base_dir: 记录根目录，默认取主程序的 ``logs/maisaka_prompt``。
         """
-        project_root = Path(__file__).resolve().parents[2]
+        project_root = Path(__file__).resolve().parents[3]
         self.enabled = enabled
         self.max_records = max(20, max_records)
         self.base_dir = base_dir or project_root / "logs" / "maisaka_prompt"

@@ -52,8 +52,8 @@ class Outfit:
 class Wardrobe:
     """``wardrobe.toml`` 的只读封装。"""
 
-    def __init__(self, plugin_dir: Path) -> None:
-        self._path = plugin_dir / "wardrobe.toml"
+    def __init__(self, wardrobe_path: Path) -> None:
+        self._path = wardrobe_path
         self._outfits: dict[str, Outfit] = {}
         self._always: dict[str, str] = {}
 

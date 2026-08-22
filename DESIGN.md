@@ -120,15 +120,16 @@
 
 ## prompt 放在哪
 
-三阶段生成的 prompt 在 `prompts/` 下，**一次请求一个文件**：`day.prompt` 就是全天
-生成那一次调用的全文。Python 侧只负责填空，占位符用 `{名字}`，可选块和重复项写成
-`@@ 片段名` 附在文件末尾。加载器是 `prompts.py`，几十行。
+三阶段生成的 prompt 在 `generation/prompts/` 下，文件名用“轮次 + 产物”标明用途。
+**一次请求一个文件**：`01_生成全天故事与情绪.prompt` 就是全天生成那一次调用的全文。
+Python 侧只负责填空，占位符用 `{名字}`，可选块和重复项写成 `@@ 片段名` 附在文件末尾。
+加载器是 `generation/prompt_loader.py`，几十行。
 
 注入 planner / replyer 的两小段、工具的说明与返回不在这儿，留在 `plugin.py`——
 它们嵌在代码流程里，不是独立请求，抽出去反而要在两处之间跳着读。
 
-角色块为什么只有那么几行、为什么不能整段搬人设档案、共享文字为什么是抄不是引，
-都写在 `prompts/README.md`——那些理由不能放进 `.prompt`，文件内容是原样发给模型的。
+角色块保留一句性格索引，不搬完整人设档案；全天生成与定向重写里的共享规则各存一份，
+保证一个文件就是一次完整请求。设计理由留在本文档，不写进会原样发给模型的 `.prompt`。
 
 ---
 
@@ -147,8 +148,8 @@
 注入全部走插件 hook，没有修改主程序源码。但有两处直接 import 主程序内部模块，
 不走 SDK，上游重构会打断，同步版本时要重点回归：
 
-- `LLMServiceClient` + `LLMGenerationOptions`（`generator.py`）：为了钉死具体模型。
-- `schema_version: 6` 的推理记录格式（`preview.py`）：为了让调用出现在 WebUI 的推理过程页。
+- `LLMServiceClient` + `LLMGenerationOptions`（`generation/pipeline.py`）：为了钉死具体模型。
+- `schema_version: 6` 的推理记录格式（`observability/prompt_preview.py`）：为了让调用出现在 WebUI 的推理过程页。
 
 ### 一天从凌晨 02:00 算起
 
@@ -172,7 +173,8 @@
 
 ### 穿搭：名字进骨架，细节进工具
 
-`wardrobe.toml` 存几套穿搭，每套一个名字加从头到脚的细节。骨架的 `outfit` 只填名字。
+`character/wardrobe.toml` 存几套穿搭，每套一个名字加从头到脚的细节。
+骨架的 `outfit` 只填名字。
 
 名字跟着骨架进时段生成的 prompt，是 story 拿到的全部服装信息。细节只留在
 `get_mittes_outfit` 工具里，绝不进 story 的 prompt。分开是因为从头到脚的清单喂进
@@ -228,7 +230,8 @@ story 可以让她出门顺手抓件开衫，而工具回答「她穿着那条�
 `schedule_expression`（逐时段表达方式）。
 
 WebUI 那个页面没有上报接口，它是在扫 `logs/maisaka_prompt/` 目录树，
-payload 格式（`schema_version: 6`）写死在主程序里，所以 `preview.py` 自带一份拼装代码。
+payload 格式（`schema_version: 6`）写死在主程序里，所以
+`observability/prompt_preview.py` 自带一份拼装代码。
 
 > **这是隐形耦合点。** 上游改了字段名，这里写出的文件会被静默忽略，页面空着且不报错。
 > 同步主程序版本时要主动来查。
@@ -298,7 +301,7 @@ LLM 只写这些事实今天具体表现成什么样。它绝不回写骨架，
 
 ### 换季 / 换角色怎么办？
 
-`schedule_skeleton.toml` 和 `wardrobe.toml` 一起整份替换，不要打补丁。
+`schedule/skeleton.toml` 和 `character/wardrobe.toml` 一起整份替换，不要打补丁。
 两份是配套的，骨架的 `outfit` 填的是衣柜里的名字，只换一边会对不上。
 
 当前骨架覆盖的是日本的暑假，全周没有 `kind = "上学"` 的时段。
