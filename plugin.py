@@ -360,28 +360,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             round3 = {"expressions": 0, "total": 0}
             round3_failures: list[tuple[Segment, str]] = []
             if not aborted:
-                candidates = [
-                    segment
-                    for segment in segments
-                    if (state := day_cache.segments.get(segment.slot)) is not None and state.generated
-                ]
-                round3["total"] = len(candidates)
-                for segment in candidates:
-                    state = day_cache.segments[segment.slot]
-                    expression = await generator.generate_expression(day, segment, state)
-                    if expression.ok:
-                        state.manner = expression.manner
-                        round3["expressions"] += 1
-                        continue
-                    round3_failures.append((segment, expression.reason))
-                    if expression.fatal:
-                        _logger.error(
-                            "[第三轮] %s %s 调用失败，剩余时段保留旧值或底稿：%s",
-                            day,
-                            segment.slot,
-                            expression.reason,
-                        )
-                        break
+                round3, round3_failures = await self._generate_expressions(
+                    day, segments, day_cache.segments
+                )
 
             elapsed = (now_jst() - started).total_seconds()
             generated = store.day_generated_count(day)
@@ -1382,6 +1363,63 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
         return outcome.state
 
+    async def _generate_expressions(
+        self,
+        day: date,
+        segments: list[Segment],
+        states: dict[str, SegmentState],
+    ) -> tuple[dict[str, int], list[tuple[Segment, str]]]:
+        """逐时段生成表达方式；只覆盖成功结果，失败时旧值原样保留。"""
+        generator = self._require_generator()
+        candidates = [
+            segment
+            for segment in segments
+            if (state := states.get(segment.slot)) is not None and state.generated
+        ]
+        stats = {"expressions": 0, "total": len(candidates)}
+        failures: list[tuple[Segment, str]] = []
+        for segment in candidates:
+            state = states[segment.slot]
+            expression = await generator.generate_expression(day, segment, state)
+            if expression.ok:
+                state.manner = expression.manner
+                stats["expressions"] += 1
+                continue
+            failures.append((segment, expression.reason))
+            if expression.fatal:
+                _logger.error(
+                    "[第三轮] %s %s 调用失败，剩余时段保留旧值：%s",
+                    day,
+                    segment.slot,
+                    expression.reason,
+                )
+                break
+        return stats, failures
+
+    async def _expressions_text(self, day: date) -> str:
+        """只重跑某天第三轮表达方式，不改 story、mood、地点或 topic。"""
+        async with self._batch_lock:
+            store = self._require_store()
+            cached = store.load_day_cache(day)
+            if cached is None:
+                return f"{day.isoformat()} 还没有日程，先生成这一天的日程。"
+            segments = store.segments_of(day)
+            stats, failures = await self._generate_expressions(day, segments, cached.segments)
+            store.flush(
+                day,
+                model=str(await self._get_config("generation.model", "replyer")),
+                negative_level_of=lambda slot: self._require_negative().level_of(day, slot),
+                batch_reason="表达方式重跑",
+                batch_at=now_jst().isoformat(),
+            )
+
+        lines = [
+            f"【表达方式】{day.isoformat()}　"
+            f"完成 {stats['expressions']}/{stats['total']} 段"
+        ]
+        lines.extend(f"{segment.slot} 保留旧值：{reason}" for segment, reason in failures)
+        return "\n".join(lines)
+
     # ── 前端管理任务 ──
 
     async def _admin_job_loop(self) -> None:
@@ -1452,6 +1490,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
         if action == "regenerate_topics":
             return await self._topics_text(target, topics_only=True)
+
+        if action == "regenerate_expressions":
+            return await self._expressions_text(target)
 
         raise ValueError(f"不支持的管理任务：{action}")
 

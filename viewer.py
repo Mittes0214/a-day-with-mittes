@@ -108,6 +108,7 @@ _ALLOWED_ACTIONS = {
     "generate_day",
     "regenerate_day",
     "regenerate_topics",
+    "regenerate_expressions",
 }
 
 
@@ -327,6 +328,10 @@ button.action:disabled { opacity: .55; cursor: wait; }
 .job-status { color: var(--muted); font-size: 12px; margin-top: 6px; min-height: 1.4em; }
 .job-status.error { color: var(--accent); }
 .day-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.day-actions .action {
+  color: var(--accent); background: transparent; border-color: var(--accent);
+}
+.day-actions .action:hover { color: #fff; background: var(--accent); }
 .expression { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 11px; }
 .expression label { display: block; color: var(--muted); font-size: 12.5px; margin-bottom: 5px; }
 .expression textarea {
@@ -492,8 +497,9 @@ function render(day, data) {
       ${m.outline ? `<div class="digest">脉络：${esc(m.outline)}</div>`
         : m.day_digest ? `<div class="digest">当日概要：${esc(m.day_digest)}</div>` : ''}
       <div class="day-actions">
-        <button class="action primary" id="regen-day" data-day="${day}">重新生成当日日程</button>
+        <button class="action" id="regen-day" data-day="${day}">重新生成当日日程</button>
         <button class="action" id="regen-topics" data-day="${day}">重新生成 topic</button>
+        <button class="action" id="regen-expressions" data-day="${day}">重新生成表达方式</button>
         <span id="day-job-status" class="job-status"></span>
       </div>
     </div>${segs}`;
@@ -683,6 +689,14 @@ document.addEventListener('click', e => {
     const status = document.getElementById('day-job-status');
     enqueue({action: 'regenerate_topics', date: regenTopics.dataset.day}, status, regenTopics)
       .then(() => refreshDay(regenTopics.dataset.day)).catch(() => {});
+    return;
+  }
+
+  const regenExpressions = e.target.closest('#regen-expressions');
+  if (regenExpressions) {
+    const status = document.getElementById('day-job-status');
+    enqueue({action: 'regenerate_expressions', date: regenExpressions.dataset.day}, status, regenExpressions)
+      .then(() => refreshDay(regenExpressions.dataset.day)).catch(() => {});
     return;
   }
 
