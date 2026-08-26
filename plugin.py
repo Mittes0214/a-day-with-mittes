@@ -87,6 +87,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._background: set[asyncio.Task[None]] = set()
         self._plugin_config_cache: dict[str, Any] | None = None
         self._last_batch_day: date | None = None
+        # (platform, 群号) → session_id。解析一次就缓存，见 _linked_sessions
+        self._session_of_group: dict[tuple[str, str], str] = {}
 
     # ── 生命周期 ──
     async def on_load(self) -> None:
@@ -188,6 +190,53 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 return default
             current = current[part]
         return current
+
+    async def _linked_sessions(self, session_id: str) -> list[str]:
+        """返回和 ``session_id`` 同属一个关联组的所有会话（含它自己）。
+
+        配置里填的是**群号**，这里用 ``ctx.chat.get_stream_by_group_id`` 解析成
+        session_id——绝不自己算。主程序 CLAUDE.md 写明：业务模块不应调
+        ``SessionUtils.calculate_session_id``，解析不到真实聊天流时也不要拿自算的
+        hash 顶上，那种 ID 写进库里就是一条永远对不上的脏数据。
+
+        解析结果缓存在进程内。群还没被 bot 见过时解析会失败，那一组这次就当没配——
+        下次调用会重试，不做持久化，免得把"暂时查不到"固化成"没有"。
+        """
+        groups = await self._get_config("topic.linked_groups", []) or []
+        if not isinstance(groups, list) or not session_id:
+            return [session_id]
+
+        platform = str(await self._get_config("topic.linked_platform", "qq"))
+        for group in groups:
+            if not isinstance(group, list) or len(group) < 2:
+                continue
+            resolved: list[str] = []
+            for raw in group:
+                key = (platform, str(raw).strip())
+                if key not in self._session_of_group:
+                    stream = await self.ctx.chat.get_stream_by_group_id(key[1], platform=platform)
+                    resolved_id = _stream_id_of(stream)
+                    if not resolved_id:
+                        _logger.warning("[谈资] 关联组里的群 %s 找不到聊天流，本次跳过", key[1])
+                        continue
+                    self._session_of_group[key] = resolved_id
+                resolved.append(self._session_of_group[key])
+            if session_id in resolved:
+                return resolved
+        return [session_id]
+
+    async def _share_seen(self, day: date, slot: str, session_id: str) -> bool:
+        """这条谈资在**关联组内任一会话**说出口过没有。
+
+        只用来决定"还要不要注入"。**记录不走这条**：她在关联的另一个群也说了，
+        `shares` 照样给那个群记一行，否则观察数据会缺一半。
+        """
+        if not session_id:
+            return False
+        store = self._require_store()
+        return any(
+            store.is_shared(day, slot, linked) for linked in await self._linked_sessions(session_id)
+        )
 
     # ── 批量生成 ──
     async def _scheduler_loop(self) -> None:
@@ -460,7 +509,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
     async def _forecast_for(self, day: date) -> str:
         """取目标日期的天气预报。提前一天生成拿不到实时天气，只能用预报。"""
-        location = str(await self._get_config("weather_location", "Tokyo"))
+        # 键在 [observability] 段下。放那儿是有点怪（它服务的是生成，不是观测），
+        # 但两份 config 都这么写，代码早先却按顶层键读——取不到，一直用默认值 Tokyo，
+        # 而配的正好也是 Tokyo，所以谁都没发现。以配置的位置为准。
+        location = str(await self._get_config("observability.weather_location", "Tokyo"))
         return await fetch_daily_forecast(location, day.isoformat())
 
     async def _holiday_name(self, day: date) -> str:
@@ -521,7 +573,14 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         segment, state = store.state_at(moment)
         return moment, day, segment, state
 
-    def _planner_block(self, moment: datetime, segment: Segment, state: SegmentState) -> str:
+    def _planner_block(
+        self,
+        moment: datetime,
+        segment: Segment,
+        state: SegmentState,
+        *,
+        topic_pending: bool = False,
+    ) -> str:
         """planner 注入文本（设计文档 3.1）。
 
         `所在` 直接给结论，不让 planner 自己拿当前时间去时段轴上比对——
@@ -535,6 +594,27 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         地点是最顺口的可复述内容，而实测 planner 会把这个块近乎整块转发给 replyer
         （5.14）。之所以仍然这么做：导演需要在决定怎么演之前就知道人在哪，
         而 Tool 是「该聊她在干嘛」时才调用的，那时候给已经晚了。观察项见设计文档 7。
+
+        **谈资的开关也在这里，只给存在性、不给内容**（``topic_pending``）。
+        谈资本身注入的是 replyer，可"这轮回什么"是 planner 定的——它写完
+        ``reply_reference``，replyer 就照着做，那时候谈资再出现已经是既定任务的对手了。
+        所以把"要不要换题"这个判断还给 planner，它才是做这个决定的人。
+
+        只说"有一件小事"、不说是什么，所以上面那条禁名词的破例没有被扩大：
+        planner 复述不出内容，因为它根本没拿到。所以要明写「别猜内容」——
+        不写，它会自己编一段以为的内容填进 ``reply_reference``，跟真内容打架。
+
+        **还要求它写成完整的一句话，并带上理由。** 早先写的是「别的不用写」，
+        结果 planner 老老实实只填了「说那件小事」五个字——而主程序把 ``reply_reference``
+        **原样**插成一个 UserMessageItem（``_build_reply_reference_lines``
+        在 reference 非空时直接返回原文，不加任何前缀），于是那五个字夹在表达方式和
+        收尾指令之间，读起来就是一条群友发言。这是 planner 不可能自己知道的下游机制，
+        属于原则二里"该写"的那一类。
+
+        **说出口之后就不再提。** 试过给"已经说过"单写一句「别再主动提起，只有对方
+        问到才接」，弃了：它把一条软禁令放进每轮上下文，而上下文里有「别提 X」这件事
+        本身就是在提醒 X（本文档开头那条纪律）。说过之后 planner 这边直接安静，
+        replyer 那边由 ``topic.stop_after_shared`` 一并停注，两边同时消失。
         """
         store = self._require_store()
         trail = _render_trail(state)
@@ -544,46 +624,48 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             f"心情：{state.mood}",
         ]
         if trail:
-            lines.append(f"这一段的行程：{trail}")
+            lines.append(f"行程表：{trail}")
+        lines.append("可用get_mittes_schedule查询详情")
+        if topic_pending:
+            lines.append(
+                "她手上有一件今天发生、还没跟人说过的小事。这轮要是聊得松，"
+                "或者对方那句不接也不算漏答，就在 reply_reference 里写明这轮让她说那件小事，"
+                "并带上你判断适合换话题的理由——写成完整的一句话，"
+                "reply_reference 会原样进 replyer 的上下文，只写个短语会被当成群友发言。"
+                "你不知道那件事是什么，别猜内容。不合适就当没有这回事。"
+            )
         return "\n".join(lines)
 
     @staticmethod
     def _topic_block(topic: str) -> str:
         """replyer 侧的谈资文案（C）。
 
-        **写成"背景"，不写成"任务"。** 它是常驻注入的，只要读起来像一件待办，
-        她就会在任何语境下硬插一句。所以开头先定性为「经历背景」、默认忽略，
-        再给出两条明确的使用方式，把要不要用交给条件判断——判断不通过就没有下文，
-        不存在一件悬着等着被消掉的事。
+        **给许可，同时把出口限死成两个。** 它是常驻注入的，措辞一旦含糊，
+        她就会在任何语境下硬插一句。所以「可以分享」后面紧跟「只能用以下方式」，
+        两条各自带触发条件，条件不成立就没有下文。
 
-        「不得先回答目标消息，再追加这件事」是防最常见的那种缝合：正经答完一段，
-        末尾硬拽一句今天发生的小事。要么用它回应，要么整条换成它，没有中间态。
+        换题排在回应前面，是因为换题才是这一层存在的理由：几乎没人会主动问「你在干嘛」，
+        工具不被调用，story 就用不上（设计文档 4.3 谈资层）。回应那条只是顺带的出口。
 
-        换题那条要求"不接原话、不解释为什么想到、不讲完整经过"，针对的是 topic
+        换题那条要求"不接对方的话、不说为什么想起它、不从头讲经过"，针对的是 topic
         的形态：它是第三人称 50~80 字的叙述，最省力的用法就是整段搬进回复，
         读起来就是念稿。
         """
         return (
-            "【经历背景】\n"
-            "下面这件事通常忽略，只能以两种方式使用：\n"
-            "- 回应：它能直接回答或举证目标消息时，取一个必要细节。\n"
-            "- 换题：只有目标消息即使不接也不会显得漏答时，才让这件事完全取代原回复。"
-            "整条回复只说这件事，直接从一个想吐槽或分享的点说起，不接原话，"
-            "不解释为什么想到，也不讲完整经过。\n"
-            "\n"
-            "不得先回答目标消息，再追加这件事。\n"
-            "\n"
-            f"{topic}"
+            f"你刚刚经历的一件小事：{topic}\n"
+            "你可以分享出来，但只能用以下方式分享：\n"
+            "- 换题：对方那句就算不接也不算漏答，或者不想搭理对方时，整条回复只说这件事。"
+            "从最想吐槽或最想分享的那一点直接开口，不接对方的话，不说自己为什么想起它，"
+            "也不从头讲经过。\n"
+            "- 回应：它能直接回答对方，或给你正在说的话当例子——只取用得上的那一点，"
+            "别把整件事讲完。"
         )
 
     # ── Tool ──
     @Tool(
         "get_mittes_schedule",
-        brief_description=(
-            "查 Mittes 某个时刻的行程与经过：几点在哪、做什么、和谁在一起，"
-            "以及那段时间实际发生了什么。要讲她的行程或经历时调用，不要凭印象说。"
-            "不填 time 就是此刻；填了可以查她今天早些时候、昨天或明天。"
-        ),
+        visibility="visible",
+        brief_description="查询 Mittes 现在在做什么。请在缺少日程信息就无法准确回答当前问题时使用",
         parameters=[
             ToolParameterInfo(
                 name="time",
@@ -592,7 +674,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                     "要查的时刻，留空表示现在。写法："
                     "「HH:MM」查今天的某一刻；「YYYY-MM-DD HH:MM」查指定某天；"
                     "「YYYY-MM-DD」只给日期时按中午算。"
-                    "她的一天从凌晨两点算起，所以凌晨一点问「23:00」指的是几十分钟前。"
                 ),
                 required=False,
             ),
@@ -741,7 +822,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             return _hook_response(items, kwargs)
 
         moment, day, segment, state = self._current()
-        block = self._planner_block(moment, segment, state)
+        # planner 的开关必须是 replyer 注入的**子集**：planner 说「说那件小事」而
+        # replyer 那边没材料，指令就悬空了；反过来（planner 不提、replyer 有材料）无害。
+        # 所以两边共用 stop_after_shared 和同一个 _share_seen。
+        session_id = str(kwargs.get("session_id") or "")
+        already_shared = await self._share_seen(day, segment.slot, session_id)
+        topic_pending = bool(state.topic and session_id and not already_shared)
+        block = self._planner_block(moment, segment, state, topic_pending=topic_pending)
 
         index = _find_item_index(items, lambda text: text.startswith(_PLANNER_ANCHOR_PREFIX))
         updated = list(items)
@@ -786,10 +873,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         moment, day, segment, state = self._current()
         store = self._require_store()
 
-        # A：表达方式。C：今天那件可说的小事，说出口之后就不再注入（5.11）。
+        # A：表达方式。C：今天那件可说的小事。默认在同一会话说出口后停止注入；
+        # 观察重复提及时可以通过配置让它继续注入，但分享状态仍照常记录。
         manner = state.manner.strip()
         topic = ""
-        if state.topic and session_id and not store.is_shared(day, segment.slot, session_id):
+        stop_after_shared = bool(await self._get_config("topic.stop_after_shared", True))
+        already_shared = await self._share_seen(day, segment.slot, session_id)
+        if state.topic and session_id and (not stop_after_shared or not already_shared):
             topic = self._topic_block(state.topic)
         if not manner and not topic:
             return {"success": True, "action": "continue"}
@@ -861,6 +951,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             return {"success": True, "action": "continue"}
 
         store = self._require_store()
+        # 这里**故意**用本会话的 is_shared，不用 _share_seen：关联组只管"要不要注入"，
+        # 记录要落到实际说出口的那个会话。用 _share_seen 的话，她在关联的另一个群
+        # 也说了这件事，那一行就永远记不下来，观察数据缺一半。
         if store.is_shared(day, segment.slot, session_id):
             return {"success": True, "action": "continue"}
 
@@ -928,14 +1021,16 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def cmd_status_prompt(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
         moment, day, segment, state = self._current()
+        already_shared = await self._share_seen(day, segment.slot, stream_id)
+        topic_pending = bool(state.topic and not already_shared)
         text = (
             "── planner 注入（插在「时间：」之后）──\n"
-            f"{self._planner_block(moment, segment, state)}\n"
+            f"{self._planner_block(moment, segment, state, topic_pending=topic_pending)}\n"
             "\n"
             "── replyer A 表达方式（插在 reply_reference 之前）──\n"
             f"{state.manner}\n"
             "\n"
-            "── replyer C 谈资（system 之后、聊天记录之前；说出口后撤掉）──\n"
+            "── replyer C 谈资（system 之后、聊天记录之前）──\n"
             + (self._topic_block(state.topic) if state.topic else "（这段没什么好说的，不注入）")
         )
         await self.ctx.send.text(text, stream_id)
@@ -1049,6 +1144,17 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
         lines.append(f"话题：{state.topic}")
         lines.append(f"关键词：{'、'.join(state.topic_keys)}")
+        stop_after_shared = bool(await self._get_config("topic.stop_after_shared", True))
+        lines.append(f"说出口后停止注入：{'是' if stop_after_shared else '否'}")
+        # 关联组解析失败是静默的（群还没被 bot 见过就查不到聊天流），这里让它看得见
+        linked = await self._linked_sessions(stream_id)
+        lines.append(
+            f"关联会话：{len(linked)} 个，组内任一说过即算说过"
+            if len(linked) > 1
+            else "关联会话：无（没配，或群号还没解析到聊天流）"
+        )
+        seen = await self._share_seen(day, segment.slot, stream_id)
+        lines.append(f"本会话算不算已说过：{'算' if seen else '不算'}")
         lines.append("")
         rows = [r for r in store.db.shares_of_day(today) if r["slot"] == segment.slot]
         if not rows:

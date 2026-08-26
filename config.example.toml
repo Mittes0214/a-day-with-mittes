@@ -53,6 +53,19 @@ negative_event_quota = 2
 # 中等会压着接下来两三个时段的情绪；没有「重大」这一档。
 negative_medium_ratio = 0.3
 
+[topic]
+# true：同一会话检测到说出口后不再注入；false：仍然每轮注入，便于观察实际表现。
+# 无论是否停止注入，分享检测、回复原文和累计注入次数都会继续记录。
+stop_after_shared = true
+
+# 关联会话组：组内任一会话说出口，其余会话都算说过，不再注入。
+# 填**群号**，插件用 ctx.chat.get_stream_by_group_id 解析成 session_id（不自己算 hash）。
+# 群还没被 bot 见过时解析不到，那一组这次就当没配，下次调用会重试。
+# 只影响"要不要注入"；记录仍按实际说出口的那个会话落行，否则观察数据会缺一半。
+# 例：linked_groups = [["1016077305", "1059037995"]]
+linked_groups = []
+linked_platform = "qq"
+
 [observability]
 # 每次 LLM 调用是否落盘到 WebUI 推理过程页。
 # 主程序的预览开关只管主程序自己写的记录，管不到插件，所以这里必须自带一个。

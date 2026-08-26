@@ -10,7 +10,9 @@ MaiBot 插件。给角色一份每天自动生成的日程，让它影响她的�
 - 表达方式跟着时段走，并在第三轮根据每一段的故事和心情单独生成。
   但她不会把日程内容念出来（"我现在正在洗碗呢"那种）。
 - 每段挑一件值得说的小事。可以用它回应相关话题，也可以在对话松下来时独立吐槽或分享；
-  不会先答完再生硬追加，说过之后就不再提。
+  不会先答完再生硬追加。换不换题由 planner 决定；说过之后 planner 和 replyer 两边
+  同时不再提（`stop_after_shared` 可以只关掉 replyer 那半边，用来观察她会不会自己重复）。
+  关联起来的几个群算同一个"说过"。
 - 心情有起伏但不随机。每周随机安排几次"不顺心的事"，让心情跟着具体事件走。
 - 能查她在哪、穿什么。两个工具，可以问此刻，也可以问她今天早些时候或明天。
 - 结果永久归档进 SQLite，自带管理页，可以热编辑表达方式、按日期生成日程或重跑 topic。
@@ -40,9 +42,15 @@ temperature     = 0.9
 negative_event_quota  = 2          # 每周安排几次"不顺心的事"
 negative_medium_ratio = 0.3        # 其中判为"中等"强度的比例
 
+[topic]
+stop_after_shared = true            # false：说出口后仍然每轮注入
+linked_groups    = []               # 例 [["1016077305","1059037995"]]：组内任一群说过就都算说过
+linked_platform  = "qq"
+
 [observability]
 report_group_id  = ""              # 批次结果报到哪个群，留空则不报
-weather_location = "Tokyo"
+report_platform  = "qq"
+weather_location = "Tokyo"         # 生成时查天气预报用的地名
 
 [components]
 enable_get_mittes_schedule = true  # 关掉的 Tool 不会出现在 LLM 的工具列表里
@@ -75,7 +83,8 @@ enable_get_weather         = true
 一天从凌晨 02:00 算起，跨零点那段写成 `24:00-26:00`，归属当天。
 
 LLM 只负责写"这些事实今天具体表现成什么样"，绝不回写骨架。
-换季或换角色时，这两份文件整份替换，不打补丁。
+换季或换角色时，**骨架和衣柜这两份**整份替换、不打补丁——它们是配套的，
+骨架的 `outfit` 填的是衣柜里的名字，只换一边会对不上。prompt 不跟着换季走。
 
 ## 命令
 
