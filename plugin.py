@@ -42,9 +42,11 @@ from maibot_sdk.types import ToolParameterInfo, ToolParamType
 from .character.wardrobe import Wardrobe
 from .generation.pipeline import SegmentGenerator
 from .observability.prompt_preview import PromptPreview
+from .reply_style import compose as compose_reply_style
 from .schedule.holidays import ScheduleGenerator
 from .schedule.negative_events import LEVEL_MILD, NegativeEntry, NegativeScheduler
 from .schedule.store import (
+    JST,
     ScheduleStore,
     parse_moment,
     Segment,
@@ -63,6 +65,18 @@ _PLANNER_ANCHOR_PREFIX = "时间："
 
 # replyer 侧的兜底锚点：final user message 以「当前时间：」开头，位置固定必然存在。
 _REPLYER_FALLBACK_PREFIX = "当前时间："
+
+# reply_style 在 system prompt 里的上下两句。它们是 prompts/zh-CN/maisaka_replyer.prompt
+# 模板里写死的正文，reply_style 就夹在中间独占一行。
+#
+# **用模板句子当锚点，不去读 global_config.personality.reply_style 再做匹配。**
+# 那个值是人随时会改的配置，改完这里就静默失配；模板句子只有跟上游同步时才会动，
+# 真动了也会在这条 warning 上立刻看出来。
+_REPLY_STYLE_HEAD = "然后给出日常且口语化的回复，\n"
+_REPLY_STYLE_TAIL = "\n你可以参考【回复信息参考】中的信息"
+
+# 谈资工具名。planner hook 要按它从 tool_definitions 里摘工具，所以名字必须只有一处。
+_TOPIC_TOOL_NAME = "get_mittes_topic"
 
 _ROLE_BY_ITEM_TYPE = {
     "SystemMessageItem": "system",
@@ -89,6 +103,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._last_batch_day: date | None = None
         # (platform, 群号) → session_id。解析一次就缓存，见 _linked_sessions
         self._session_of_group: dict[tuple[str, str], str] = {}
+        # session_id → (逻辑日, 时段)。planner 轮开头清、工具被调用时写、replyer 读，
+        # 语义严格是「本轮 planner 取过材」。装的是已发生的事实，不是推断，
+        # 所以不需要 TTL 去猜有效期。
+        self._topic_pitched: dict[str, tuple[date, str]] = {}
 
     # ── 生命周期 ──
     async def on_load(self) -> None:
@@ -191,6 +209,15 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             current = current[part]
         return current
 
+    async def _manner_enabled(self) -> bool:
+        """表达方式（replyer 的 A 块）这一整套功能开着没有。
+
+        关掉之后：第三轮不再调 LLM、replyer 不再注入、``/status expressions`` 和
+        管理页的重跑入口都不干活。**库里已有的 manner 一律保留**——这是"暂时停用"
+        不是"删除"，改回 true 就恢复，不需要重新生成。
+        """
+        return bool(await self._get_config("manner.enabled", True))
+
     async def _linked_sessions(self, session_id: str) -> list[str]:
         """返回和 ``session_id`` 同属一个关联组的所有会话（含它自己）。
 
@@ -257,7 +284,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             # 所以模型挂掉时反复重启不会每次空转一整轮。修好后用 /status batch 手动补。
             for offset, label in ((0, "今天"), (1, "明天")):
                 target = today + timedelta(days=offset)
-                if store.day_cache(target) is None:
+                # 走 load_day_cache 而不是 day_cache：判据是「库里有没有记录」，
+                # 只看内存的话，内存里恰好没有这一天就会把整天重新生成一遍
+                if store.load_day_cache(target) is None:
                     _logger.info("[批次] 库里没有%s，冷启动补跑", label)
                     await self._run_batch_guarded(target, f"冷启动补跑（{label}）")
 
@@ -275,8 +304,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 self._last_batch_day = today
                 target = today + timedelta(days=1)
                 # 冷启动可能已经把明天补出来了（重启发生在 run_at 之后就会这样），
-                # 不查一下会白跑一整轮
-                if store.day_cache(target) is not None:
+                # 不查一下会白跑一整轮。同样走 load_day_cache——内存里没有不等于库里没有
+                if store.load_day_cache(target) is not None:
                     _logger.info("[批次] %s 已有记录，跳过每日批次", target)
                     continue
                 await self._run_batch_guarded(target, "每日批次")
@@ -304,7 +333,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         return dt_time(int(hour), int(minute))
 
     async def run_batch(self, day: date, *, reason: str) -> dict[str, Any]:
-        """跑一天的批次：一次调用出全天，不合格的段逐段定向重写，最后报告。
+        """跑一天的批次：一次调用出全天，不合格的段铺底稿，最后报告。
 
         Args:
             day: 要生成的日期。
@@ -350,54 +379,45 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             aborted = ""
             by_slot = {segment.slot: segment for segment in segments}
             stamp = now_jst().isoformat()
+            # 功能关掉时**连底稿的 manner 都不铺**：不然新生成的日子库里照样躺着一句
+            # 表达方式，只是没被注入——看起来像还在跑，排查时会误判
+            manner_on = await self._manner_enabled()
+
+            def seed_manner(slot: str, segment: Segment) -> str:
+                if not manner_on:
+                    return ""
+                return previous_manners.get(slot) or store.fallback_for(segment).manner
 
             if not outcome.ok:
                 # 整次调用没成功：全天铺底稿，库里留下「今天已经试过」的痕迹，
                 # 重启不会再空转一轮。
                 aborted = outcome.reason
                 for segment in segments:
-                    day_cache.segments.setdefault(segment.slot, store.fallback_for(segment))
+                    draft = day_cache.segments.setdefault(segment.slot, store.fallback_for(segment))
+                    draft.manner = seed_manner(segment.slot, segment)
                     store.reset_shares(day, segment.slot)
             else:
                 day_cache.outline = outcome.outline
                 for slot, state in outcome.states.items():
                     segment = by_slot[slot]
-                    state.manner = previous_manners.get(slot) or store.fallback_for(segment).manner
+                    state.manner = seed_manner(slot, segment)
                     state.generated_at = stamp
                     day_cache.segments[slot] = state
                     # 这一段换了新内容，旧 topic 的分享状态必须跟着作废，
                     # 否则 is_shared 会拿"上一版说过了"把新谈资一直摁住。
                     store.reset_shares(day, slot)
 
-                # 不合格的段逐段重写。重写时把已经收下的段当上下文，所以放在上面之后。
+                # 不合格的段铺骨架底稿，原样报出来。**不补写**——定向重写已移除，
+                # 想让这一段有内容就整天重来（前端「重新生成当日日程」）。
                 for slot, defect in outcome.failures:
                     segment = by_slot[slot]
-                    _logger.info("[批次] %s %s 待重写：%s", day, slot, defect)
-                    rewritten = await generator.rewrite_segment(
-                        day=day,
-                        segment=segment,
-                        segments=segments,
-                        outline=outcome.outline,
-                        states=day_cache.segments,
-                        weather=weather,
-                        holiday=holiday,
-                        negative_level=levels.get(slot, ""),
-                        defect=defect,
-                    )
-                    rewritten.state.manner = (
-                        previous_manners.get(slot) or store.fallback_for(segment).manner
-                    )
-                    rewritten.state.generated_at = stamp
-                    day_cache.segments[slot] = rewritten.state
+                    _logger.info("[批次] %s %s 不合格：%s", day, slot, defect)
+                    draft = store.fallback_for(segment)
+                    draft.manner = seed_manner(slot, segment)
+                    draft.generated_at = stamp
+                    day_cache.segments[slot] = draft
                     store.reset_shares(day, slot)
-                    if not rewritten.ok:
-                        failures.append((segment, f"{defect}；重写仍不合格：{rewritten.reason}"))
-                    if rewritten.fatal:
-                        # 重写都打不通说明模型这会儿是真的挂了，剩下的别再试
-                        aborted = rewritten.reason
-                        for rest in segments:
-                            day_cache.segments.setdefault(rest.slot, store.fallback_for(rest))
-                        break
+                    failures.append((segment, defect))
 
             # 第二轮：全天一次调用，为每段提炼一句谈资（5.10）。
             # 放在主生成之后，因为它要读全天的 story。
@@ -407,8 +427,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                     day, segments, day_cache.segments
                 )
 
-            # 第三轮：每个时段独立根据 story + mood 生成表达方式。失败只保留该段
-            # 上一版或底稿，不回头重写已经合格的 story / mood。
+            # 第三轮：全天一次调用，只为说话状态偏离基线的时段写 manner，
+            # 其余段留空不注入。整轮失败就全天保留旧值或底稿，不回头改 story / mood。
             round3 = {"expressions": 0, "total": 0}
             round3_failures: list[tuple[Segment, str]] = []
             if not aborted:
@@ -491,9 +511,12 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             lines.append(f"地点：{round2.get('places', 0)}/{round2.get('total', 0)} 段")
             lines.append(f"可说的话题：{round2.get('topics', 0)} 条")
             round3 = summary.get("round3") or {}
-            lines.append(
-                f"表达方式：{round3.get('expressions', 0)}/{round3.get('total', 0)} 段"
-            )
+            if not round3.get("total"):
+                lines.append("表达方式：功能已关闭，未生成")
+            else:
+                lines.append(
+                    f"表达方式：偏离 {round3.get('expressions', 0)}/{round3.get('total', 0)} 段"
+                )
             for segment, reason in summary.get("round3_failures") or []:
                 lines.append(f"表达方式保留旧值：{segment.slot}　{reason}")
         for entry in summary["negative"]:
@@ -578,8 +601,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         moment: datetime,
         segment: Segment,
         state: SegmentState,
-        *,
-        topic_pending: bool = False,
     ) -> str:
         """planner 注入文本（设计文档 3.1）。
 
@@ -595,70 +616,58 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         （5.14）。之所以仍然这么做：导演需要在决定怎么演之前就知道人在哪，
         而 Tool 是「该聊她在干嘛」时才调用的，那时候给已经晚了。观察项见设计文档 7。
 
-        **谈资的开关也在这里，只给存在性、不给内容**（``topic_pending``）。
-        谈资本身注入的是 replyer，可"这轮回什么"是 planner 定的——它写完
-        ``reply_reference``，replyer 就照着做，那时候谈资再出现已经是既定任务的对手了。
-        所以把"要不要换题"这个判断还给 planner，它才是做这个决定的人。
-
-        只说"有一件小事"、不说是什么，所以上面那条禁名词的破例没有被扩大：
-        planner 复述不出内容，因为它根本没拿到。所以要明写「别猜内容」——
-        不写，它会自己编一段以为的内容填进 ``reply_reference``，跟真内容打架。
-
-        **还要求它写成完整的一句话，并带上理由。** 早先写的是「别的不用写」，
-        结果 planner 老老实实只填了「说那件小事」五个字——而主程序把 ``reply_reference``
-        **原样**插成一个 UserMessageItem（``_build_reply_reference_lines``
-        在 reference 非空时直接返回原文，不加任何前缀），于是那五个字夹在表达方式和
-        收尾指令之间，读起来就是一条群友发言。这是 planner 不可能自己知道的下游机制，
-        属于原则二里"该写"的那一类。
-
-        **说出口之后就不再提。** 试过给"已经说过"单写一句「别再主动提起，只有对方
-        问到才接」，弃了：它把一条软禁令放进每轮上下文，而上下文里有「别提 X」这件事
-        本身就是在提醒 X（本文档开头那条纪律）。说过之后 planner 这边直接安静，
-        replyer 那边由 ``topic.stop_after_shared`` 一并停注，两边同时消失。
+        **谈资不在这里了。** 早先这里有一段「她手上有一件今天发生、还没跟人说过的
+        小事」，由 planner 决定要不要换题。那个设计被推翻：只要那句话在，planner 就
+        倾向于用它，等于每轮下一道命令；而它又拿不到内容，只能写出「我碰上件挺巧的
+        小事，等我忙完再讲」这种预告（08-31 15:25 实际发生过）。现在谈资走
+        ``get_mittes_topic`` 工具——代码按窗口决定露不露，planner 自己决定调不调。
         """
         store = self._require_store()
         trail = _render_trail(state)
-        lines = [
-            "【Mittes 此刻】",
-            f"所在：{store.place_at(moment, segment, state)}",
-            f"心情：{state.mood}",
-        ]
+        # 顺序是从外到内：一天的走向 → 此刻在哪 → 还剩多少体力 → 什么心情。
+        # 越靠后越贴近「她现在是什么样的人」，也越贴近 planner 要做的那个决定。
+        lines = ["【Mittes 此刻】"]
         if trail:
             lines.append(f"行程表：{trail}")
+        lines.append(f"所在：{store.place_at(moment, segment, state)}")
+        if state.physical_state:
+            lines.append(f"体力：{state.physical_state}")
+        lines.append(f"心情：{state.mood}")
         lines.append("可用get_mittes_schedule查询详情")
-        if topic_pending:
-            lines.append(
-                "她手上有一件今天发生、还没跟人说过的小事。这轮要是聊得松，"
-                "或者对方那句不接也不算漏答，就在 reply_reference 里写明这轮让她说那件小事，"
-                "并带上你判断适合换话题的理由——写成完整的一句话，"
-                "reply_reference 会原样进 replyer 的上下文，只写个短语会被当成群友发言。"
-                "你不知道那件事是什么，别猜内容。不合适就当没有这回事。"
-            )
         return "\n".join(lines)
 
     @staticmethod
-    def _topic_block(topic: str) -> str:
-        """replyer 侧的谈资文案（C）。
+    def _topic_block_reply(topic: str) -> str:
+        """通道一：接话（常驻注入，不设闸门）。
 
-        **给许可，同时把出口限死成两个。** 它是常驻注入的，措辞一旦含糊，
-        她就会在任何语境下硬插一句。所以「可以分享」后面紧跟「只能用以下方式」，
-        两条各自带触发条件，条件不成立就没有下文。
+        真人在群里主动讲自己今天干了什么是极少数，绝大多数"分享"其实是**接话**——
+        话题正好赶到那儿了。接话不需要许可，所以这一版常驻。
 
-        换题排在回应前面，是因为换题才是这一层存在的理由：几乎没人会主动问「你在干嘛」，
-        工具不被调用，story 就用不上（设计文档 4.3 谈资层）。回应那条只是顺带的出口。
-
-        换题那条要求"不接对方的话、不说为什么想起它、不从头讲经过"，针对的是 topic
-        的形态：它是第三人称 50~80 字的叙述，最省力的用法就是整段搬进回复，
-        读起来就是念稿。
+        但「换题」那个出口整个拿掉了：08-31 那五次刺耳的抛出全是换题，没有一次是接话。
         """
         return (
-            f"你刚刚经历的一件小事：{topic}\n"
-            "你可以分享出来，但只能用以下方式分享：\n"
-            "- 换题：对方那句就算不接也不算漏答，或者不想搭理对方时，整条回复只说这件事。"
-            "从最想吐槽或最想分享的那一点直接开口，不接对方的话，不说自己为什么想起它，"
-            "也不从头讲经过。\n"
-            "- 回应：它能直接回答对方，或给你正在说的话当例子——只取用得上的那一点，"
-            "别把整件事讲完。"
+            f"你今天遇到的一件小事：{topic}\n"
+            "它能直接回答对方、或者能给你正在说的话当例子时，才提，而且只取用得上的那一点。\n"
+            "别为了说它去转话题；聊的不是这个，就当没有这回事。"
+        )
+
+    @staticmethod
+    def _topic_block_pitch(topic: str) -> str:
+        """通道二：开口（planner 调过 get_mittes_topic 才注入）。
+
+        **不再写「整条回复只说这件事」。** 08-31 那五次一次都没执行——replyer 手上有
+        明确的目标消息和「请自然地回复」的收尾指令，这条约束要求它放弃本职任务，
+        必然落败；实际表现是"答一条、再贴一条"，中间垫一个胶水词。
+
+        所以改成管接缝：禁掉那四个词，并把形态从"叙述"压向"带情绪的半句"——
+        「早上那组黄得我难受，重修了一遍才顺眼」像憋不住说一句，
+        「我今天把早上那组照片重新裁了发到自己号上」像轮到我发言了。
+        """
+        return (
+            f"你今天遇到的一件小事：{topic}\n"
+            "这会儿刚好轮得到你说自己的事。从最想吐槽或最想分享的那一点开口，"
+            "一句话就够，不从头讲经过，也不说自己为什么想起它。\n"
+            "不要用「话说」「对了」「先不说X」「那个先不管」把它跟上一句缝起来。"
         )
 
     # ── Tool ──
@@ -803,6 +812,211 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             return {"name": "get_weather", "content": "请提供要查询的城市或地点名称"}
         return {"name": "get_weather", "content": await fetch_weather(location)}
 
+    # ── Tool：谈资 ──
+    @Tool(
+        _TOPIC_TOOL_NAME,
+        visibility="visible",
+        brief_description=(
+            "取一件她今天真实经历、可以说给人听的小事。"
+            "当群里在闲聊、没有正在进行的话题需要接、而且她刚好可以说说自己的事时调用；"
+            "她在忙，或者话题不是她能插的，就不要调用。"
+            "（问她「现在在干嘛」用 get_mittes_schedule，那是查日程；"
+            "这个是找一句她可以主动说的话头。）"
+        ),
+        parameters=[],
+    )
+    async def tool_get_topic(self, **kwargs: Any) -> dict[str, str]:
+        """把本时段那条谈资交给 planner，并记下"本轮取过材"。
+
+        **这里不重复判窗口。** 工具能被调用，说明 planner hook 已经放它进 schema 了；
+        两处各判一次只会制造不一致。
+
+        会话 id 从 ``stream_id`` / ``chat_id`` 取——主程序给插件工具的载荷里两个都有
+        （``component_query.py:_build_tool_context_payload``），值就是 session_id。
+        """
+        session_id = str(kwargs.get("stream_id") or kwargs.get("chat_id") or "")
+        moment, day, segment, state = self._current()
+        if not state.topic:
+            return {
+                "name": _TOPIC_TOOL_NAME,
+                "content": "她这会儿没有什么特别想说的事，别硬找话头。",
+            }
+        if session_id:
+            self._topic_pitched[session_id] = (day, segment.slot)
+            store = self._require_store()
+            store.mark_pitched(day, segment.slot, session_id)
+            # **取材即视为用掉。** 以前靠 topic_keys 在回复正文里找关键词判断"说没说
+            # 出口"，那套已经取消——它抽的是 story 的书面词，而她开口是口语，
+            # 实测 08-31 那条谈资 12 次注入一次都没命中，同一件事在同一个群说了三遍。
+            # 现在的判据是"planner 取过材"这个确定事实：代价是取了没说也算用掉，
+            # 少一次开口机会；收益是绝不会重复说，而两种错的代价是不对称的。
+            store.mark_shared(
+                day,
+                segment.slot,
+                session_id,
+                moment.isoformat(),
+                hit_key="工具调用",
+            )
+            _logger.info(
+                "[谈资] 取材 %s %s 会话=%s，这条谈资就此用掉",
+                day,
+                segment.slot,
+                session_id,
+            )
+        return {"name": _TOPIC_TOOL_NAME, "content": self._topic_tool_text(state.topic)}
+
+    @staticmethod
+    def _topic_tool_text(topic: str) -> str:
+        """工具返回给 planner 的正文。
+
+        末尾那句照 ``get_mittes_schedule`` 的写法。**「你不用复述」是关键**：
+        planner 一旦把 topic 压缩成一句概括写进 reply_reference，story 的质感就没了，
+        还会跟 replyer 手上的原文打架。
+        """
+        return (
+            "【今天可以说的一件小事】\n"
+            f"{topic}\n\n"
+            "她只在场子松、或者话正好赶到这儿的时候才会提起这件事。要用就在 "
+            "reply_reference 里写明这轮让她说这件事，并写上你判断合适的理由；"
+            "正文她那边有，你不用复述。"
+        )
+
+    # ── 谈资闸门 ──
+    async def _topic_gate(self, session_id: str) -> tuple[bool, str]:
+        """这一轮谈资工具露不露，返回 (露不露, 给人看的原因)。
+
+        五个条件全过才露：有 topic、没说出口过、取材次数没满、在窗口期内、
+        对方没有正在回应她。原因字符串只给 ``/status`` 和日志用。
+        """
+        if not session_id:
+            return False, "没有会话 id"
+        if not bool(await self._get_config("topic.enabled", True)):
+            return False, "谈资总开关关闭"
+        if not bool(await self._get_config("topic.pitch_channel.enabled", True)):
+            return False, "开口通道关闭"
+
+        store = self._require_store()
+        moment, day, segment, state = self._current()
+        if not state.topic:
+            return False, "这段没有 topic"
+        if await self._share_seen(day, segment.slot, session_id):
+            return False, "已经说出口过"
+
+        max_pitches = int(await self._get_config("topic.pitch_channel.max_pitches", 3))
+        pitched = store.pitch_count(day, segment.slot, session_id)
+        if pitched >= max_pitches:
+            return False, f"取材次数已满（{pitched}/{max_pitches}）"
+
+        return await self._topic_window(moment, day, segment, session_id)
+
+    async def _topic_window(
+        self,
+        moment: datetime,
+        day: date,
+        segment: Segment,
+        session_id: str,
+    ) -> tuple[bool, str]:
+        """窗口判定：新鲜期 / 断点期，外加「对方正在回应她」这一条否决。
+
+        两个窗口对应真人主动开口的两种许可（谈资设计文档 2.1）：**事情刚发生**，
+        以及**她刚从一段不能说话的时间里出来**。真人不会在事情过去两小时、
+        自己已经在群里说了半天话之后，突然插一句"我今天把照片重新裁了"——
+        08-31 那五次刺耳的抛出全部落在时段中段，就是这个原因。
+
+        否决那一条（C）读的是引用关系：对方用回复功能引了她的消息，说明球还在
+        她这边，这一轮不许换题。实测一周里这种消息只占别人发言的 1~2%，
+        所以它是个很窄的守卫，不是普遍封锁。**不包含 @ 她**——引用是对方接住了
+        她那条话，@ 是对方开了个新话头，后者归 planner 本职管。
+        """
+        store = self._require_store()
+        fresh_minutes = int(await self._get_config("topic.pitch_channel.fresh_minutes", 30))
+        break_minutes = int(await self._get_config("topic.pitch_channel.breakpoint_minutes", 60))
+        busy_kinds = set(await self._get_config("topic.pitch_channel.busy_kinds", []) or [])
+        idle_kinds = set(await self._get_config("topic.pitch_channel.idle_kinds", []) or [])
+        lookback = int(await self._get_config("topic.pitch_channel.lookback_minutes", 10))
+
+        # 逻辑日的分钟数，不能拿 datetime 直减：跨零点那段写成 24:00-26:00
+        _day, now_minutes = store.resolve_moment(moment)
+        elapsed = now_minutes - segment.start_minutes
+
+        fresh = 0 <= elapsed < fresh_minutes
+        _previous_day, previous = store.previous_segment(day, segment)
+        breakpoint_shape = (
+            0 <= elapsed < break_minutes
+            and previous.kind in busy_kinds
+            and segment.kind in idle_kinds
+        )
+        if not fresh and not breakpoint_shape:
+            return False, f"不在窗口（本段已过 {elapsed} 分钟）"
+
+        segment_start = datetime.combine(day, dt_time(0, 0), tzinfo=JST) + timedelta(
+            minutes=segment.start_minutes
+        )
+        # 往回至少看一小时：时段刚开始时 segment_start 就是此刻，那样一条消息都取不到，
+        # C 会永远判不成立；而且被引用的那条可能是她一小时前发的，窗口太窄就认不出来
+        since = min(segment_start, moment - timedelta(minutes=max(lookback, 60)))
+        mine, others = await self._recent_messages(session_id, since=since, moment=moment)
+
+        my_ids = {str(message.get("message_id")) for message in mine}
+        trigger = others[-1] if others else None
+        if trigger is not None and str(trigger.get("reply_to") or "") in my_ids:
+            trigger_at = _message_moment(trigger)
+            if trigger_at is None or moment - trigger_at <= timedelta(minutes=lookback):
+                return False, "对方正在回应她（引用了她的消息）"
+
+        if fresh:
+            return True, f"新鲜期（本段第 {elapsed} 分钟）"
+
+        # 断点期还要求她在本段里还没开过口——"回来的第一句"只有一次
+        spoke = [
+            message
+            for message in mine
+            if (_message_moment(message) or moment) >= segment_start
+        ]
+        if spoke:
+            return False, "断点期已经用掉（本段她说过话了）"
+        return True, f"断点期（上一段是{previous.kind}，已过 {elapsed} 分钟）"
+
+    async def _recent_messages(
+        self,
+        session_id: str,
+        *,
+        since: datetime,
+        moment: datetime,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """取最近的消息，拆成 (她自己的, 别人的)，各自按时间升序。
+
+        **拉两次是为了不用去查 bot 的账号。** ``filter_mai=True`` 那一次由主程序按
+        ``bot_platform_accounts`` 把她自己排除掉，两份做差就是她发的。插件自己判断
+        "哪条是她发的"要么得读主程序的表、要么得猜昵称，都比多一次本地查询脏。
+        窗口本来就稀有，这两次查询一天也跑不了几回。
+        """
+        start_time = since.timestamp()
+        # 终点往后放一分钟：触发消息的入库时刻和 now_jst() 之间可能有零点几秒的差
+        end_time = (moment + timedelta(minutes=1)).timestamp()
+        every = await self.ctx.message.get_by_time_in_chat(
+            chat_id=session_id,
+            start_time=start_time,
+            end_time=end_time,
+            limit=80,
+            limit_mode="latest",
+            filter_mai=False,
+        )
+        others = await self.ctx.message.get_by_time_in_chat(
+            chat_id=session_id,
+            start_time=start_time,
+            end_time=end_time,
+            limit=80,
+            limit_mode="latest",
+            filter_mai=True,
+        )
+        every = [item for item in (every or []) if isinstance(item, dict)]
+        others = [item for item in (others or []) if isinstance(item, dict)]
+        other_ids = {str(item.get("message_id")) for item in others}
+        mine = [item for item in every if str(item.get("message_id")) not in other_ids]
+        key = lambda item: _message_moment(item) or datetime.min.replace(tzinfo=JST)  # noqa: E731
+        return sorted(mine, key=key), sorted(others, key=key)
+
     # ── Hook：planner 状态层 ──
     @HookHandler(
         "maisaka.planner.before_request",
@@ -817,24 +1031,47 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         items: list[Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """在「时间：」那条 User item 后面插入所在与心情。"""
-        if not items:
-            return _hook_response(items, kwargs)
+        """插入所在与心情，并决定这一轮谈资工具露不露。
 
-        moment, day, segment, state = self._current()
-        # planner 的开关必须是 replyer 注入的**子集**：planner 说「说那件小事」而
-        # replyer 那边没材料，指令就悬空了；反过来（planner 不提、replyer 有材料）无害。
-        # 所以两边共用 stop_after_shared 和同一个 _share_seen。
+        两件事互不牵连：hook 的 ``error_policy`` 是 skip，整块跳过——谈资闸门
+        算错了不能把「所在/心情/行程表」一起带走，所以那段整个包在 try 里，
+        且异常方向一律是"不露"。
+        """
         session_id = str(kwargs.get("session_id") or "")
-        already_shared = await self._share_seen(day, segment.slot, session_id)
-        topic_pending = bool(state.topic and session_id and not already_shared)
-        block = self._planner_block(moment, segment, state, topic_pending=topic_pending)
+        # 新一轮开始，先把上一轮的取材令牌清掉。清 → 写 → 读这个顺序让令牌的
+        # 语义严格等于"本轮"，不需要 TTL 去猜。
+        if session_id:
+            self._topic_pitched.pop(session_id, None)
+
+        extra: dict[str, Any] = {}
+        tool_definitions = kwargs.get("tool_definitions")
+        if isinstance(tool_definitions, list):
+            try:
+                visible, reason = await self._topic_gate(session_id)
+            except Exception:
+                _logger.warning("[谈资] 闸门判定失败，本轮不暴露工具", exc_info=True)
+                visible, reason = False, "判定异常"
+            if not visible:
+                # 摘而不是塞：工具始终是注册的，只是某些轮次不出现在 schema 里，
+                # 这样 /status、调用链路、权限判定都不用特判。
+                extra["tool_definitions"] = [
+                    item
+                    for item in tool_definitions
+                    if _tool_name_of(item) != _TOPIC_TOOL_NAME
+                ]
+                _logger.debug("[谈资] 本轮不暴露工具：%s", reason)
+
+        if not items:
+            return _hook_response(items, kwargs, extra=extra or None)
+
+        moment, _day, segment, state = self._current()
+        block = self._planner_block(moment, segment, state)
 
         index = _find_item_index(items, lambda text: text.startswith(_PLANNER_ANCHOR_PREFIX))
         updated = list(items)
         # 找不到锚点就挂在最后：状态层晚一点出现也比不出现好
         updated.insert(index + 1 if index >= 0 else len(updated), _new_user_item(block))
-        return _hook_response(updated, kwargs)
+        return _hook_response(updated, kwargs, extra=extra or None)
 
     # ── Hook：replyer 表达方式注入 ──
     @HookHandler(
@@ -866,29 +1103,71 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
         用「包含」而不是「相等」来匹配，是因为 02_owner_auth_plugin 可能已经往
         reference 首行合并过身份文案，两个插件的 hook 顺序不保证。
+
+        另外还会按此刻的心情 × 体力档位整段替换 system prompt 里的 reply_style，
+        见 ``reply_style.py``。那一步跟 A、C 都无关，所以这一轮既没有表达方式也没有
+        谈资时也照做。
         """
         if not items:
             return {"success": True, "action": "continue"}
 
         moment, day, segment, state = self._current()
         store = self._require_store()
-
-        # A：表达方式。C：今天那件可说的小事。默认在同一会话说出口后停止注入；
-        # 观察重复提及时可以通过配置让它继续注入，但分享状态仍照常记录。
-        manner = state.manner.strip()
-        topic = ""
-        stop_after_shared = bool(await self._get_config("topic.stop_after_shared", True))
-        already_shared = await self._share_seen(day, segment.slot, session_id)
-        if state.topic and session_id and (not stop_after_shared or not already_shared):
-            topic = self._topic_block(state.topic)
-        if not manner and not topic:
-            return {"success": True, "action": "continue"}
-
         updated = list(items)
 
-        # C 是低优先级背景：紧跟 system，但放在所有聊天记录之前。
-        # 不把它塞进 system 正文，否则权重反而会更高。
-        if topic:
+        # 语气：整段换掉主程序配置里的 reply_style。档位缺一个（底稿段）就不动，
+        # 让配置里那份原样生效——见 reply_style.compose。
+        style = compose_reply_style(state.mood_level, state.energy_level)
+        style_applied = False
+        if style:
+            system_index = _find_item_type_index(updated, "SystemMessageItem")
+            rewritten = (
+                _replace_reply_style(updated[system_index], style) if system_index >= 0 else None
+            )
+            if rewritten is None:
+                _logger.warning("[replyer] system item 里没找到 reply_style 锚点，本轮沿用配置里那份")
+            else:
+                updated[system_index] = rewritten
+                style_applied = True
+
+        # A：表达方式。C：今天那件可说的小事，两条通道二选一——planner 本轮调过
+        # get_mittes_topic 就走"开口版"，否则走"接话版"。
+        manner = state.manner.strip() if await self._manner_enabled() else ""
+        topic = ""
+        pitched = self._topic_pitched.get(session_id)
+        is_pitch = bool(pitched and pitched == (day, segment.slot))
+        stop_after_shared = bool(await self._get_config("topic.stop_after_shared", True))
+        already_shared = await self._share_seen(day, segment.slot, session_id)
+        topic_enabled = bool(await self._get_config("topic.enabled", True))
+        reply_channel = bool(await self._get_config("topic.reply_channel.enabled", True))
+        if (
+            state.topic
+            and session_id
+            and topic_enabled
+            and (not stop_after_shared or not already_shared)
+            and (is_pitch or reply_channel)
+        ):
+            topic = (
+                self._topic_block_pitch(state.topic)
+                if is_pitch
+                else self._topic_block_reply(state.topic)
+            )
+        if not manner and not topic:
+            if not style_applied:
+                return {"success": True, "action": "continue"}
+            return _hook_response(
+                updated,
+                kwargs,
+                extra={
+                    "reply_reason": reply_reason,
+                    "reply_tool_args": reply_tool_args,
+                    "session_id": session_id,
+                },
+            )
+
+        # 接话版是低优先级背景：紧跟 system，但放在所有聊天记录之前，
+        # 后面的真实对话会重新取得注意力。不塞进 system 正文，那样权重反而更高。
+        if topic and not is_pitch:
             system_index = _find_item_type_index(updated, "SystemMessageItem")
             updated.insert(system_index + 1 if system_index >= 0 else 0, _new_user_item(topic))
             store.mark_injected(day, segment.slot, session_id)
@@ -897,7 +1176,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         reference = str((reply_tool_args or {}).get("reply_reference") or "").strip()
         expected = reference or (f"当前思考：\n{reply_reason}".strip() if reply_reason else "")
 
-        if manner:
+        # 开口版跟 A 一起放在这儿：planner 已经在 reference 里安排了这件事，
+        # 它是本轮的既定素材而不是背景材料，再压权重只会造成"指令在、材料弱"的割裂。
+        if manner or (topic and is_pitch):
             index = -1
             if expected:
                 index = _find_item_index(updated, lambda text: expected in text)
@@ -905,8 +1186,20 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 index = _find_item_index(updated, lambda text: text.startswith(_REPLYER_FALLBACK_PREFIX))
             if index < 0:
                 _logger.warning("[replyer] 两个锚点都没匹配上，本次跳过表达方式注入")
+                # planner 已经安排了要说这件事，材料不能跟着丢，退回低位注入
+                if topic and is_pitch:
+                    system_index = _find_item_type_index(updated, "SystemMessageItem")
+                    updated.insert(
+                        system_index + 1 if system_index >= 0 else 0, _new_user_item(topic)
+                    )
+                    store.mark_injected(day, segment.slot, session_id)
             else:
-                updated.insert(index, _new_user_item(manner))
+                if topic and is_pitch:
+                    updated.insert(index, _new_user_item(topic))
+                    store.mark_injected(day, segment.slot, session_id)
+                    index += 1
+                if manner:
+                    updated.insert(index, _new_user_item(manner))
 
         return _hook_response(
             updated,
@@ -917,66 +1210,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 "session_id": session_id,
             },
         )
-
-    # ── Hook：谈资的消费检测 ──
-    @HookHandler(
-        "maisaka.replyer.after_response",
-        name="schedule_topic_consume",
-        mode="observe",
-        order="normal",
-        timeout_ms=3000,
-        error_policy="skip",
-    )
-    async def handle_replyer_after_response(
-        self,
-        response: str = "",
-        session_id: str = "",
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """检测她有没有把今天那件小事说出去；说了就把谈资标记掉，之后不再注入。
-
-        用 ``observe`` 模式：这个 hook 本身能改写回复正文、甚至要求重新生成，
-        而我们只想读——observe 从机制上保证碰不坏回复。
-
-        判据是**命中任意一个关键词就算说过**。阈值偏松是有意的，两种错的代价不对称：
-        误判「说过了」只是少一次开口机会；误判「没说」是她把同一件事说第二遍，
-        那才是最要避免的。
-        """
-        del kwargs
-        if not response or not session_id:
-            return {"success": True, "action": "continue"}
-
-        moment, day, segment, state = self._current()
-        if not state.topic or not state.topic_keys:
-            return {"success": True, "action": "continue"}
-
-        store = self._require_store()
-        # 这里**故意**用本会话的 is_shared，不用 _share_seen：关联组只管"要不要注入"，
-        # 记录要落到实际说出口的那个会话。用 _share_seen 的话，她在关联的另一个群
-        # 也说了这件事，那一行就永远记不下来，观察数据缺一半。
-        if store.is_shared(day, segment.slot, session_id):
-            return {"success": True, "action": "continue"}
-
-        hit = next((key for key in state.topic_keys if key and key in response), "")
-        if not hit:
-            return {"success": True, "action": "continue"}
-
-        store.mark_shared(
-            day,
-            segment.slot,
-            session_id,
-            moment.isoformat(),
-            reply_text=response,
-            hit_key=hit,
-        )
-        _logger.info(
-            "[谈资] %s %s 在会话 %s 说出口了（命中「%s」），不再注入",
-            day,
-            segment.slot,
-            session_id,
-            hit,
-        )
-        return {"success": True, "action": "continue"}
 
     # ── Command ──
     @Command(
@@ -1004,6 +1237,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             f"story：{state.story}",
             f"表达方式：{state.manner}",
             f"mood：{state.mood}",
+            f"心情分档：{state.mood_level or '（旧记录未生成）'}",
+            f"体力：{state.physical_state or '（旧记录未生成）'}",
+            f"体力分档：{state.energy_level or '（旧记录未生成）'}",
+            f"reply_style：{compose_reply_style(state.mood_level, state.energy_level) or '（档位不全，沿用配置里那份）'}",
             f"topic：{state.topic or '（这段没什么好说的）'}",
             "",
             "来源：生成结果" if state.generated else "来源：底稿（该段未生成成功）",
@@ -1020,18 +1257,28 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     )
     async def cmd_status_prompt(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
-        moment, day, segment, state = self._current()
-        already_shared = await self._share_seen(day, segment.slot, stream_id)
-        topic_pending = bool(state.topic and not already_shared)
+        moment, _day, segment, state = self._current()
+        visible, reason = await self._topic_gate(stream_id)
+        empty = "（这段没什么好说的，不注入）"
         text = (
+            "── replyer reply_style（整段替换 system prompt 里那一行）──\n"
+            f"{compose_reply_style(state.mood_level, state.energy_level) or '（档位不全，沿用配置里那份）'}\n"
+            "\n"
             "── planner 注入（插在「时间：」之后）──\n"
-            f"{self._planner_block(moment, segment, state, topic_pending=topic_pending)}\n"
+            f"{self._planner_block(moment, segment, state)}\n"
             "\n"
+            f"── 谈资工具 {_TOPIC_TOOL_NAME}：{'露出' if visible else '不露'}（{reason}）──\n"
+            + (self._topic_tool_text(state.topic) if state.topic else "（这段没有 topic）")
+            + "\n\n"
             "── replyer A 表达方式（插在 reply_reference 之前）──\n"
-            f"{state.manner}\n"
+            + (state.manner if await self._manner_enabled() else "（表达方式功能已关闭，不注入）")
+            + "\n"
             "\n"
-            "── replyer C 谈资（system 之后、聊天记录之前）──\n"
-            + (self._topic_block(state.topic) if state.topic else "（这段没什么好说的，不注入）")
+            "── replyer C 谈资 · 接话版（system 之后、聊天记录之前）──\n"
+            + (self._topic_block_reply(state.topic) if state.topic else empty)
+            + "\n\n"
+            "── replyer C 谈资 · 开口版（调过工具的那一轮，放在 A 之前）──\n"
+            + (self._topic_block_pitch(state.topic) if state.topic else empty)
         )
         await self.ctx.send.text(text, stream_id)
         return True, "已输出注入原文", True
@@ -1068,63 +1315,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         return True, "已输出今日日程", True
 
     @Command(
-        "status_regen",
-        description="强制重生成当前时段（仅管理员）",
-        pattern=r"^/status\s+regen$",
-        permission="operator",
-    )
-    async def cmd_status_regen(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
-        del kwargs
-        moment, day, segment, old_state = self._current()
-        await self.ctx.send.text(f"正在重生成 {segment.slot}　{segment.title}……", stream_id)
-        self._spawn(self._regen_text(day, segment, old_state), stream_id)
-        return True, "已开始重生成当前时段", True
-
-    async def _regen_text(self, day: date, segment: Segment, old_state: SegmentState) -> str:
-        new_state = await self._regenerate(day, segment)
-        return (
-            f"【重生成】{segment.slot}　{segment.title}\n"
-            "\n"
-            f"[旧] {old_state.mood}｜{old_state.manner}\n"
-            f"[新] {new_state.mood}｜{new_state.manner}\n"
-            "\n"
-            f"{new_state.story}"
-        )
-
-    @Command(
-        "status_next",
-        description="提前生成下一个时段但不切换（仅管理员）",
-        pattern=r"^/status\s+next$",
-        permission="operator",
-    )
-    async def cmd_status_next(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
-        del kwargs
-        store = self._require_store()
-        moment = now_jst()
-        today, _minutes = store.resolve_moment(moment)
-        segments = store.segments_of(today)
-        index = segments.index(store.segment_at(moment))
-        if index + 1 < len(segments):
-            target_day, target = today, segments[index + 1]
-        else:
-            target_day = today + timedelta(days=1)
-            target = store.segments_of(target_day)[0]
-
-        await self.ctx.send.text(f"正在生成 {target.slot}　{target.title}……", stream_id)
-        self._spawn(self._next_text(target_day, target), stream_id)
-        return True, "已开始生成下一时段", True
-
-    async def _next_text(self, day: date, segment: Segment) -> str:
-        state = await self._regenerate(day, segment)
-        return (
-            f"【下一时段】{day.isoformat()} {segment.slot}　{segment.title}\n"
-            "\n"
-            f"{state.story}\n"
-            "\n"
-            f"表达方式：{state.manner}\nmood：{state.mood}"
-        )
-
-    @Command(
         "status_topic",
         description="查看当前时段的话题与分享状态（仅管理员）",
         pattern=r"^/status\s+topic$",
@@ -1143,7 +1333,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             return True, "已输出谈资状态", True
 
         lines.append(f"话题：{state.topic}")
-        lines.append(f"关键词：{'、'.join(state.topic_keys)}")
         stop_after_shared = bool(await self._get_config("topic.stop_after_shared", True))
         lines.append(f"说出口后停止注入：{'是' if stop_after_shared else '否'}")
         # 关联组解析失败是静默的（群还没被 bot 见过就查不到聊天流），这里让它看得见
@@ -1155,13 +1344,22 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
         seen = await self._share_seen(day, segment.slot, stream_id)
         lines.append(f"本会话算不算已说过：{'算' if seen else '不算'}")
+        max_pitches = int(await self._get_config("topic.pitch_channel.max_pitches", 3))
+        lines.append(
+            f"取材次数：{store.pitch_count(day, segment.slot, stream_id)}/{max_pitches}"
+        )
+        visible, reason = await self._topic_gate(stream_id)
+        lines.append(f"谈资工具：{'露出' if visible else '不露'}（{reason}）")
         lines.append("")
         rows = [r for r in store.db.shares_of_day(today) if r["slot"] == segment.slot]
         if not rows:
             lines.append("还没在任何会话里注入过。")
         for row in rows:
             mark = f"已说出口 {row['shared_at'][11:16]}" if row["shared_at"] else "还没说"
-            lines.append(f"- {row['session_id']}　注入 {row['injected']} 次　{mark}")
+            lines.append(
+                f"- {row['session_id']}　注入 {row['injected']} 次　"
+                f"取材 {row.get('pitched', 0)} 次　{mark}"
+            )
         await self.ctx.send.text("\n".join(lines), stream_id)
         return True, "已输出谈资状态", True
 
@@ -1191,7 +1389,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
             segments = store.segments_of(day)
             previous = {
-                slot: (list(state.places), state.topic, list(state.topic_keys))
+                slot: (list(state.places), state.topic)
                 for slot, state in cached.segments.items()
             }
             # 重新抽取必须允许模型把一段判成“没有 topic”。不先清空的话，空结果
@@ -1205,7 +1403,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             if error:
                 for slot, values in previous.items():
                     if state := cached.segments.get(slot):
-                        state.places, state.topic, state.topic_keys = values
+                        state.places, state.topic = values
                 return f"第二轮抽取失败：{error}"
             if topics_only:
                 for slot, values in previous.items():
@@ -1424,62 +1622,18 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             lines.append(f"周{weekday_name(entry.day)} {entry.slot}　{title}　（{entry.level}）")
         return "\n".join(lines)
 
-    async def _regenerate(self, day: date, segment: Segment) -> SegmentState:
-        """重生成单段并写回缓存。
-
-        走的是批次里那条定向重写：把全天骨架、脉络和前后段一起给模型，只换这一段。
-        比早先的「单段从头生成」接得上——那时候它只看得见上一段。
-        """
-        store = self._require_store()
-        generator = self._require_generator()
-        negative = self._require_negative()
-        cached = store.load_day_cache(day)
-        old_state = cached.segments.get(segment.slot) if cached else None
-
-        outcome = await generator.rewrite_segment(
-            day=day,
-            segment=segment,
-            segments=store.segments_of(day),
-            outline=cached.outline if cached else "",
-            states=cached.segments if cached else {},
-            weather=await self._forecast_for(day),
-            holiday=await self._holiday_name(day),
-            negative_level=negative.level_of(day, segment.slot),
-        )
-        outcome.state.manner = (
-            old_state.manner if old_state and old_state.manner else store.fallback_for(segment).manner
-        )
-        if outcome.state.generated:
-            expression = await generator.generate_expression(day, segment, outcome.state)
-            if expression.ok:
-                outcome.state.manner = expression.manner
-            else:
-                _logger.warning(
-                    "[单段重生成] %s %s 表达方式生成失败，保留旧值或底稿：%s",
-                    day,
-                    segment.slot,
-                    expression.reason,
-                )
-        outcome.state.generated_at = now_jst().isoformat()
-        store.ensure_day_cache(day).segments[segment.slot] = outcome.state
-        store.reset_shares(day, segment.slot)
-        store.flush(
-            day,
-            model=str(await self._get_config("generation.model", "replyer")),
-            negative_level_of=lambda slot: negative.level_of(day, slot),
-            batch_reason="单段重生成",
-            batch_at=now_jst().isoformat(),
-        )
-        return outcome.state
-
     async def _generate_expressions(
         self,
         day: date,
         segments: list[Segment],
         states: dict[str, SegmentState],
     ) -> tuple[dict[str, int], list[tuple[Segment, str]]]:
-        """逐时段生成表达方式；只覆盖成功结果，失败时旧值原样保留。"""
-        generator = self._require_generator()
+        """全天一次调用生成表达方式。
+
+        **大多数时段的正确结果是空串**（这一段说话状态没偏离基线，不注入），
+        所以 ``expressions`` 记的是"写了几段"，不是"成功几段"——两者不再是一回事。
+        模型没返回的段保留旧值；返回空串的段清成空。
+        """
         candidates = [
             segment
             for segment in segments
@@ -1487,28 +1641,29 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         ]
         stats = {"expressions": 0, "total": len(candidates)}
         failures: list[tuple[Segment, str]] = []
-        for segment in candidates:
-            state = states[segment.slot]
-            expression = await generator.generate_expression(day, segment, state)
-            if expression.ok:
-                state.manner = expression.manner
-                stats["expressions"] += 1
+        if not await self._manner_enabled():
+            # 功能整体关闭：不调 LLM，也不动库里已有的 manner
+            return stats, failures
+        generator = self._require_generator()
+        manners, reason = await generator.generate_expressions(day, segments, states)
+        if reason:
+            _logger.error("[第三轮] %s 失败，全天保留旧值：%s", day, reason)
+            return stats, [(segment, reason) for segment in candidates[:1]]
+        for slot, manner in manners.items():
+            state = states.get(slot)
+            if state is None:
                 continue
-            failures.append((segment, expression.reason))
-            if expression.fatal:
-                _logger.error(
-                    "[第三轮] %s %s 调用失败，剩余时段保留旧值：%s",
-                    day,
-                    segment.slot,
-                    expression.reason,
-                )
-                break
+            state.manner = manner
+            if manner:
+                stats["expressions"] += 1
         return stats, failures
 
     async def _expressions_text(self, day: date) -> str:
         """只重跑某天第三轮表达方式，不改 story、mood、地点或 topic。"""
         async with self._batch_lock:
             store = self._require_store()
+            if not await self._manner_enabled():
+                return "表达方式功能当前是关闭的（config.toml 的 [manner] enabled = false）。"
             cached = store.load_day_cache(day)
             if cached is None:
                 return f"{day.isoformat()} 还没有日程，先生成这一天的日程。"
@@ -1524,9 +1679,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
         lines = [
             f"【表达方式】{day.isoformat()}　"
-            f"完成 {stats['expressions']}/{stats['total']} 段"
+            f"偏离基线 {stats['expressions']}/{stats['total']} 段，其余不注入"
         ]
-        lines.extend(f"{segment.slot} 保留旧值：{reason}" for segment, reason in failures)
+        lines.extend(f"全天保留旧值：{reason}" for _segment, reason in failures)
         return "\n".join(lines)
 
     # ── 前端管理任务 ──
@@ -1675,6 +1830,34 @@ def _find_item_type_index(items: list[Any], item_type: str) -> int:
     return -1
 
 
+def _replace_reply_style(item: Any, style: str) -> dict[str, Any] | None:
+    """把 system item 里 reply_style 那一行换成 ``style``，返回新 item；换不了返回 None。
+
+    只改命中锚点的那个 text part，其余 part 和 meta 原样带过去——item_id 也不换，
+    这不是新增的 item，是同一条被改了正文。
+    """
+    if not isinstance(item, dict):
+        return None
+    parts = item.get("parts")
+    if not isinstance(parts, list):
+        return None
+    for index, part in enumerate(parts):
+        if not isinstance(part, dict) or part.get("type") != "text":
+            continue
+        text = str(part.get("text") or "")
+        head = text.find(_REPLY_STYLE_HEAD)
+        if head < 0:
+            continue
+        head += len(_REPLY_STYLE_HEAD)
+        tail = text.find(_REPLY_STYLE_TAIL, head)
+        if tail < 0:
+            return None
+        new_parts = list(parts)
+        new_parts[index] = {**part, "text": text[:head] + style + text[tail:]}
+        return {**item, "parts": new_parts}
+    return None
+
+
 def _new_user_item(text: str) -> dict[str, Any]:
     """合成一条新的 User Item。item_id 必须全局唯一，否则主程序校验会拒收。"""
     return {
@@ -1686,6 +1869,29 @@ def _new_user_item(text: str) -> dict[str, Any]:
         },
         "parts": [{"type": "text", "text": text}],
     }
+
+
+def _tool_name_of(definition: Any) -> str:
+    """从工具定义里取出名字。
+
+    主程序把工具序列化成 OpenAI function schema（``serialize_tool_definitions``
+    → ``to_openai_function_schema``），名字在 ``function.name`` 里；扁平结构也认一下，
+    免得上游换了序列化方式之后这里静默失效——静默失效的后果是工具永远摘不掉。
+    """
+    if not isinstance(definition, dict):
+        return ""
+    function = definition.get("function")
+    if isinstance(function, dict) and function.get("name"):
+        return str(function["name"])
+    return str(definition.get("name") or "")
+
+
+def _message_moment(message: dict[str, Any]) -> datetime | None:
+    """消息载荷里的时刻。主程序序列化成 epoch 秒的**字符串**，不是数字。"""
+    try:
+        return datetime.fromtimestamp(float(message.get("timestamp")), JST)
+    except (TypeError, ValueError):
+        return None
 
 
 def _hook_response(

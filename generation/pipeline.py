@@ -6,19 +6,22 @@
 250 字写成一个自洽的小故事，于是十段各自闭合、跨段因果为零——读起来像十篇流水账，
 而不是一天。改成一次调用之后，写手看得见全天骨架，可以让一件事跨几段发展再收。
 
-失败重试的粒度仍然是**一段**：不合格的段走 ``rewrite_segment`` 定向重写，
-把全天正文和脉络给模型，只让它重写那一段。整天重来太贵，也没必要。
+不合格的段**不重试**：铺骨架底稿，原样报进批次结果。早先有一条「定向重写」的补写
+路径（单独把那一段连同全天脉络重新喂给模型），已移除——它是这里唯一读 ``outline``
+的地方，为一年不出几次的校验失败养一整条 prompt + 调用链不划算。
 
 字段分工（4.3）：
 - ``story``            → 事实层工具结果，被问才吐，可以有活动名词
-- ``mood``             → planner 注入，第一轮随 story 生成
+- ``mood`` / ``physical_state`` / 两项分档 → planner 注入与前端展示，
+  第一轮随 story 生成
 - ``topic``            → replyer 常驻注入（C），第二轮提炼，说过之后按
   ``topic.stop_after_shared`` 决定还注不注入
 - ``manner``           → replyer 常驻注入（A），第三轮逐时段从 story + mood 生成
-- ``outline``（脉络）  → 模型动笔前给自己写的规划，落进 ``days.outline``，不进任何注入
+- ``outline``（脉络）  → 模型动笔前给自己写的规划，落进 ``days.outline``，
+  不进任何注入，也不再有别的消费方——只供前端回看
 
 第二轮见 ``extract_round2``：从 story 里抽地点时段轴和谈资，全天十段一次调用。
-第三轮见 ``generate_expression``：每个时段单独生成表达方式，失败只影响本段 manner。
+第三轮见 ``generate_expressions``：全天一次调用，只为偏离基线的时段写 manner。
 """
 
 from dataclasses import dataclass
@@ -54,9 +57,16 @@ PREVIEW_SESSION = "schedule_batch"
 # 上限给高不额外花钱（按实际用量计费），但能挡住这类静默截断。
 _MAX_TOKENS = 32000
 
+# 第一轮不再用 Markdown 分节承载结果，而是让模型把整天作为一次
+# 原生工具调用交付。工具没有副作用，它的参数就是生成结果。
+_DAY_SUBMIT_TOOL = "submit_day_story"
+_TOPIC_SUBMIT_TOOL = "submit_day_topics"
+_MOOD_LEVELS = ("正面", "中性", "负面")
+_ENERGY_LEVELS = ("良好", "一般", "不佳")
+
 # 给模型看的文字全在 ``prompts/`` 下，一次请求一个文件：
-# ``01_生成全天故事与情绪.prompt``、``01_重写单个时段.prompt``、
-# ``02_提取地点与话题.prompt``、``03_生成表达方式.prompt``。
+# ``01_生成全天故事与情绪.prompt``、``02_提取地点与话题.prompt``、
+# ``03_生成表达方式.prompt``。
 # 为什么这么配、哪些东西**不能**写进去，见根目录 ``DESIGN.md``——那些理由不能放在
 # ``.prompt`` 里，文件内容是原样发给模型的。
 
@@ -82,39 +92,16 @@ _BANNED_IN_MANNER = (
 
 
 @dataclass
-class GenerationOutcome:
-    """一段的生成结果。失败时 ``state`` 是底稿。"""
-
-    segment: Segment
-    state: SegmentState
-    ok: bool
-    reason: str = ""
-    # 调用层面就失败了（模型不可用、鉴权错、超时），不是模型写得不合格。
-    # 这种错重试一万次也一样，整批应当立刻中止。
-    fatal: bool = False
-
-
-@dataclass
 class DayOutcome:
     """一次全天调用的结果。
 
-    ``states`` 只放**通过校验**的段；没通过的进 ``failures``，由调用方逐段
-    走 ``rewrite_segment``。一段不合格不牵连别的段——这是把重试粒度留在段上的关键。
+    ``states`` 只放**通过校验**的段；没通过的进 ``failures``，调用方按段铺骨架底稿
+    并原样报出来。一段不合格不牵连别的段，但也不再自动补写——定向重写已移除。
     """
 
     outline: str
     states: dict[str, SegmentState]
     failures: list[tuple[str, str]]
-    ok: bool
-    reason: str = ""
-    fatal: bool = False
-
-
-@dataclass
-class ExpressionOutcome:
-    """第三轮单个时段的表达方式结果。"""
-
-    manner: str
     ok: bool
     reason: str = ""
     fatal: bool = False
@@ -143,7 +130,14 @@ class SegmentGenerator:
         self._base_task = base_task
         self._temperature = temperature
 
-    async def _call_llm(self, prompt: str, *, model: str, temperature: float) -> dict[str, Any]:
+    async def _call_llm(
+        self,
+        prompt: str,
+        *,
+        model: str,
+        temperature: float,
+        tool_options: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """调一次 LLM，把异常收敛成 ``success=False`` 的返回。
 
         **不走 ``llm.generate`` 那条 capability**，直接用主程序的 ``LLMServiceClient``。
@@ -182,6 +176,7 @@ class SegmentGenerator:
                     model_name=model,
                     temperature=temperature,
                     max_tokens=_MAX_TOKENS,
+                    tool_options=tool_options,
                 ),
             )
         except Exception as exc:
@@ -198,7 +193,16 @@ class SegmentGenerator:
         }
 
         text = result.response
-        if not text.strip():
+        tool_calls = [
+            {
+                "id": call.call_id,
+                "name": call.func_name,
+                "args": call.args or {},
+                "extra_content": call.extra_content or {},
+            }
+            for call in (result.tool_calls or [])
+        ]
+        if not text.strip() and not tool_calls:
             # 空响应最常见的成因不是模型罢工，而是**推理把 max_tokens 吃光了**：
             # 推理模型的 reasoning 和正文共用这一个预算，想得太久就一个字正文都吐不出来，
             # 而 status 仍是 completed，主程序不当失败。实测 glm-5.2 跑全天话题提炼时
@@ -209,7 +213,14 @@ class SegmentGenerator:
             else:
                 reason = f"模型返回空响应（completion_tokens={used}）"
             return {"success": False, "error": reason, "response": "", "model": model, **usage}
-        return {"success": True, "response": text, "model": result.model_name or model, **usage}
+        return {
+            "success": True,
+            "response": text,
+            "tool_calls": tool_calls,
+            "tool_definitions": tool_options or [],
+            "model": result.model_name or model,
+            **usage,
+        }
 
     # ── 全天生成 ──
     async def generate_day(
@@ -222,10 +233,10 @@ class SegmentGenerator:
         previous: tuple[Segment, SegmentState] | None,
         negative_levels: dict[str, str],
     ) -> DayOutcome:
-        """一次调用生成全天的脉络和每一段的 story / mood。
+        """一次原生工具调用生成全天脉络和每一段的完整身心状态。
 
         **校验按段做。** 某一段不合格只把它记进 ``failures``，其余段照常收下——
-        调用方拿 ``failures`` 逐段走 ``rewrite_segment``，不用整天重来。
+        不合格的段由调用方铺骨架底稿并报出来，不整天重来，也不单独补写。
 
         只有调用本身失败（模型不可用、鉴权错、超时）才 ``fatal``，那种错重试没有意义。
         """
@@ -237,7 +248,12 @@ class SegmentGenerator:
             previous=previous,
             negative_levels=negative_levels,
         )
-        result = await self._call_llm(prompt, model=self._model, temperature=self._temperature)
+        result = await self._call_llm(
+            prompt,
+            model=self._model,
+            temperature=self._temperature,
+            tool_options=[self._day_submit_tool(segments)],
+        )
         self._record_preview(
             request_kind="schedule_day",
             prompt=prompt,
@@ -251,11 +267,12 @@ class SegmentGenerator:
             _logger.error("[生成] %s 全天调用失败：%s", day, reason)
             return DayOutcome(outline="", states={}, failures=[], ok=False, reason=reason, fatal=True)
 
-        outline, parsed = _parse_day(str(result.get("response") or ""), segments)
+        outline, parsed, parse_error = _parse_day_call(result.get("tool_calls"), segments)
         if not parsed:
-            _logger.error("[生成] %s 输出里找不到任何时段分节", day)
+            reason = parse_error or "工具调用里找不到任何时段"
+            _logger.error("[生成] %s %s", day, reason)
             return DayOutcome(
-                outline=outline, states={}, failures=[], ok=False, reason="输出里找不到任何时段分节"
+                outline=outline, states={}, failures=[], ok=False, reason=reason
             )
 
         states: dict[str, SegmentState] = {}
@@ -274,97 +291,13 @@ class SegmentGenerator:
             states[segment.slot] = state
             previous_story = state.story
 
+        if parse_error:
+            _logger.warning("[生成] %s 工具参数结构有偏差：%s", day, parse_error)
+
         _logger.info(
-            "[生成] %s 全天 %d 段，合格 %d，待重写 %d", day, len(segments), len(states), len(failures)
+            "[生成] %s 全天 %d 段，合格 %d，不合格 %d", day, len(segments), len(states), len(failures)
         )
         return DayOutcome(outline=outline, states=states, failures=failures, ok=True)
-
-    # ── 定向重写 ──
-    async def rewrite_segment(
-        self,
-        *,
-        day: date,
-        segment: Segment,
-        segments: list[Segment],
-        outline: str,
-        states: dict[str, SegmentState],
-        weather: str,
-        holiday: str,
-        negative_level: str,
-        defect: str = "",
-    ) -> GenerationOutcome:
-        """只重写一段，前后文照给。
-
-        全天调用里某段不合格时用它补，``/status regen`` 和 ``/status next`` 也走这条。
-        比早先的「整段从头生成」信息多：模型看得到脉络和前后段，改出来的东西接得上。
-
-        Args:
-            defect: 校验报出来的不合格原因。原样带给模型——它比任何泛泛的
-                「写好一点」都具体。为空表示不是因为不合格，是人工要求重写。
-        """
-        prompt = self._build_rewrite_prompt(
-            day=day,
-            segment=segment,
-            segments=segments,
-            outline=outline,
-            states=states,
-            weather=weather,
-            holiday=holiday,
-            negative_level=negative_level,
-            defect=defect,
-        )
-
-        index = segments.index(segment) if segment in segments else -1
-        previous_story = ""
-        if index > 0:
-            previous_state = states.get(segments[index - 1].slot)
-            previous_story = previous_state.story if previous_state else ""
-
-        last_reason = ""
-        for attempt in range(2):
-            result = await self._call_llm(prompt, model=self._model, temperature=self._temperature)
-            self._record_preview(
-                request_kind="schedule_rewrite",
-                prompt=prompt,
-                result=result,
-                selection_reason=f"{day.isoformat()} {segment.slot} {segment.title}"
-                + (f"（{defect}）" if defect else "")
-                + (f"　第 {attempt + 1} 次" if attempt else ""),
-                output_title="定向重写",
-            )
-            if not result.get("success", True):
-                reason = str(result.get("error") or result.get("response") or "").strip() or "模型调用失败"
-                _logger.error("[重写] %s %s 调用失败：%s", day, segment.slot, reason)
-                return GenerationOutcome(
-                    segment=segment,
-                    state=self._store.fallback_for(segment),
-                    ok=False,
-                    reason=reason,
-                    fatal=True,
-                )
-
-            payload = _extract_sections(str(result.get("response") or ""), ("story", "mood"))
-            if payload is None:
-                last_reason = "输出里找不到 ### 分节"
-            else:
-                state = SegmentState(
-                    story=str(payload.get("story") or "").strip(),
-                    manner="",
-                    mood=str(payload.get("mood") or "").strip(),
-                )
-                last_reason = self._validate_state(state, segment, previous_story)
-                if not last_reason:
-                    return GenerationOutcome(segment=segment, state=state, ok=True)
-            _logger.warning(
-                "[重写] %s %s 第 %d 次不合格：%s", day, segment.slot, attempt + 1, last_reason
-            )
-
-        return GenerationOutcome(
-            segment=segment,
-            state=self._store.fallback_for(segment),
-            ok=False,
-            reason=last_reason,
-        )
 
     # ── prompt 拼装 ──
     def _build_day_prompt(
@@ -388,6 +321,7 @@ class SegmentGenerator:
                 title=prev_segment.title,
                 story=prev_state.story,
                 mood=prev_state.mood,
+                physical_state=prev_state.physical_state,
             )
 
         marked = "\n".join(
@@ -416,99 +350,108 @@ class SegmentGenerator:
                 if marked
                 else ""
             ),
-            # 只示范前两段，剩下的让它照推
-            output_sample="\n\n".join(
-                prompts.render("01_生成全天故事与情绪", "output_sample_item", slot=segment.slot)
-                for segment in segments[:2]
-            ),
         )
 
-    def _build_rewrite_prompt(
-        self,
-        *,
-        day: date,
-        segment: Segment,
-        segments: list[Segment],
-        outline: str,
-        states: dict[str, SegmentState],
-        weather: str,
-        holiday: str,
-        negative_level: str,
-        defect: str,
-    ) -> str:
-        """拼装定向重写 prompt（``prompts/01_重写单个时段.prompt``）：全天骨架 + 脉络 + 前后段原文。"""
-        index = segments.index(segment) if segment in segments else -1
-
-        def neighbour(label: str, offset: int) -> str:
-            other = segments[index + offset] if 0 <= index + offset < len(segments) else None
-            if other is None:
-                return ""
-            state = states.get(other.slot)
-            if state is None or not state.story:
-                return ""
-            return prompts.render(
-                "01_重写单个时段",
-                "neighbour",
-                label=label,
-                slot=other.slot,
-                title=other.title,
-                story=state.story,
-            )
-
-        current = states.get(segment.slot)
-        return prompts.render(
-            "01_重写单个时段",
-            date=day.isoformat(),
-            weekday=weekday_name(day),
-            holiday=f"　{holiday}" if holiday else "",
-            weather=prompts.render("01_重写单个时段", "weather", weather=weather)
-            if weather
-            else "",
-            skeleton=self._skeleton_block("01_重写单个时段", day, segments),
-            outline=(
-                prompts.render("01_重写单个时段", "outline", outline=outline)
-                if outline
-                else ""
-            ),
-            previous_neighbour=neighbour("上一段", -1),
-            next_neighbour=neighbour("下一段", 1),
-            current=(
-                prompts.render("01_重写单个时段", "current", story=current.story)
-                if current is not None and current.story
-                else ""
-            ),
-            defect=(
-                prompts.render("01_重写单个时段", "defect", defect=defect)
-                if defect
-                else ""
-            ),
-            negative=(
-                prompts.render(
-                    "01_重写单个时段",
-                    "negative",
-                    hint=LEVEL_HINTS.get(negative_level, negative_level),
-                )
-                if negative_level
-                else ""
-            ),
-            slot=segment.slot,
-            title=segment.title,
-            place=segment.place,
-            outfit=segment.outfit,
-            company=segment.company,
-            kind=segment.kind,
-        )
+    @staticmethod
+    def _day_submit_tool(segments: list[Segment]) -> dict[str, Any]:
+        """构造当天专用的提交工具；slot 枚举随骨架动态收紧。"""
+        item_schema = {
+            "type": "object",
+            "properties": {
+                "slot": {
+                    "type": "string",
+                    "enum": [segment.slot for segment in segments],
+                    "pattern": r"^\d{2}:\d{2}-\d{2}:\d{2}$",
+                    "description": (
+                        "骨架中的时段。只填 HH:MM-HH:MM 时间，"
+                        "绝对不要在后面附加时段标题或其他文字。"
+                    ),
+                },
+                "story": {
+                    "type": "string",
+                    "description": "第三人称的具体经历，以 Mittes 为中心。",
+                },
+                "mood": {
+                    "type": "string",
+                    "description": "story 自然留下的情绪，只写情绪，不写身体状况。",
+                },
+                "physical_state": {
+                    "type": "string",
+                    "description": (
+                        "当时剩余的可支配体力：疲劳、困意、乏力或精力。"
+                        "按全天累积消耗判断，不写心情，不把舒服、清爽等表面感受当体力。"
+                    ),
+                },
+                "mood_level": {
+                    "type": "string",
+                    "enum": list(_MOOD_LEVELS),
+                    "description": "mood 中最主要情绪的分档。",
+                },
+                "energy_level": {
+                    "type": "string",
+                    "enum": list(_ENERGY_LEVELS),
+                    "description": (
+                        "physical_state 的独立体力分档：良好=无明显疲劳，"
+                        "一般=有累意但能正常继续，不佳=明显困倦乏力、想停下休息。"
+                        "不受 mood_level 影响。"
+                    ),
+                },
+            },
+            "required": [
+                "slot",
+                "story",
+                "mood",
+                "physical_state",
+                "mood_level",
+                "energy_level",
+            ],
+            "additionalProperties": False,
+        }
+        parameters = {
+            "type": "object",
+            "properties": {
+                "outline": {
+                    "type": "string",
+                    "description": "为了保持前后一致而写的全天脉络；没有明显线索就直接说没有。",
+                },
+                "segments": {
+                    "type": "array",
+                    "description": "按骨架顺序列出全部时段，不得增删、重复或合并。",
+                    "items": item_schema,
+                    "minItems": len(segments),
+                    "maxItems": len(segments),
+                },
+            },
+            "required": ["outline", "segments"],
+            "additionalProperties": False,
+        }
+        return {
+            "type": "function",
+            "function": {
+                "name": _DAY_SUBMIT_TOOL,
+                "description": (
+                    "交付写完的 Mittes 全天故事。最终必须且只能调用一次，"
+                    "工具参数就是完整成品。"
+                ),
+                "parameters": parameters,
+            },
+        }
 
     def _skeleton_block(self, name: str, day: date, segments: list[Segment]) -> str:
-        """全天骨架清单。清醒/工作小时数逐段给，写手才知道这会儿该有多累。
+        """全天骨架清单。
+
+        **不再逐段给清醒/工作小时数。** 那个数原本是给「累」一个客观锚点，实测反而
+        成了唯一的锚点：写手拿到刻度就照着填，一天读下来是一条单调递增的疲劳曲线。
+        累不累应当从写手自己写的情节里长出来；而「这是醒来后第几段、中间干过几段活」
+        本来就在这份按时间排的清单里，那个数是冗余的。
+        ``ScheduleStore.awake_and_work_hours`` 保留不动，只是第一轮不再用它。
 
         Args:
-            name: 用哪个文件里的片段——两个第一轮 prompt 各存一份，见
-                根目录 ``DESIGN.md`` 里「prompt 放在哪」一节。
+            name: 用哪个文件里的片段。
         """
+        del day
         lines = []
         for index, segment in enumerate(segments, 1):
-            awake, work = self._store.awake_and_work_hours(day, segment)
             lines.append(
                 prompts.render(
                     name,
@@ -520,25 +463,30 @@ class SegmentGenerator:
                     outfit=segment.outfit,
                     company=segment.company,
                     kind=segment.kind,
-                    awake=(
-                        ""
-                        if segment.kind == "睡眠"
-                        else prompts.render(name, "skeleton_awake", awake=awake, work=work)
-                    ),
                 )
             )
         return "\n".join(lines)
 
     def _validate_state(self, state: SegmentState, segment: Segment, previous_story: str) -> str:
-        """校验第一轮的一段 story / mood，返回不合格原因；空串表示通过。
+        """校验第一轮的一段完整结果，返回不合格原因。
 
-        硬校验（不过就重写）：缺字段，mood 含地点/服装/场所词，首句与上一段雷同。
+        硬校验：缺字段，两项分档越界，mood 含地点/服装/场所词，
+        首句与上一段雷同。
         只告警不重写：story 字数越界——它是被问才吐的事实层，长一点没有副作用，
         为字数烧一次调用不值得。
         """
-        missing = [name for name in ("story", "mood") if not getattr(state, name)]
+        missing = [
+            name
+            for name in ("story", "mood", "physical_state", "mood_level", "energy_level")
+            if not getattr(state, name)
+        ]
         if missing:
             return f"缺字段：{'/'.join(missing)}"
+
+        if state.mood_level not in _MOOD_LEVELS:
+            return f"心情分档不合法：{state.mood_level}"
+        if state.energy_level not in _ENERGY_LEVELS:
+            return f"体力分档不合法：{state.energy_level}"
 
         hit = _find_banned_word(state.mood, segment)
         if hit:
@@ -555,70 +503,106 @@ class SegmentGenerator:
 
         return ""
 
-    # ── 第三轮：逐时段表达方式 ──
-    async def generate_expression(
+    # ── 第三轮：全天表达方式 ──
+    async def generate_expressions(
         self,
         day: date,
-        segment: Segment,
-        state: SegmentState,
-    ) -> ExpressionOutcome:
-        """根据一个时段已经生成的 story + mood，单独生成 replyer 表达方式。
+        segments: list[Segment],
+        states: dict[str, SegmentState],
+    ) -> tuple[dict[str, str], str]:
+        """挑出这一天说话状态偏离基线的时段，为它们各写一句表达方式。
 
-        每个时段是一次独立调用。校验失败只重试本时段，不回头改 story / mood；
-        调用层失败立即返回 fatal，让调用方停止继续烧同类请求并保留旧值或底稿。
+        **从「每段一次调用」改成「全天一次调用」。** 两个理由：
+
+        - “偏不偏离”是相对**当天基线**的判断，逐段调用给不了这个视野；
+        - 大多数段的正确答案是“不写”，逐段调用等于花十一次请求买两三条。
+
+        失败面跟着变了：一次挂掉就是当天一条 manner 都没有。这在旧设计下是灾难，
+        现在不是——“大部分时段没有 manner”本来就是新常态，replyer 侧空串直接跳过注入。
+
+        Returns:
+            tuple[dict, str]: ({slot: manner}, 失败原因)。manner 为空串表示这段不注入；
+            返回的字典**只包含模型给出且校验通过的段**，其余段由调用方保留旧值。
         """
+        candidates = [
+            segment
+            for segment in segments
+            if (state := states.get(segment.slot)) is not None and state.generated
+        ]
+        if not candidates:
+            return {}, "没有可生成的时段"
+
         prompt = prompts.render(
             "03_生成表达方式",
-            slot=segment.slot,
-            story=state.story,
-            mood=state.mood,
-        )
-        last_reason = ""
-        for attempt in range(2):
-            result = await self._call_llm(
-                prompt,
-                model=self._expression_model,
-                temperature=self._temperature,
-            )
-            self._record_preview(
-                request_kind="schedule_expression",
-                prompt=prompt,
-                result=result,
-                selection_reason=(
-                    f"{day.isoformat()} {segment.slot} 表达方式"
-                    + (f"　第 {attempt + 1} 次" if attempt else "")
-                ),
-                output_title="时段表达方式",
-            )
-            if not result.get("success", True):
-                reason = str(result.get("error") or result.get("response") or "").strip()
-                return ExpressionOutcome(
-                    manner="",
-                    ok=False,
-                    reason=reason or "模型调用失败",
-                    fatal=True,
+            date=day.isoformat(),
+            weekday=weekday_name(day),
+            listing="\n\n".join(
+                prompts.render(
+                    "03_生成表达方式",
+                    "listing_item",
+                    index=index + 1,
+                    slot=segment.slot,
+                    title=segment.title,
+                    kind=segment.kind,
+                    mood=states[segment.slot].mood,
+                    story=states[segment.slot].story,
                 )
+                for index, segment in enumerate(candidates)
+            ),
+        )
+        result = await self._call_llm(
+            prompt, model=self._expression_model, temperature=self._temperature
+        )
+        self._record_preview(
+            request_kind="schedule_expression",
+            prompt=prompt,
+            result=result,
+            selection_reason=f"{day.isoformat()} 第三轮表达方式（{len(candidates)} 段）",
+            output_title="表达方式",
+        )
+        if not result.get("success", True):
+            reason = str(result.get("error") or result.get("response") or "").strip()
+            return {}, reason or "模型调用失败"
 
-            manner = _clean_expression(str(result.get("response") or ""))
-            last_reason = self._validate_expression(manner, segment)
-            if not last_reason:
-                return ExpressionOutcome(manner=manner, ok=True)
-            _logger.warning(
-                "[第三轮] %s %s 第 %d 次不合格：%s",
-                day,
-                segment.slot,
-                attempt + 1,
-                last_reason,
-            )
+        rows = _extract_json_array(str(result.get("response") or ""))
+        if rows is None:
+            _logger.error("[第三轮] %s 输出不是合法 JSON 数组", day)
+            return {}, "输出不是合法 JSON 数组"
 
-        return ExpressionOutcome(manner="", ok=False, reason=last_reason)
+        by_slot = {segment.slot: segment for segment in candidates}
+        manners: dict[str, str] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            slot = str(row.get("slot") or "")
+            if slot not in by_slot:
+                continue
+            manner = _clean_expression(str(row.get("manner") or ""))
+            if not manner:
+                # 判为“没有明显偏离”。这是**期望中的多数**，不是失败
+                manners[slot] = ""
+                continue
+            reason = self._validate_expression(manner, by_slot[slot])
+            if reason:
+                # 单段不合格只丢这一段：它退回旧值，不牵连当天其余段
+                _logger.warning("[第三轮] %s %s 不合格，丢弃：%s", day, slot, reason)
+                continue
+            manners[slot] = manner
+
+        written = sum(1 for value in manners.values() if value)
+        _logger.info(
+            "[第三轮] %s 偏离 %d 段 / 共 %d 段", day, written, len(candidates)
+        )
+        return manners, ""
 
     @staticmethod
     def _validate_expression(manner: str, segment: Segment) -> str:
-        if not manner:
-            return "表达方式为空"
-        if len(manner) > 60:
+        """校验一句非空的表达方式。空串由调用方当作“这段不写”，不进这里。"""
+        if len(manner) > 40:
             return f"表达方式超长（{len(manner)} 字）"
+        physical = _find_physical_word(manner)
+        if physical:
+            return f"表达方式写了兑现不了的「{physical}」"
         hit = _find_banned_word(manner, segment)
         if hit:
             return f"表达方式含具体事项名词「{hit}」"
@@ -633,7 +617,7 @@ class SegmentGenerator:
         - ``places``：她这一段待过哪些地方，排成首尾相接的时段轴。
           骨架的 ``place`` 是一段一个值，跨场所的时段只能把几个地点挤进一个字符串、
           没有时间边界，所以「她现在在哪」在那 90 分钟里答不出来。
-        - ``topic`` / ``topic_keys``：一句值得说给人听的小事。
+        - ``topic``：一句值得说给人听的小事。
           事实层有个先天缺陷——几乎没人会主动问「你在干嘛」，工具不被调用 story 就用不上；
           谈资给她一个主动出口。
 
@@ -661,7 +645,12 @@ class SegmentGenerator:
             return empty, "没有可提炼的时段"
 
         prompt = self._build_round2_prompt(day, candidates, states)
-        result = await self._call_llm(prompt, model=self._topic_model, temperature=0.4)
+        result = await self._call_llm(
+            prompt,
+            model=self._topic_model,
+            temperature=0.4,
+            tool_options=[self._round2_submit_tool(candidates)],
+        )
         self._record_preview(
             request_kind="schedule_topics",
             prompt=prompt,
@@ -675,10 +664,10 @@ class SegmentGenerator:
             _logger.error("[第二轮] %s 失败：%s", day, reason)
             return dict(empty, total=len(candidates)), reason
 
-        rows = _extract_json_array(str(result.get("response") or ""))
-        if rows is None:
-            _logger.error("[第二轮] %s 输出不是合法 JSON 数组", day)
-            return dict(empty, total=len(candidates)), "输出不是合法 JSON 数组"
+        rows, parse_error = _parse_round2_call(result.get("tool_calls"), candidates)
+        if parse_error:
+            _logger.error("[第二轮] %s 工具参数不合格：%s", day, parse_error)
+            return dict(empty, total=len(candidates)), parse_error
 
         by_slot = {segment.slot: segment for segment in candidates}
         produced = 0
@@ -704,20 +693,98 @@ class SegmentGenerator:
             if len(topic) > 100:
                 _logger.warning("[第二轮] %s %s topic 超长（%d 字），丢弃", day, slot, len(topic))
                 continue
-            raw_keys = row.get("topic_keys")
-            keys = [str(k).strip() for k in raw_keys if str(k).strip()] if isinstance(raw_keys, list) else []
-            if not keys:
-                # 没有关键词就检测不了说没说过，那这条谈资会一直挂着——宁可不要
-                _logger.warning("[第二轮] %s %s 没给关键词，丢弃 topic", day, slot)
-                continue
             states[slot].topic = topic
-            states[slot].topic_keys = keys
+            # keys 已退役：新写的 topic 一律配空数组，免得旧 topic 的关键词
+            # 留在新 topic 旁边，看起来像还在用
+            states[slot].topic_keys = []
             produced += 1
 
         _logger.info(
             "[第二轮] %s 地点 %d/%d 段，话题 %d 条", day, placed, len(candidates), produced
         )
         return {"topics": produced, "places": placed, "total": len(candidates)}, ""
+
+    @staticmethod
+    def _round2_submit_tool(segments: list[Segment]) -> dict[str, Any]:
+        """构造第二轮的单一交付工具，slot 枚举随当天候选段收紧。"""
+        place_schema = {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string",
+                    "description": "这个地点的起始时刻，格式 HH:MM。",
+                },
+                "to": {
+                    "type": "string",
+                    "description": "这个地点的结束时刻，格式 HH:MM。",
+                },
+                "place": {
+                    "type": "string",
+                    "description": "从 story 中得出的具体地点说法。",
+                },
+            },
+            "required": ["from", "to", "place"],
+            "additionalProperties": False,
+        }
+        item_schema = {
+            "type": "object",
+            "properties": {
+                "slot": {
+                    "type": "string",
+                    "enum": [segment.slot for segment in segments],
+                    "pattern": r"^\d{2}:\d{2}-\d{2}:\d{2}$",
+                    "description": (
+                        "对应 story 的原时段。只填 HH:MM-HH:MM 时间，"
+                        "绝对不要在后面附加时段标题或其他文字。"
+                    ),
+                },
+                "places": {
+                    "type": "array",
+                    "description": (
+                        "按时间先后排列的地点轴；首尾覆盖整个 slot，"
+                        "相邻记录时间首尾相接。"
+                    ),
+                    "items": place_schema,
+                    "minItems": 1,
+                },
+                "topic": {
+                    "type": "string",
+                    "description": (
+                        "从 story 中挑出的一件值得顺口分享的事；第三人称，"
+                        "50~80 字，有起因、发生经过和结果或转折。没有就填空字符串。"
+                    ),
+                },
+            },
+            "required": ["slot", "places", "topic"],
+            "additionalProperties": False,
+        }
+        parameters = {
+            "type": "object",
+            "properties": {
+                "segments": {
+                    "type": "array",
+                    "description": (
+                        "按原顺序列出所有候选时段；全天非空 topic 必须为 3~6 条。"
+                    ),
+                    "items": item_schema,
+                    "minItems": len(segments),
+                    "maxItems": len(segments),
+                },
+            },
+            "required": ["segments"],
+            "additionalProperties": False,
+        }
+        return {
+            "type": "function",
+            "function": {
+                "name": _TOPIC_SUBMIT_TOOL,
+                "description": (
+                    "交付从 Mittes 全天 story 中抽取的地点时段轴和谈资。"
+                    "最终必须且只能调用一次，工具参数就是完整成品。"
+                ),
+                "parameters": parameters,
+            },
+        }
 
     @staticmethod
     def _parse_places(day: date, segment: Segment, raw: Any) -> list[dict[str, str]]:
@@ -809,63 +876,122 @@ class SegmentGenerator:
             _logger.warning("[推理记录] 写入失败：%s", type(exc).__name__)
 
 
-def _parse_day(text: str, segments: list[Segment]) -> tuple[str, dict[str, SegmentState]]:
-    """从全天输出里拆出脉络和每段的 story / mood。
+def _parse_day_call(
+    raw_calls: Any,
+    segments: list[Segment],
+) -> tuple[str, dict[str, SegmentState], str]:
+    """从 ``submit_day_story`` 的原生工具参数中取出整天。
 
-    只认骨架里存在的 slot：模型偶尔会自己多写一段或把时间写错，那种段直接丢掉，
-    对应的骨架段会落进 ``failures`` 走重写，比悄悄收下一段对不上号的内容安全。
+    JSON Schema 能收紧单项形状，但不能保证 slot 不重不漏；这里再做一次
+    与当天骨架的集合和顺序对账。结构有偏差时仍尽量收下对得上的段，
+    缺失段交给上层铺底稿。
     """
-    outline = ""
-    match = re.search(r"^###\s*脉络\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
-    if match:
-        outline = match.group(1).strip()
+    if not isinstance(raw_calls, list):
+        return "", {}, f"模型没有调用 {_DAY_SUBMIT_TOOL}"
+    calls = [call for call in raw_calls if isinstance(call, dict) and call.get("name") == _DAY_SUBMIT_TOOL]
+    if len(calls) != 1:
+        return "", {}, f"{_DAY_SUBMIT_TOOL} 调用次数应为 1，实际为 {len(calls)}"
 
-    valid = {segment.slot for segment in segments}
+    args = calls[0].get("args")
+    if not isinstance(args, dict):
+        return "", {}, "工具参数不是对象"
+    outline = str(args.get("outline") or "").strip()
+    rows = args.get("segments")
+    if not isinstance(rows, list):
+        return outline, {}, "segments 不是数组"
+
+    expected = [segment.slot for segment in segments]
+    valid = set(expected)
+    actual: list[str] = []
     states: dict[str, SegmentState] = {}
-    for match in re.finditer(
-        r"^##\s*(\d{1,2}:\d{2}-\d{1,2}:\d{2})\s*$(.*?)(?=^##\s+\d{1,2}:|\Z)", text, re.M | re.S
-    ):
-        slot = match.group(1)
-        if slot not in valid or slot in states:
+    duplicates: set[str] = set()
+    for raw in rows:
+        if not isinstance(raw, dict):
             continue
-        payload = _extract_sections(match.group(2), ("story", "mood"))
-        if payload is None:
+        slot = _canonical_slot(raw.get("slot"), segments)
+        actual.append(slot)
+        if slot not in valid:
+            continue
+        if slot in states:
+            duplicates.add(slot)
+            del states[slot]
+            continue
+        if slot in duplicates:
             continue
         states[slot] = SegmentState(
-            story=str(payload.get("story") or "").strip(),
+            story=str(raw.get("story") or "").strip(),
             manner="",
-            mood=str(payload.get("mood") or "").strip(),
+            mood=str(raw.get("mood") or "").strip(),
+            physical_state=str(raw.get("physical_state") or "").strip(),
+            mood_level=str(raw.get("mood_level") or "").strip(),
+            energy_level=str(raw.get("energy_level") or "").strip(),
         )
-    return outline, states
+
+    problems: list[str] = []
+    if actual != expected:
+        problems.append("segments 的 slot 顺序或集合与骨架不一致")
+    if duplicates:
+        problems.append(f"重复 slot：{'/'.join(sorted(duplicates))}")
+    if not outline:
+        problems.append("缺 outline")
+    return outline, states, "；".join(problems)
 
 
-def _extract_sections(text: str, names: tuple[str, ...]) -> dict[str, str] | None:
-    """从「### 字段名」分节的输出里取各节正文。
+def _parse_round2_call(
+    raw_calls: Any,
+    segments: list[Segment],
+) -> tuple[list[dict[str, Any]], str]:
+    """取出 ``submit_day_topics`` 参数，并与候选时段严格对账。"""
+    if not isinstance(raw_calls, list):
+        return [], f"模型没有调用 {_TOPIC_SUBMIT_TOOL}"
+    calls = [
+        call
+        for call in raw_calls
+        if isinstance(call, dict) and call.get("name") == _TOPIC_SUBMIT_TOOL
+    ]
+    if len(calls) != 1:
+        return [], f"{_TOPIC_SUBMIT_TOOL} 调用次数应为 1，实际为 {len(calls)}"
 
-    **为什么不用 JSON。** story 是 200~300 字的自由散文，而我们要求它当成小说写——
-    小说必然有对话，对话必然有引号。把这种文本塞进 JSON 字符串，任何一个未转义的
-    半角引号都会毁掉整个对象。实测 134 次时段生成里失败 12 次（8%），其中 10 次
-    就是正文里的半角引号。那不是模型写坏了，是我们让它用错了格式。
+    args = calls[0].get("args")
+    if not isinstance(args, dict):
+        return [], "工具参数不是对象"
+    rows = args.get("segments")
+    if not isinstance(rows, list):
+        return [], "segments 不是数组"
+    if not all(isinstance(row, dict) for row in rows):
+        return [], "segments 里有不是对象的项"
 
-    分节文本零转义，引号、换行、反斜杠都不再是问题。
-    第二轮的 places / topic 仍然用 JSON——那边是数组套对象、字段短，JSON 是对的格式。
+    expected = [segment.slot for segment in segments]
+    actual = [_canonical_slot(row.get("slot"), segments) for row in rows]
+    if actual != expected:
+        return [], "segments 的 slot 顺序或集合与候选时段不一致"
 
-    解析尽量宽容：``### story``、``###story``、``### story：`` 都认，
-    行首以外的 ``###`` 不当分节。缺任何一节返回 ``None``。
+    # 后续消费者只认标准 slot。兼容分支如果收到「时间 + 正确标题」，
+    # 在这里收回纯时间，不把模型的展示性后缀泄露到后面。
+    normalized_rows = [dict(row, slot=slot) for row, slot in zip(rows, actual, strict=True)]
+
+    topics = sum(1 for row in normalized_rows if str(row.get("topic") or "").strip())
+    if not 3 <= topics <= 6:
+        return [], f"非空 topic 应为 3~6 条，实际为 {topics} 条"
+    return normalized_rows, ""
+
+
+def _canonical_slot(raw: Any, segments: list[Segment]) -> str:
+    """把 slot 收敛为骨架里的纯时间键。
+
+    工具 Schema 已经给了 enum 和 pattern，但某些兼容代理不会真正强制它们。
+    实测模型偶尔会照抄骨架行，返回「02:00-09:00　睡眠」。只有当
+    后缀与该 slot 的骨架标题完全相同时才容错；任意后缀仍按错误处理。
     """
-    pattern = re.compile(r"^[ \t]*#{2,4}[ \t]*(" + "|".join(names) + r")[ \t]*[:：]?[ \t]*$", re.M | re.I)
-    marks = list(pattern.finditer(text))
-    if not marks:
-        return None
-
-    sections: dict[str, str] = {}
-    for index, mark in enumerate(marks):
-        end = marks[index + 1].start() if index + 1 < len(marks) else len(text)
-        # 同一节出现两次时以第一次为准，后面的多半是模型自我重复
-        sections.setdefault(mark.group(1).lower(), text[mark.end():end].strip())
-    if any(name not in sections for name in names):
-        return None
-    return sections
+    value = str(raw or "").strip()
+    for segment in segments:
+        if value == segment.slot:
+            return segment.slot
+        if value.startswith(segment.slot):
+            suffix = value[len(segment.slot):].strip()
+            if suffix == segment.title:
+                return segment.slot
+    return value
 
 
 def _extract_json_array(text: str) -> list[Any] | None:
@@ -893,6 +1019,19 @@ def _clean_expression(text: str) -> str:
     if len(value) >= 2 and value[0] in "\"“" and value[-1] in "\"”":
         value = value[1:-1].strip()
     return value
+
+
+# 打字模拟按消息长度算，跟注入的文字无关，所以这些词写了也兑现不了——
+# 模型唯一能“照做”的方式是表演性地打一串省略号或者说一句“我刚在忙”。
+# 当初取消 busy 字段就是同一个理由，这里把它挡在生成侧。
+_PHYSICAL_WORDS = (
+    "语速", "慢半拍", "停顿", "打字", "回得慢", "回复慢", "回复得慢", "秒回", "隔很久",
+)
+
+
+def _find_physical_word(text: str) -> str:
+    """找出表达方式里兑现不了的物理描述。"""
+    return next((word for word in _PHYSICAL_WORDS if word in text), "")
 
 
 def _find_banned_word(text: str, segment: Segment) -> str:

@@ -11,6 +11,7 @@ config_version = "3.6.0"
 # 关掉的 Tool 完全不会出现在 LLM 的 tool_definitions 里；改动需要重启 MaiBot 才生效
 enable_get_mittes_schedule = true
 enable_get_mittes_outfit = true
+enable_get_mittes_topic = true
 enable_get_weather = true
 
 [generation]
@@ -53,7 +54,15 @@ negative_event_quota = 2
 # 中等会压着接下来两三个时段的情绪；没有「重大」这一档。
 negative_medium_ratio = 0.3
 
+# ── 表达方式（replyer 的 A 块）──
+# 暂时关掉：第三轮不再生成、replyer 不再注入、管理页不再显示。
+# 库里已有的 manner 原样保留，改回 true 就恢复，不需要重新生成。
+[manner]
+enabled = true
+
 [topic]
+# 谈资总开关。关掉之后两条通道都不注入，工具也不暴露。
+enabled = true
 # true：同一会话检测到说出口后不再注入；false：仍然每轮注入，便于观察实际表现。
 # 无论是否停止注入，分享检测、回复原文和累计注入次数都会继续记录。
 stop_after_shared = true
@@ -66,13 +75,36 @@ stop_after_shared = true
 linked_groups = []
 linked_platform = "qq"
 
+# ── 通道一：接话（常驻注入，不设闸门）──
+# 真人在群里"分享"绝大多数其实是接话——话题正好赶到那儿了，不需要许可。
+# 关掉之后她只剩窗口期那一条路，几乎不会再提起今天的事。
+[topic.reply_channel]
+enabled = true
+
+# ── 通道二：开口（get_mittes_topic 工具，只在窗口期暴露）──
+[topic.pitch_channel]
+enabled = true
+# 新鲜期：时段开始后多少分钟内算"刚发生"，对应真人"憋不住说一句"那种开口
+fresh_minutes = 30
+# 断点期：从断点起最多延续多少分钟。她一开口就用掉了，这只是上限，
+# 免得"下班回来的第一句"一直挂到深夜
+breakpoint_minutes = 60
+# 断点的两侧：从 busy 切到 idle 才算断点（kind 取自骨架，共六种）
+busy_kinds = ["睡眠", "工作", "上学"]
+idle_kinds = ["自由", "外出", "通勤"]
+# 「对方正在回应她」往回看多久的消息；断点判定与它共用同一次拉取
+lookback_minutes = 10
+# 每时段每会话最多被取材几次，达到就摘掉工具。它同时是成本闸：
+# 窗口期内工具每轮可见，模型可能连续调用，每次调用都是一轮额外的 LLM 往返
+max_pitches = 3
+
 [observability]
 # 每次 LLM 调用是否落盘到 WebUI 推理过程页。
 # 主程序的预览开关只管主程序自己写的记录，管不到插件，所以这里必须自带一个。
 prompt_preview_enabled = true
 
-# 每个目录保留多少条记录。改成一次出全天之后，一天只写三五条（全天生成一次 +
-# 不合格段的定向重写若干 + 第二轮抽取一次），256 条能覆盖两个月，
+# 每个目录保留多少条记录。改成一次出全天之后，一天只写三条（全天生成 +
+# 第二轮抽取 + 第三轮表达方式），256 条能覆盖两个月，
 # 上限沿用主程序 maisaka_prompt_preview_limit 的默认值。
 prompt_preview_limit = 256
 

@@ -81,14 +81,19 @@ class Segment:
 class SegmentState:
     """一个时段的生成结果。
 
-    ``story`` / ``mood`` 来自主生成（第一轮），
-    ``places`` / ``topic`` / ``topic_keys`` 来自第二轮抽取，
+    ``story`` / ``mood`` / ``physical_state`` 和两项分档来自主生成（第一轮），
+    ``places`` / ``topic`` 来自第二轮抽取（``topic_keys`` 已退役），
     ``manner`` 来自逐时段的第三轮表达方式生成。
     """
 
     story: str
     manner: str
     mood: str
+    # 第一轮产出：当时剩余的可支配体力，不混心情；字段名为兼容旧库保留
+    physical_state: str = ""
+    # 第一轮产出的粗分档，便于前端一眼看出趋势
+    mood_level: str = ""
+    energy_level: str = ""
     # v3.2 起不再生成，字段保留只为读得动历史数据（设计文档 3.1）
     busy: str = ""
     # 第二轮产出：地点时段轴 [{"from","to","place"}, …]，首尾相接覆盖整个时段
@@ -96,6 +101,8 @@ class SegmentState:
     # 第二轮产出：一句第三人称的谈资提示，空 = 这段没什么好说的
     topic: str = ""
     # 第二轮产出：检测她有没有把这件事说出来用的关键词
+    # 已退役：说出口检测改成"planner 调过 get_mittes_topic 就算用掉"，不再抽关键词。
+    # 字段和库里的列都留着，历史值有排查价值；新写入一律是空数组
     topic_keys: list[str] = field(default_factory=list)
     generated_at: str = ""
     # 底稿顶上的（未生成成功）标记为 False，供 /status 和事实层工具区分
@@ -106,6 +113,9 @@ class SegmentState:
             "story": self.story,
             "manner": self.manner,
             "mood": self.mood,
+            "physical_state": self.physical_state,
+            "mood_level": self.mood_level,
+            "energy_level": self.energy_level,
             "busy": self.busy,
             "places": [dict(p) for p in self.places],
             "topic": self.topic,
@@ -122,6 +132,9 @@ class SegmentState:
             story=str(data.get("story") or ""),
             manner=str(data.get("manner") or ""),
             mood=str(data.get("mood") or ""),
+            physical_state=str(data.get("physical_state") or ""),
+            mood_level=str(data.get("mood_level") or ""),
+            energy_level=str(data.get("energy_level") or ""),
             busy=str(data.get("busy") or ""),
             places=[dict(p) for p in raw_places] if isinstance(raw_places, list) else [],
             topic=str(data.get("topic") or ""),
@@ -136,7 +149,7 @@ class DayCache:
     """某一天的生成结果。"""
 
     segments: dict[str, SegmentState] = field(default_factory=dict)
-    # 脉络：模型写正文之前给自己列的全天规划。不进任何注入，只落库供回看和定向重写。
+    # 脉络：模型写正文之前给自己列的全天规划。不进任何注入，落库只为前端回看。
     outline: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -176,7 +189,7 @@ class ScheduleStore:
         self._day_start_minutes = 0
         self._cache: dict[str, DayCache] = {}
         # 谈资分享状态：{(日期, 时段, 会话): (注入次数, 说出口时刻)}
-        self._shares: dict[tuple[str, str, str], tuple[int, str]] = {}
+        self._shares: dict[tuple[str, str, str], tuple[int, str, int]] = {}
 
     # ── 骨架 ──
     def load_skeleton(self) -> None:
@@ -313,22 +326,28 @@ class ScheduleStore:
     def open_db(self) -> None:
         """连库，并把最近几天的生成结果和谈资分享状态读进内存。"""
         self._db.connect()
-        # 按骨架过滤：库里可能还留着改骨架之前的 slot（那一天还没被重写过）。
-        # 这里只裁内存，不动库——历史归档要留着，裁剪只发生在 flush。
         self._cache = {}
         for day_key, data in self._db.load_days(_MAX_CACHED_DAYS).items():
-            cache = DayCache.from_dict(data)
-            valid = {segment.slot for segment in self.segments_of(date.fromisoformat(day_key))}
-            stale = set(cache.segments) - valid
-            for slot in stale:
-                del cache.segments[slot]
-            if stale:
-                _logger.warning(
-                    "[归档] %s 库里有 %d 段不属于当前骨架，本次不载入内存：%s",
-                    day_key, len(stale), "、".join(sorted(stale)),
-                )
-            self._cache[day_key] = cache
+            self._cache[day_key] = self._drop_stale(date.fromisoformat(day_key), data)
         self._shares = self._db.load_shares(list(self._cache))
+
+    def _drop_stale(self, day: date, data: dict[str, Any]) -> DayCache:
+        """把库里的一天转成内存副本，顺手丢掉不属于当前骨架的段。
+
+        库里可能还留着改骨架之前的 slot（那一天还没重新生成过）。
+        这里只裁内存，不动库——历史归档要留着，裁剪只发生在 ``flush``。
+        """
+        cache = DayCache.from_dict(data)
+        valid = {segment.slot for segment in self.segments_of(day)}
+        stale = set(cache.segments) - valid
+        for slot in stale:
+            del cache.segments[slot]
+        if stale:
+            _logger.warning(
+                "[归档] %s 库里有 %d 段不属于当前骨架，本次不载入内存：%s",
+                day, len(stale), "、".join(sorted(stale)),
+            )
+        return cache
 
     def close_db(self) -> None:
         self._db.close()
@@ -365,18 +384,31 @@ class ScheduleStore:
         if removed:
             _logger.info("[归档] %s 清掉 %d 段不属于当前骨架的旧记录", day, removed)
 
-        # 内存只留最近几天；历史全在库里，需要时查库
-        for key in sorted(self._cache)[:-_MAX_CACHED_DAYS]:
+        # 内存只留**离今天最近**的几天；其余全在库里，用到时 load_day_cache 现装。
+        # 不能按日期从大到小留：前端生成几个未来日期就会把今天挤出去，
+        # 而今天才是每一轮注入都要读的那一天。
+        today, _minutes = self.resolve_moment(now_jst())
+        for key in sorted(self._cache, key=lambda k: abs((date.fromisoformat(k) - today).days))[
+            _MAX_CACHED_DAYS:
+        ]:
             del self._cache[key]
 
     def day_cache(self, day: date) -> DayCache | None:
+        """只看内存，不查库。**判断「这一天有没有日程」请用 ``load_day_cache``**——
+        内存副本容量有限，没有不代表库里没有。"""
         return self._cache.get(day.isoformat())
 
     def ensure_day_cache(self, day: date) -> DayCache:
         return self._cache.setdefault(day.isoformat(), DayCache())
 
     def load_day_cache(self, day: date) -> DayCache | None:
-        """把归档中的任意一天按需装进内存，供前端管理任务使用。"""
+        """取某一天的内存副本，不在内存里就从归档库补装。
+
+        **所有「这一天有没有日程」的判断都走这里，不要直接读 ``_cache``。**
+        ``_cache`` 只是热路径的缓存，容量有限且会被淘汰；把它当成唯一事实来源，
+        就会出现「库里明明有、却报没有」——今天的日程被前端生成的未来日期挤出内存后，
+        注入退回底稿、冷启动判定还会把今天整天重新生成一遍。
+        """
         key = day.isoformat()
         cached = self._cache.get(key)
         if cached is not None:
@@ -384,7 +416,7 @@ class ScheduleStore:
         raw = self._db.load_day(day)
         if raw is None:
             return None
-        cached = DayCache.from_dict(raw)
+        cached = self._drop_stale(day, raw)
         self._cache[key] = cached
         return cached
 
@@ -399,10 +431,10 @@ class ScheduleStore:
         return True
 
     def state_at(self, moment: datetime) -> tuple[Segment, SegmentState]:
-        """取某一时刻的时段骨架和状态，缓存缺失时回落到底稿。"""
+        """取某一时刻的时段骨架和状态，**库里也没有**时才回落到底稿。"""
         day, _minutes = self.resolve_moment(moment)
         segment = self.segment_at(moment)
-        cached = self._cache.get(day.isoformat())
+        cached = self.load_day_cache(day)
         if cached is not None:
             state = cached.segments.get(segment.slot)
             if state is not None:
@@ -429,26 +461,44 @@ class ScheduleStore:
         return segment.place.split("/")[0].strip()
 
     def state_of(self, day: date, segment: Segment) -> SegmentState | None:
-        """取指定某天某段的生成结果，没有则返回 ``None``。"""
-        cached = self._cache.get(day.isoformat())
+        """取指定某天某段的生成结果，库里也没有才返回 ``None``。"""
+        cached = self.load_day_cache(day)
         if cached is None:
             return None
         return cached.segments.get(segment.slot)
 
     # ── 谈资的分享状态（5.11）──
-    def share_state(self, day: date, slot: str, session_id: str) -> tuple[int, str]:
-        """取某条谈资在某会话的状态：(注入次数, 说出口时刻)。"""
-        return self._shares.get((day.isoformat(), slot, session_id), (0, ""))
+    def share_state(self, day: date, slot: str, session_id: str) -> tuple[int, str, int]:
+        """取某条谈资在某会话的状态：(注入次数, 说出口时刻, 取材次数)。
+
+        注入次数和取材次数记的是两件事：注入是「材料摆到 replyer 面前」，
+        每轮都会发生；取材是「planner 主动调了 get_mittes_topic」，稀少得多。
+        上限 ``max_pitches`` 卡的是后者。
+        """
+        return self._shares.get((day.isoformat(), slot, session_id), (0, "", 0))
 
     def is_shared(self, day: date, slot: str, session_id: str) -> bool:
         """这条谈资在该会话是否已经说出口过。说过就不再注入，且不留任何痕迹。"""
         return bool(self.share_state(day, slot, session_id)[1])
 
+    def pitch_count(self, day: date, slot: str, session_id: str) -> int:
+        """planner 在该会话为这条谈资取过几次材。"""
+        return self.share_state(day, slot, session_id)[2]
+
     def mark_injected(self, day: date, slot: str, session_id: str) -> None:
         """记一次注入。"""
-        injected, shared_at = self.share_state(day, slot, session_id)
-        self._shares[(day.isoformat(), slot, session_id)] = (injected + 1, shared_at)
-        self._db.upsert_share(day, slot, session_id, injected + 1, shared_at)
+        injected, shared_at, pitched = self.share_state(day, slot, session_id)
+        self._shares[(day.isoformat(), slot, session_id)] = (injected + 1, shared_at, pitched)
+        self._db.upsert_share(day, slot, session_id, injected + 1, shared_at, pitched=pitched)
+
+    def mark_pitched(self, day: date, slot: str, session_id: str) -> None:
+        """记一次取材（planner 调了 get_mittes_topic）。
+
+        必须落库：``max_pitches`` 要在重启后继续有效，否则一次重启就把配额清零。
+        """
+        injected, shared_at, pitched = self.share_state(day, slot, session_id)
+        self._shares[(day.isoformat(), slot, session_id)] = (injected, shared_at, pitched + 1)
+        self._db.upsert_share(day, slot, session_id, injected, shared_at, pitched=pitched + 1)
 
     def mark_shared(
         self,
@@ -464,9 +514,11 @@ class ScheduleStore:
         ``reply_text`` / ``hit_key`` 只落库、不进内存缓存——判定逻辑只用得上
         "说没说过"这一个比特，回复原文是给人在前端查证用的。
         """
-        injected, _ = self.share_state(day, slot, session_id)
-        self._shares[(day.isoformat(), slot, session_id)] = (injected, moment)
-        self._db.upsert_share(day, slot, session_id, injected, moment, reply_text, hit_key)
+        injected, _shared_at, pitched = self.share_state(day, slot, session_id)
+        self._shares[(day.isoformat(), slot, session_id)] = (injected, moment, pitched)
+        self._db.upsert_share(
+            day, slot, session_id, injected, moment, reply_text, hit_key, pitched=pitched
+        )
 
     def reset_shares(self, day: date, slot: str) -> None:
         """这一段被重新生成了，把它的分享状态清空。

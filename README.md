@@ -42,10 +42,28 @@ temperature     = 0.9
 negative_event_quota  = 2          # 每周安排几次"不顺心的事"
 negative_medium_ratio = 0.3        # 其中判为"中等"强度的比例
 
+[manner]
+enabled          = false            # 表达方式（replyer 的 A 块）总开关。
+                                    # 关掉后第三轮不生成、replyer 不注入、管理页不显示；
+                                    # 库里已有的 manner 原样保留，改回 true 就恢复
+
 [topic]
-stop_after_shared = true            # false：说出口后仍然每轮注入
+enabled          = true             # 谈资总开关，关掉后两条通道都不注入、工具也不暴露
+stop_after_shared = true            # false：用掉之后仍然每轮注入
 linked_groups    = []               # 例 [["1016077305","1059037995"]]：组内任一群说过就都算说过
 linked_platform  = "qq"
+
+[topic.reply_channel]               # 通道一：接话（常驻，只准接话不准转话题）
+enabled = true
+
+[topic.pitch_channel]               # 通道二：开口（get_mittes_topic，只在窗口期暴露）
+enabled            = true
+fresh_minutes      = 30             # 新鲜期：时段开始后 30 分钟内
+breakpoint_minutes = 60             # 断点期：从"下班/睡醒"起最多 60 分钟
+busy_kinds         = ["睡眠","工作","上学"]
+idle_kinds         = ["自由","外出","通勤"]
+lookback_minutes   = 10             # 「对方正在回应她」往回看多久
+max_pitches        = 3              # 每段每会话最多被取材几次
 
 [observability]
 report_group_id  = ""              # 批次结果报到哪个群，留空则不报
@@ -55,6 +73,7 @@ weather_location = "Tokyo"         # 生成时查天气预报用的地名
 [components]
 enable_get_mittes_schedule = true  # 关掉的 Tool 不会出现在 LLM 的工具列表里
 enable_get_mittes_outfit   = true
+enable_get_mittes_topic    = true
 enable_get_weather         = true
 ```
 
@@ -95,19 +114,17 @@ LLM 只负责写"这些事实今天具体表现成什么样"，绝不回写骨�
 | `/status` | 当前时段的各字段、所在地点、时段边界 |
 | `/status day` | 今天各段的骨架 + 生成状态 |
 | `/status prompt` | 本时段实际注入的原文 |
-| `/status topic` | 当前时段的话题、关键词、分享状态 |
+| `/status topic` | 当前时段的话题、用掉没有、取材次数、谈资工具露不露 |
 | `/status db` | 归档库覆盖范围、段数、文件大小 |
 | `/status batch [日期\|today]` | 立即跑一次批次，默认次日 |
 | `/status topics [日期]` | 只重跑第二轮（地点时段轴 + 话题） |
-| `/status regen` | 定向重写当前时段，新旧并排 |
-| `/status next` | 提前生成下一段但不切换 |
 | `/status neg` | 本周"不顺心的事"排期 |
 | `/status neg reroll` / `clear` | 重摇 / 清空本周排期 |
 | `/status neg add <日期> <时段> [轻微\|中等]` | 手动指定一条 |
 
 `/status prompt` 最常用，直接看到注入了什么、注在哪，不用去翻日志。
 
-耗时的几条（`batch` / `topics` / `regen` / `next`）会立刻返回"已在后台开始"，跑完再报结果。
+耗时的几条（`batch` / `topics`）会立刻返回"已在后台开始"，跑完再报结果。
 **跑的期间不要改插件目录里的文件，也不要重启**：主程序有文件监听热重载，
 会把后台批次连协程一起带走，且不留日志。
 
@@ -134,7 +151,7 @@ python frontend/viewer.py --lan --port 9000
 |---|---|
 | `days` | 一天，存批次元信息（天气、节假日、耗时、脉络） |
 | `segments` | 一个时段，存骨架快照 + 生成出来的 story / manner / mood / places / topic |
-| `shares` | 某条话题在某个会话的状态：注入过几次、有没有说出口、说的原话 |
+| `shares` | 某条话题在某个会话的状态：注入过几次、被取材过几次、有没有被用掉 |
 | `admin_jobs` | 管理页递交给运行中插件的编辑与生成任务 |
 
 删掉数据库就退回纯手写的底稿状态。库开了 WAL；只做外部查询时请用只读方式打开：

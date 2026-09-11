@@ -48,16 +48,19 @@ CREATE TABLE IF NOT EXISTS segments (
     company        TEXT NOT NULL,
     kind           TEXT NOT NULL,
 
-    -- 第一轮主生成（story / mood）+ 第三轮逐时段生成（manner）
+    -- 第一轮主生成 + 第三轮逐时段生成（manner）
     story          TEXT NOT NULL DEFAULT '',
     manner         TEXT NOT NULL DEFAULT '',
     mood           TEXT NOT NULL DEFAULT '',
+    physical_state TEXT NOT NULL DEFAULT '',
+    mood_level     TEXT NOT NULL DEFAULT '',
+    energy_level   TEXT NOT NULL DEFAULT '',
     busy           TEXT NOT NULL DEFAULT '',
 
     -- 第二轮（从 story 里抽取）
     places         TEXT NOT NULL DEFAULT '[]',   -- 地点时段轴，JSON：[{from,to,place}, …]
     topic          TEXT NOT NULL DEFAULT '',     -- 空表示这段没什么好说的
-    topic_keys     TEXT NOT NULL DEFAULT '[]',   -- JSON 数组
+    topic_keys     TEXT NOT NULL DEFAULT '[]',   -- 已退役，见 SegmentState；历史值保留
 
     generated      INTEGER NOT NULL DEFAULT 0,  -- 0 表示这一段用的是底稿
     negative_level TEXT NOT NULL DEFAULT '',    -- 轻微 / 中等 / 空
@@ -79,6 +82,7 @@ CREATE TABLE IF NOT EXISTS shares (
     slot       TEXT NOT NULL,
     session_id TEXT NOT NULL,
     injected   INTEGER NOT NULL DEFAULT 0,   -- 这条谈资在该会话被注入过多少次
+    pitched    INTEGER NOT NULL DEFAULT 0,   -- planner 主动取材（调 get_mittes_topic）过多少次
     shared_at  TEXT NOT NULL DEFAULT '',     -- 检测到她说出口的时刻；空 = 还没说
     reply_text TEXT NOT NULL DEFAULT '',     -- 判定为"说出口"的那条回复原文
     hit_key    TEXT NOT NULL DEFAULT '',     -- 触发判定的那个关键词
@@ -123,6 +127,9 @@ _EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
         "topic": "TEXT NOT NULL DEFAULT ''",
         "topic_keys": "TEXT NOT NULL DEFAULT '[]'",
         "places": "TEXT NOT NULL DEFAULT '[]'",
+        "physical_state": "TEXT NOT NULL DEFAULT ''",
+        "mood_level": "TEXT NOT NULL DEFAULT ''",
+        "energy_level": "TEXT NOT NULL DEFAULT ''",
     },
     "days": {
         "outline": "TEXT NOT NULL DEFAULT ''",
@@ -130,6 +137,7 @@ _EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
     "shares": {
         "reply_text": "TEXT NOT NULL DEFAULT ''",
         "hit_key": "TEXT NOT NULL DEFAULT ''",
+        "pitched": "INTEGER NOT NULL DEFAULT 0",
     },
 }
 
@@ -236,6 +244,9 @@ class ScheduleDB:
             "story": state.story,
             "manner": state.manner,
             "mood": state.mood,
+            "physical_state": state.physical_state,
+            "mood_level": state.mood_level,
+            "energy_level": state.energy_level,
             # busy 在 v3.2 取消，列保留只为不丢历史值；新行恒为空串
             "busy": state.busy,
             "places": json.dumps(state.places, ensure_ascii=False),
@@ -322,6 +333,9 @@ class ScheduleDB:
             "story": row["story"],
             "manner": row["manner"],
             "mood": row["mood"],
+            "physical_state": row["physical_state"],
+            "mood_level": row["mood_level"],
+            "energy_level": row["energy_level"],
             "busy": row["busy"],
             "places": json.loads(row["places"] or "[]"),
             "topic": row["topic"],
@@ -360,11 +374,11 @@ class ScheduleDB:
             (status, result, error, job_id),
         )
 
-    def load_shares(self, dates: list[str]) -> dict[tuple[str, str, str], tuple[int, str]]:
+    def load_shares(self, dates: list[str]) -> dict[tuple[str, str, str], tuple[int, str, int]]:
         """读若干天的谈资分享状态，供启动时填充内存。
 
         Returns:
-            dict: ``{(日期, 时段, 会话): (注入次数, 说出口时刻)}``
+            dict: ``{(日期, 时段, 会话): (注入次数, 说出口时刻, 取材次数)}``
         """
         if not dates:
             return {}
@@ -373,7 +387,11 @@ class ScheduleDB:
             f"SELECT * FROM shares WHERE date IN ({placeholders})", tuple(dates)
         ).fetchall()
         return {
-            (row["date"], row["slot"], row["session_id"]): (row["injected"], row["shared_at"])
+            (row["date"], row["slot"], row["session_id"]): (
+                row["injected"],
+                row["shared_at"],
+                row["pitched"],
+            )
             for row in rows
         }
 
@@ -386,6 +404,7 @@ class ScheduleDB:
         shared_at: str,
         reply_text: str = "",
         hit_key: str = "",
+        pitched: int = 0,
     ) -> None:
         """写入或更新一条谈资分享状态。
 
@@ -398,15 +417,17 @@ class ScheduleDB:
         又是哪个关键词触发的（5.11 那条已知风险靠它们排查）。
         """
         self._db.execute(
-            "INSERT INTO shares (date, slot, session_id, injected, shared_at, reply_text, hit_key) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "INSERT INTO shares "
+            "(date, slot, session_id, injected, shared_at, reply_text, hit_key, pitched) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(date, slot, session_id) DO UPDATE SET "
             "injected=excluded.injected, shared_at=excluded.shared_at, "
+            "pitched=excluded.pitched, "
             "reply_text=CASE WHEN excluded.reply_text <> '' "
             "THEN excluded.reply_text ELSE shares.reply_text END, "
             "hit_key=CASE WHEN excluded.hit_key <> '' "
             "THEN excluded.hit_key ELSE shares.hit_key END",
-            (day.isoformat(), slot, session_id, injected, shared_at, reply_text, hit_key),
+            (day.isoformat(), slot, session_id, injected, shared_at, reply_text, hit_key, pitched),
         )
 
     def prune_day(self, day: date, keep_slots: set[str]) -> int:

@@ -5,8 +5,9 @@ WebUI 那个页面**没有上报接口**，它直接扫
 payload 的格式（``schema_version: 6``）写死在主程序
 ``src/webui/routers/reasoning_process.py`` 里，主程序的 ``PromptPreviewLogger``
 只负责落盘和清理、不负责拼装。所以这里自带一份拼装代码，
-写法参考 ``plugins/16_mittes_qzone/preview.py``，区别是本插件只有纯文本调用，
-图片相关处理全部去掉。
+    写法参考 ``plugins/16_mittes_qzone/preview.py``。本插件没有图片，但第一轮
+    会用原生工具调用交付结构化的全天故事，所以请求里的工具定义和
+    输出里的 FunctionCallItem 也要原样落盘。
 
 隐形耦合点：schema v6 是本插件与主程序之间**没有接口保障**的约定。
 上游改了字段名，这里写出的文件会被 WebUI 静默忽略——页面上空着且不报错。
@@ -127,6 +128,37 @@ class PromptPreview:
                 }
             )
 
+        raw_tool_calls = result.get("tool_calls")
+        if isinstance(raw_tool_calls, list):
+            for raw in raw_tool_calls:
+                if not isinstance(raw, dict):
+                    continue
+                name = str(raw.get("name") or "").strip()
+                if not name:
+                    continue
+                args = raw.get("args")
+                output_items.append(
+                    {
+                        "item_type": "FunctionCallItem",
+                        "meta": _new_meta(now),
+                        "tool_call": {
+                            "call_id": str(raw.get("id") or uuid.uuid4().hex),
+                            "func_name": name,
+                            "args": args if isinstance(args, dict) else {},
+                            "extra_content": raw.get("extra_content")
+                            if isinstance(raw.get("extra_content"), dict)
+                            else {"tool_call_source": "response"},
+                        },
+                    }
+                )
+
+        raw_tool_definitions = result.get("tool_definitions")
+        tool_definitions = (
+            [item for item in raw_tool_definitions if isinstance(item, dict)]
+            if isinstance(raw_tool_definitions, list)
+            else []
+        )
+
         return {
             "schema_version": _SCHEMA_VERSION,
             "request": {
@@ -144,7 +176,7 @@ class PromptPreview:
             "presentation": {"output_title": output_title},
             "request_items": _serialize_prompt(prompt, now),
             "output_items": output_items,
-            "tool_definitions": [],
+            "tool_definitions": tool_definitions,
             "generation_attempts": [],
         }
 
