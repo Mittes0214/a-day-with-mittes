@@ -110,7 +110,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
     # ── 生命周期 ──
     async def on_load(self) -> None:
-        data_dir = self._plugin_dir / "data"
+        # 统一持久化目录 data/plugins/<插件ID>；旧版落在插件源码目录 data/ 下，已迁移
+        data_dir = self.ctx.paths.data_dir
         data_dir.mkdir(parents=True, exist_ok=True)
 
         self._store = ScheduleStore(self._plugin_dir / "schedule" / "skeleton.toml", data_dir)
@@ -1449,7 +1450,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         del kwargs
         store = self._require_store()
         first, last = store.db.date_range()
-        path = self._plugin_dir / "data" / "schedule.db"
+        path = self.ctx.paths.data_dir / "schedule.db"
         size = path.stat().st_size / 1024 if path.exists() else 0
         lines = [
             "【日程归档库】",

@@ -32,7 +32,10 @@ PLUGIN_DIR = Path(__file__).resolve().parent.parent
 # reply_style.py 只用标准库，import 它不会把 maibot_sdk 拖进这个独立脚本。
 sys.path.insert(0, str(PLUGIN_DIR))
 import reply_style  # noqa: E402
-DB_PATH = PLUGIN_DIR / "data" / "schedule.db"
+# 日程库随插件数据一起迁到统一持久化目录 data/plugins/<插件ID>/。
+# PLUGIN_DIR 固定是 <项目根>/plugins/<本插件目录>，parents[1] 即项目根。
+PROJECT_ROOT = PLUGIN_DIR.parents[1]
+DB_PATH = PROJECT_ROOT / "data" / "plugins" / "khiqwq.a-day-with-mittes" / "schedule.db"
 WARDROBE_PATH = PLUGIN_DIR / "character" / "wardrobe.toml"
 CONFIG_PATH = PLUGIN_DIR / "config.toml"
 WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
