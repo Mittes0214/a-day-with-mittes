@@ -115,6 +115,21 @@ def _manner_enabled(path: Path) -> bool:
     return bool((data.get("manner") or {}).get("enabled", True))
 
 
+def _reply_style_enabled(path: Path) -> bool:
+    """按心情 × 体力替换 reply_style 这套功能开着没有（``[reply_style] enabled``）。
+
+    关掉时页面**照样把九格显示出来**——这是设计文案的地方，停用期间还要能改。
+    但每处都必须标明当前没生效，否则页面展示的是一套 replyer 根本收不到的文字，
+    「看着对、实际不对」比不显示更糟。
+    """
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        return True
+    return bool((data.get("reply_style") or {}).get("enabled", True))
+
+
 def _load_gate_config(path: Path) -> dict[str, Any]:
     """读 config.toml 里的窗口参数，给前端那条时间条用。
 
@@ -545,6 +560,10 @@ button.action:disabled { opacity: .55; cursor: wait; }
 }
 .tree-note p { margin: 0 0 6px; }
 .tree-note p:last-child { margin-bottom: 0; }
+.style-off {
+  display: inline-block; margin-left: 10px; padding: 1px 9px; border-radius: 999px;
+  background: var(--accent); color: #fff; font-size: 12px; vertical-align: 3px;
+}
 .tree-note code {
   font-family: inherit; color: var(--text); background: var(--badge);
   border-radius: 4px; padding: 1px 6px;
@@ -602,6 +621,9 @@ const STYLE_TABLE = __STYLE_TABLE__;
 const MOOD_BLOCK = STYLE_TABLE.voice;
 const ENERGY_BLOCK = STYLE_TABLE.stamina;
 const STYLE_FIXED = STYLE_TABLE.fixed;
+// 功能关掉时九格照常显示（这里是改文案的地方），但每处都要挂上这块牌子。
+const STYLE_OFF = STYLE_TABLE.enabled === false
+  ? '<span class="style-off">功能已关闭，当前不替换 reply_style</span>' : '';
 const MOODS = STYLE_TABLE.moods;
 const ENERGIES = STYLE_TABLE.energies;
 let stylePick = null;
@@ -782,7 +804,7 @@ function styleGrid(current) {
     ? '「现在」是此刻那一段的档位。点格子看别的组合。'
     : '这一天没有正在进行的时段，默认停在中性 · 一般。点格子看别的组合。';
   return `<section class="style-panel">
-    <h3>表达方式组合</h3>
+    <h3>表达方式组合${STYLE_OFF}</h3>
     <p class="hint">${hint}</p>
     <div class="style-grid">${cells.join('')}</div>
     <div class="style-out" id="style-out">${styleText(pick)}</div>
@@ -820,7 +842,7 @@ function renderExpression() {
 
   document.getElementById('main').innerHTML = `
     <div class="dayhead">
-      <h2>表达方式</h2>
+      <h2>表达方式${STYLE_OFF}</h2>
       <div class="meta">心情决定口吻，体力决定这个口吻还剩多少输出　·　${MOODS.length} × ${ENERGIES.length} = ${MOODS.length * ENERGIES.length} 格</div>
     </div>
     <div class="tree">
@@ -835,6 +857,7 @@ function renderExpression() {
       <p>红色竖带的是心情节点，它下面挂的三条是这一档心情<b>专属</b>的体力写法——三档心情各有各的一组，改一组不会牵动另一组。</p>
       <p>正面和中性眼下三档字面全同，但已经是两张独立的表——改一边不会牵动另一边。</p>
       <p>底稿段（没有档位）整套不替换，沿用 bot_config.toml 里配置的那份。</p>
+      ${STYLE_TABLE.enabled === false ? '<p><b>这套功能当前是关闭的</b>（插件 config.toml 的 <code>[reply_style] enabled</code>）。下面的文案照常可以改，但 replyer 现在收到的是 bot_config.toml 里的 reply_style 原文。</p>' : ''}
     </div>`;
 }
 
@@ -1164,6 +1187,7 @@ def _page_bytes() -> bytes:
             "voice": reply_style.VOICE,
             "fixed": reply_style.FIXED,
             "stamina": reply_style.STAMINA,
+            "enabled": _reply_style_enabled(CONFIG_PATH),
             "moods": list(reply_style.MOODS),
             "energies": list(reply_style.ENERGIES),
         },

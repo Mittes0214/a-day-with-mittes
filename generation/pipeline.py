@@ -378,8 +378,9 @@ class SegmentGenerator:
                 "physical_state": {
                     "type": "string",
                     "description": (
-                        "当时剩余的可支配体力：疲劳、困意、乏力或精力。"
-                        "按全天累积消耗判断，不写心情，不把舒服、清爽等表面感受当体力。"
+                        "这一段她整个人的状态：还有多少劲、撑不撑得住。跟着 story 走，"
+                        "不写心情，不写身体部位清单，不把舒服、清爽等表面感受当体力。"
+                        "困意不归这个字段，凌晨两点之前不写困。"
                     ),
                 },
                 "mood_level": {
@@ -391,8 +392,9 @@ class SegmentGenerator:
                     "type": "string",
                     "enum": list(_ENERGY_LEVELS),
                     "description": (
-                        "physical_state 的独立体力分档：良好=无明显疲劳，"
-                        "一般=有累意但能正常继续，不佳=明显困倦乏力、想停下休息。"
+                        "physical_state 的独立体力分档：良好=无明显疲劳，是她大部分时候的状态；"
+                        "一般=有累意但能正常继续；不佳=体力见底、提不起劲、想坐下停手。"
+                        "判的是没力气不是想睡，夜深本身不构成不佳的理由。"
                         "不受 mood_level 影响。"
                     ),
                 },
@@ -470,10 +472,20 @@ class SegmentGenerator:
     def _validate_state(self, state: SegmentState, segment: Segment, previous_story: str) -> str:
         """校验第一轮的一段完整结果，返回不合格原因。
 
-        硬校验：缺字段，两项分档越界，mood 含地点/服装/场所词，
-        首句与上一段雷同。
+        硬校验：缺字段，两项分档越界，首句与上一段雷同。
         只告警不重写：story 字数越界——它是被问才吐的事实层，长一点没有副作用，
         为字数烧一次调用不值得。
+
+        **mood 的「具体事项名词」检查已撤掉（2026-09-16）。** 它本来护着常驻注入的
+        那行 ``心情：{mood}``，不让「吧台」「电车」这类词被 planner 复述出去。撤掉的
+        理由是代价不成比例：这里判不合格就**整段作废**、铺骨架底稿，而 ``story``
+        根本不在注入链里（只在 ``get_mittes_schedule`` 被调用时才吐）。一个十来字的
+        mood 里有一个词犯规，会连累同一段两百多字、内容完全合格的 story 一起丢掉，
+        还顺带丢掉 physical_state 和两项分档；判掉的段又不重试（见模块开头），
+        损失是永久的。09-16 与 09-17 两天被这样判掉五段，其中包括周三 16:00-19:00
+        那整整三小时。
+        ``_find_banned_word`` 保留，仍然给 ``_validate_expression`` 用——那边不合格
+        只是这一段不写 manner，代价是局部的。
         """
         missing = [
             name
@@ -487,10 +499,6 @@ class SegmentGenerator:
             return f"心情分档不合法：{state.mood_level}"
         if state.energy_level not in _ENERGY_LEVELS:
             return f"体力分档不合法：{state.energy_level}"
-
-        hit = _find_banned_word(state.mood, segment)
-        if hit:
-            return f"mood 含具体事项名词「{hit}」"
 
         # 首句跟上一段雷同 = 模型把某个句子当模板锁死了。
         # 实测发生过：prompt 里演示「首句要出现 Mittes」的那个例句被原样照抄，

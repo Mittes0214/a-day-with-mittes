@@ -60,6 +60,16 @@ negative_medium_ratio = 0.3
 [manner]
 enabled = true
 
+# ── 按心情 × 体力替换 reply_style ──
+# 开着时 replyer 的 system prompt 里那行 reply_style 会被整段换成 reply_style.py
+# 按当前档位拼出来的那串；关掉之后 system prompt 完全不动，主程序配置里的
+# [personality] reply_style 原样生效。
+#
+# 关掉不影响生成：第一轮照常写 mood_level / energy_level，库里的档位照常累积，
+# /status 和管理页也照常显示拼出来的结果（标明未生效），改回 true 立刻恢复。
+[reply_style]
+enabled = true
+
 [topic]
 # 谈资总开关。关掉之后两条通道都不注入，工具也不暴露。
 enabled = true

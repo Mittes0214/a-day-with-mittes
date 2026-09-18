@@ -219,6 +219,16 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         """
         return bool(await self._get_config("manner.enabled", True))
 
+    async def _reply_style_enabled(self) -> bool:
+        """按心情 × 体力替换 reply_style 这套功能开着没有。
+
+        关掉之后 replyer 的 system prompt **完全不动**，主程序配置里的
+        ``[personality] reply_style`` 原样生效。这跟「档位不全所以不替换」是两回事：
+        那是逐段的退让，这是整套停用。``reply_style.py`` 的表原样留着，
+        ``/status`` 和管理页仍会显示拼出来的结果，只是标明当前没生效。
+        """
+        return bool(await self._get_config("reply_style.enabled", True))
+
     async def _linked_sessions(self, session_id: str) -> list[str]:
         """返回和 ``session_id`` 同属一个关联组的所有会话（含它自己）。
 
@@ -1116,9 +1126,14 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         store = self._require_store()
         updated = list(items)
 
-        # 语气：整段换掉主程序配置里的 reply_style。档位缺一个（底稿段）就不动，
-        # 让配置里那份原样生效——见 reply_style.compose。
-        style = compose_reply_style(state.mood_level, state.energy_level)
+        # 语气：整段换掉主程序配置里的 reply_style。两道门都得过——功能开关开着，
+        # 且这一段有完整档位（底稿段没有，见 reply_style.compose）。任一不过就不碰
+        # system item，主程序配置里那份原样生效。
+        style = (
+            compose_reply_style(state.mood_level, state.energy_level)
+            if await self._reply_style_enabled()
+            else ""
+        )
         style_applied = False
         if style:
             system_index = _find_item_type_index(updated, "SystemMessageItem")
@@ -1225,6 +1240,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         store = self._require_store()
         run_at = await self._run_at()
         trail = _render_trail(state) or "（没有时段轴，退回骨架地点）"
+        # 功能关掉时照样把拼出来的那串显示出来，但要标明没生效——
+        # 光显示文字会让人以为 replyer 收到的就是它。
+        style_off = "" if await self._reply_style_enabled() else "　← 功能已关，未生效"
         lines = [
             f"{day:%Y-%m-%d} 周{weekday_name(day)} {moment:%H:%M}（JST）　"
             f"{'（跨零点，仍算前一天）' if day != moment.date() else ''}",
@@ -1241,7 +1259,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             f"心情分档：{state.mood_level or '（旧记录未生成）'}",
             f"体力：{state.physical_state or '（旧记录未生成）'}",
             f"体力分档：{state.energy_level or '（旧记录未生成）'}",
-            f"reply_style：{compose_reply_style(state.mood_level, state.energy_level) or '（档位不全，沿用配置里那份）'}",
+            f"reply_style：{compose_reply_style(state.mood_level, state.energy_level) or '（档位不全，沿用配置里那份）'}{style_off}",
             f"topic：{state.topic or '（这段没什么好说的）'}",
             "",
             "来源：生成结果" if state.generated else "来源：底稿（该段未生成成功）",
@@ -1261,8 +1279,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         moment, _day, segment, state = self._current()
         visible, reason = await self._topic_gate(stream_id)
         empty = "（这段没什么好说的，不注入）"
+        style_note = "" if await self._reply_style_enabled() else "【功能已关，实际不替换】"
         text = (
-            "── replyer reply_style（整段替换 system prompt 里那一行）──\n"
+            f"── replyer reply_style（整段替换 system prompt 里那一行）{style_note} ──\n"
             f"{compose_reply_style(state.mood_level, state.energy_level) or '（档位不全，沿用配置里那份）'}\n"
             "\n"
             "── planner 注入（插在「时间：」之后）──\n"
