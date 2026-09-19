@@ -1,4 +1,4 @@
-"""节假日查询。
+"""日本祝日查询。
 
 只负责取节假日名字，贴在生成 prompt 的「今天」那一段里。
 
@@ -16,21 +16,21 @@ from typing import Any
 
 import aiohttp
 
-HOLIDAY_URL_TEMPLATE = "https://unpkg.com/holiday-calendar@1.3.0/data/CN/{year}.json"
+HOLIDAY_URL_TEMPLATE = "https://holidays-jp.github.io/api/v1/{year}/date.json"
 
 FIXED_HOLIDAYS = {
-    "01-01": "元旦",
-    "02-14": "情人节",
-    "03-08": "妇女节",
-    "04-01": "愚人节",
-    "05-01": "劳动节",
-    "05-04": "青年节",
-    "06-01": "儿童节",
-    "07-01": "建党节",
-    "08-01": "建军节",
-    "09-10": "教师节",
-    "10-01": "国庆节",
-    "12-25": "圣诞节",
+    # 网络不可用时只兜底日期固定的日本法定祝日；成人の日、海の日、敬老の日、
+    # 体育の日、春分/秋分及振替休日等日期会变化，不能在这里猜。
+    "01-01": "元日",
+    "02-11": "建国記念の日",
+    "02-23": "天皇誕生日",
+    "04-29": "昭和の日",
+    "05-03": "憲法記念日",
+    "05-04": "みどりの日",
+    "05-05": "こどもの日",
+    "08-11": "山の日",
+    "11-03": "文化の日",
+    "11-23": "勤労感謝の日",
 }
 
 
@@ -44,7 +44,9 @@ class ScheduleGenerator:
             ctx: 插件上下文 (PluginContext)
         """
         self.ctx = ctx
-        self._cache_dir = data_dir / "holidays"
+        # 国家代码进入路径，避免旧版 ``holidays/<year>.json`` 的中国节假日缓存
+        # 在切换数据源后继续命中。
+        self._cache_dir = data_dir / "holidays" / "JP"
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
@@ -62,12 +64,13 @@ class ScheduleGenerator:
             str: 节假日名称，如果不是节假日则返回空字符串
         """
         if holiday_map and date_str in holiday_map:
+            # Holidays JP API 的值就是日文祝日名（含「振替休日」）。保留对旧格式的
+            # 兼容只为让方法更稳健；JP 子目录不会读到旧版中国缓存。
             info = holiday_map[date_str]
-            name = info.get("name_cn", "")
-            holiday_type = info.get("type", "")
-            if holiday_type == "transfer_workday":
-                return f"{name}（调休）"
-            return name
+            if isinstance(info, str):
+                return info
+            if isinstance(info, dict):
+                return str(info.get("name") or info.get("name_cn") or "")
 
         month_day = date_str[5:] if len(date_str) >= 5 else ""
         return FIXED_HOLIDAYS.get(month_day, "")
@@ -87,10 +90,13 @@ class ScheduleGenerator:
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
                         data = await response.json()
-                        holiday_map = {}
-                        for item in data.get("dates", []):
-                            holiday_map[item["date"]] = item
-                        return holiday_map
+                        if not isinstance(data, dict):
+                            return {}
+                        return {
+                            str(day): str(name)
+                            for day, name in data.items()
+                            if isinstance(day, str) and isinstance(name, str)
+                        }
         except Exception:
             pass
         return {}
