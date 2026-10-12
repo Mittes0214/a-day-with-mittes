@@ -1,0 +1,17 @@
+Use case: stylized-concept
+Asset type: 2D anime clothes-only fashion design sheet, outfit 06 of a coordinated wardrobe.
+Primary request: Redesign an autumn outing look into a sharp fashionable Japanese urban feminine outfit. Stylish restrained fashion-magazine proportions: cropped charcoal jacket, ivory fine-knit boat-neck sweater, black high-waisted asymmetric A-line wrap-panel mini skirt, matte black tights, sleek square-toe ankle boots, and a wine-red slim shoulder bag. The silhouette should look like contemporary Japanese street fashion for a fashion-conscious anime character.
+Style reference: use the attached image ONLY for the Japanese anime linework and flat cel-shaded drawing technique. Do not copy the person, anatomy, hairstyle, school uniform or background. The outfit is a completely new design.
+Art style: confident fine hand-drawn ink contours, clean flat cel colors, angular economical fold shadows, matte fabric drawn as broad shapes, only small illustrated highlights on leather. Clearly anime illustration, NOT realistic product renders, NOT photography, NOT 3D, no microscopic fabric textures.
+Composition: landscape warm-white sheet; a prominent complete EMPTY front outfit arrangement at left with a smaller back view, individual jacket, sweater and skirt flat drawings in the middle, shoes/bag/accessories on the right, empty folded black tights and small everyday underwear flat drawings along the bottom. All garments fully empty, with no body or body silhouette, no mannequin. Airy editorial layout, ample white space, restrained charcoal typography, few short handwritten Chinese item labels, five small color swatches: charcoal, ivory, black, burgundy, silver.
+Design language: clean asymmetry, cropped-over-high-waist proportions, shaped seams, one burgundy accent. No cute doodles, hearts, flowers, stars, lace, scalloped edges, frills, big ribbons, cape, pinafore, pearl necklace, tweed, matching blazer-and-pleated-skirt suit, school uniform, girlish rounded decorative styling, gothic chains or studs. The skirt is smooth A-line, not pleated, and has an asymmetric overlapping panel over a complete base skirt, no high slit. Boots are sleek low block heel, not chunky or combat boots.
+Constraints: ABSOLUTELY NO PEOPLE, NO FACE, NO HAIR, NO SKIN, NO ANATOMY, NO HANDS, NO MANNEQUIN, NO GHOST WEARER. Only clothing and accessories. Underwear drawn as small modest flat textile diagrams, never on a body. No brand logos or watermark.
+Exact title: "炭灰短夹克配黑色不对称A字裙"
+Sheet number: 06 / 09
+Exact garment specification (Chinese):
+top: 炭灰色短款翻领夹克，平滑细斜纹面料，肩线略放宽，衣长到腰上方；前襟是一条偏左的哑银色拉链，前身各有一道弧形分割线，袖口用暗扣收住，前襟敞开穿；里面是奶白色细罗纹长袖针织衫，小船领，领边细而平，衣摆收进裙腰
+bottom: 黑色高腰 A 字短裙，细密挺括的斜纹料，裙长到膝上约十厘米；前面是一片斜向搭合的裹片，右侧裙摆比左侧略低，形成清楚的不对称线条，里面有完整底裙，裹片不开高衩；侧面隐藏拉链，腰头平整，不打褶、不加花边
+legs: 黑色 60D 哑光连裤袜，均匀纯色、无提花和拼接，宽软腰口，脚尖同色加固；不叠穿短袜
+feet: 黑色方头短靴，靴筒贴合脚踝，平滑哑光皮面，内侧隐藏拉链；三厘米低方跟和薄底，鞋面只有一道干净的弧形接缝，不用鞋带、粗搭扣和厚底
+accessories: 酒红色扁长腋下包，短皮肩带，平滑皮面，正面只留一枚窄窄的银色长方扣；一对小号素银耳夹和一枚细长素银发夹，不戴项链
+underwear: 浅米色光面无钢圈文胸，平整薄杯、可调节肩带，边缘用同色软包边；同色中腰全包棉质内裤，纯色，腰口是包布松紧；裙内另穿黑色棉弹平脚安全裤，平整裤口，不加蕾丝、印花和蝴蝶结
