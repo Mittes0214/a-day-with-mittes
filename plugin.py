@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 import asyncio
+import copy
 import json
 import logging
 import tomllib
@@ -47,6 +48,7 @@ from .schedule.holidays import ScheduleGenerator
 from .schedule.negative_events import LEVEL_MILD, NegativeEntry, NegativeScheduler
 from .schedule.store import (
     JST,
+    DayContext,
     ScheduleStore,
     parse_moment,
     Segment,
@@ -65,6 +67,10 @@ _PLANNER_ANCHOR_PREFIX = "时间："
 
 # replyer 侧的兜底锚点：final user message 以「当前时间：」开头，位置固定必然存在。
 _REPLYER_FALLBACK_PREFIX = "当前时间："
+
+# 日历后缀的起首字样。既是拼接用的前缀，也是**幂等判据**——hook 万一在同一批 items
+# 上跑第二次（重试、或将来有别的链路复用），看到这两个字样之一就不再追加。
+_CALENDAR_MARKS = ("（日本祝日", "（连休")
 
 # reply_style 在 system prompt 里的上下两句。它们是 prompts/zh-CN/maisaka_replyer.prompt
 # 模板里写死的正文，reply_style 就夹在中间独占一行。
@@ -116,6 +122,15 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
         self._store = ScheduleStore(self._plugin_dir / "schedule" / "skeleton.toml", data_dir)
         self._store.load_skeleton()
+
+        # 祝日必须**赶在 open_db 之前**灌进去。open_db 会把最近几天读进内存，
+        # 读的时候按当时的骨架裁掉对不上的段（`_drop_stale`）——那一刻还不知道
+        # 哪天是祝日的话，祝日那天会按周中表裁，整天的生成结果被删光，
+        # 之后 load_day_cache 命中内存不再查库，注入永久退底稿。
+        # 这里只读磁盘缓存（同步、不碰网络），刷新交给每天批次开头那次异步查询。
+        self._holidays = ScheduleGenerator(self.ctx, data_dir)
+        self._prime_holidays()
+
         self._store.open_db()
 
         self._negative = NegativeScheduler(
@@ -144,8 +159,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             base_task=str(await self._get_config("generation.base_task", "memory")),
             temperature=float(await self._get_config("generation.temperature", 0.9)),
         )
-        self._holidays = ScheduleGenerator(self.ctx, data_dir)
-
         self._batch_task = asyncio.create_task(self._scheduler_loop())
         self._admin_task = asyncio.create_task(self._admin_job_loop())
         _logger.info("[加载] 骨架就绪，批量生成与前端管理守护已启动")
@@ -359,12 +372,18 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             negative = self._require_negative()
             started = now_jst()
 
+            # 祝日刷新必须排在最前面：它决定这一天用哪张骨架表，
+            # 而下面的排期和生成都是按骨架的时段列表来的，顺序反了两边会对不上。
+            await self._refresh_holidays(day)
+            context = store.day_context(day)
+            # 归档和前端沿用旧格式（带【】），prompt 里的写法在 pipeline 那边拼
+            holiday = f"【{context.holiday}】" if context.holiday else ""
+
             # 排期挂在批次开头做惰性检查：这样排期和生成不会错序，
             # 也不用担心单独的定时任务漏跑导致某天没有排期数据。
             negative.ensure_week(day, store.segments_of)
 
             weather = await self._forecast_for(day)
-            holiday = await self._holiday_name(day)
 
             segments = store.segments_of(day)
             day_cache = store.ensure_day_cache(day)
@@ -381,7 +400,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 day=day,
                 segments=segments,
                 weather=weather,
-                holiday=holiday,
+                context=context,
                 previous=previous,
                 negative_levels=levels,
             )
@@ -549,17 +568,31 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         location = str(await self._get_config("observability.weather_location", "Tokyo"))
         return await fetch_daily_forecast(location, day.isoformat())
 
-    async def _holiday_name(self, day: date) -> str:
-        """取当天的日本节假日名，没有则返回空串。"""
-        if self._holidays is None:
-            return ""
+    def _prime_holidays(self) -> None:
+        """启动时把磁盘上缓存的祝日灌进骨架，只读本地、不碰网络。
+
+        今年和明年各读一次：批次生成的是**次日**，跨年那晚要的是明年的元日。
+        缓存缺失时这里灌不进东西，`day_key_for` 退回按星期几取表，
+        也就是加了祝日骨架之前的行为；真正的补齐在下一次批次的异步刷新。
+        """
+        if self._holidays is None or self._store is None:
+            return
+        today = self._today()
+        for year in (today.year, today.year + 1):
+            cached = self._holidays.load_cached_holiday(year)
+            if cached:
+                self._store.set_holidays(self._holidays.holiday_dates(year, cached))
+
+    async def _refresh_holidays(self, day: date) -> None:
+        """刷新目标日期所在年份的祝日并灌进骨架。缓存已有时不会发请求。"""
+        if self._holidays is None or self._store is None:
+            return
         try:
             holiday_map = await self._holidays.get_holiday_map(day.year)
-            name = self._holidays.get_holiday_name(day.isoformat(), holiday_map)
         except Exception as exc:
             _logger.warning("[节假日] 查询失败：%s", type(exc).__name__)
-            return ""
-        return f"【{name}】" if name else ""
+            return
+        self._store.set_holidays(self._holidays.holiday_dates(day.year, holiday_map))
 
     # ── 事实层与状态层的取值 ──
     def _require_wardrobe(self) -> Wardrobe:
@@ -626,6 +659,22 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         地点是最顺口的可复述内容，而实测 planner 会把这个块近乎整块转发给 replyer
         （5.14）。之所以仍然这么做：导演需要在决定怎么演之前就知道人在哪，
         而 Tool 是「该聊她在干嘛」时才调用的，那时候给已经晚了。观察项见设计文档 7。
+
+        **体力给 `physical_state` 原句，前提是那句足够短。** 这一行一度改成只注档位。
+        起因是 09-21 14:30-17:00：原句是「在坡道和店内连续走动站立，双腿开始泛起
+        轻微的酸胀」，planner 把它摘成「腿酸」填进 `reply_reference`，23 次 reply
+        调用里 16 次带，落到群里 5 句，没有一次是别人问的。对照组是同一段的
+        `reply_style`——同样每轮注入、同样由体力档位决定，23 轮零复读，
+        区别只在它描述的是倾向而不是症状，planner 摘不出名词可抄。
+
+        之后在生成侧把这个字段压到 15 字上限、明令不写周边环境和物件、并照 mood
+        的样子补了三档示例。改完的原句长这样：「体力消耗见底，极想坐下歇歇」——
+        场景和具体症状都带不动了，于是换回原句。档位只有三个词，planner 判
+        「她现在能不能接这个活」时信息太薄，短原句是更好的折中。
+
+        这条线往回退的判据很简单：原句一旦重新变长、开始带地点或道具，
+        `reply_reference` 里的复述率就会跟着涨，那时该收紧的是生成侧的字数和禁令，
+        不是把这一行改回档位。
 
         **谈资不在这里了。** 早先这里有一段「她手上有一件今天发生、还没跟人说过的
         小事」，由 planner 决定要不要换题。那个设计被推翻：只要那句话在，planner 就
@@ -1075,14 +1124,48 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if not items:
             return _hook_response(items, kwargs, extra=extra or None)
 
-        moment, _day, segment, state = self._current()
+        moment, day, segment, state = self._current()
         block = self._planner_block(moment, segment, state)
 
         index = _find_item_index(items, lambda text: text.startswith(_PLANNER_ANCHOR_PREFIX))
         updated = list(items)
-        # 找不到锚点就挂在最后：状态层晚一点出现也比不出现好
+        if index >= 0:
+            # 祝日和连休写进「时间：」那一条的行尾，不写进【Mittes 此刻】。
+            # 那个块 planner 会近乎整块转发给 replyer（设计文档 5.14），而节日名是个
+            # 比地点还顺口的名词，放进去等于提高她把「今天是敬老の日」念出来的概率；
+            # 她过节过得很自然，特意报一遍节日名反而假。而且那个块的排序是
+            # 「从外到内，越靠后越贴近她这个人」，祝日是世界状态，塞进去会破坏这个梯度。
+            updated[index] = self._with_calendar_suffix(updated[index], day)
+        # 找不到锚点就挂在最后：状态层晚一点出现也比不出现好。
+        # 这条路径下日历后缀一并丢失——它依附于那条锚点，没有别的合理落点。
         updated.insert(index + 1 if index >= 0 else len(updated), _new_user_item(block))
         return _hook_response(updated, kwargs, extra=extra or None)
+
+    def _with_calendar_suffix(self, item: Any, day: date) -> Any:
+        """给「时间：」那条加上日历后缀，返回**新的** item；不该加时原样返回。
+
+        **不原地改。** items 里的 dict 主程序那边可能还持有同一个引用，
+        改了会漏到 hook 之外。
+
+        后缀加在行尾而不是另起一行，也不动开头的 `时间：`——那个前缀是本插件
+        下一步定位注入点用的锚点，破了自己就找不着北。
+        """
+        text = _item_text(item)
+        if not text or any(mark in text for mark in _CALENDAR_MARKS):
+            return item
+        suffix = _calendar_suffix(self._require_store().day_context(day))
+        if not suffix:
+            return item
+
+        patched = copy.deepcopy(item)
+        parts = patched.get("parts")
+        if not isinstance(parts, list):
+            return item
+        for part in reversed(parts):
+            if isinstance(part, dict) and part.get("type") == "text":
+                part["text"] = f"{str(part.get('text') or '').rstrip()}{suffix}"
+                return patched
+        return item
 
     # ── Hook：replyer 表达方式注入 ──
     @HookHandler(
@@ -1276,13 +1359,18 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     )
     async def cmd_status_prompt(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
-        moment, _day, segment, state = self._current()
+        moment, day, segment, state = self._current()
         visible, reason = await self._topic_gate(stream_id)
         empty = "（这段没什么好说的，不注入）"
+        suffix = _calendar_suffix(self._require_store().day_context(day))
         style_note = "" if await self._reply_style_enabled() else "【功能已关，实际不替换】"
         text = (
             f"── replyer reply_style（整段替换 system prompt 里那一行）{style_note} ──\n"
             f"{compose_reply_style(state.mood_level, state.energy_level) or '（档位不全，沿用配置里那份）'}\n"
+            "\n"
+            "── planner「时间：」那条的行尾后缀 ──\n"
+            + (f"…{moment:%H:%M:%S}{suffix}" if suffix else "（今天既不是祝日也不在连休里，不加）")
+            + "\n"
             "\n"
             "── planner 注入（插在「时间：」之后）──\n"
             f"{self._planner_block(moment, segment, state)}\n"
@@ -1819,6 +1907,38 @@ def _item_text(item: Any) -> str:
         for part in parts
         if isinstance(part, dict) and part.get("type") == "text"
     )
+
+
+def _calendar_suffix(context: DayContext) -> str:
+    """planner 的「时间：」那条行尾要加的日历后缀；普通日子返回空串。
+
+    形如 ``（日本祝日 敬老の日 · 连休第 3 天／共 5 天）``。
+
+    **带上「日本祝日」这个类别词**：planner 不一定知道「敬老の日」意味着学校放假、
+    街上人多，光给个日文名等于没给。
+
+    **连休三天以上才说。** 普通的周六周日在日语里不叫连休，每轮都挂一句
+    「第 1 天／共 2 天」既是噪声，也会稀释真连休时那句话的分量。
+
+    **今天不是祝日时要点明连休的成因。** 光写「连休第 2 天／共 5 天」，planner
+    无从判断这是法定连假还是普通周末凑巧接上——9/20 那个周日就是这样，
+    它之所以在一段五连休里，全靠后面 21～23 三个祝日。今天本身是祝日的话不再列，
+    前半段已经把名字写出来了，重复一遍只是变长。
+
+    连休长度未知时（``rest_capped``，换成假期骨架就会这样）整段不说：
+    「第 15 天／共 29 天」这种数字没有任何信息量。
+    """
+    parts: list[str] = []
+    if context.holiday:
+        parts.append(f"日本祝日 {context.holiday}")
+    if context.rest_total >= 3 and not context.rest_capped:
+        cause = ""
+        if not context.holiday and context.rest_holidays:
+            cause = "・".join(context.rest_holidays) + " 的"
+        parts.append(f"{cause}连休第 {context.rest_index} 天／共 {context.rest_total} 天")
+    if not parts:
+        return ""
+    return "（" + " · ".join(parts) + "）"
 
 
 def _render_trail(state: SegmentState) -> str:

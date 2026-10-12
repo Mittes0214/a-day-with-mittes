@@ -36,6 +36,7 @@ import time
 from . import prompt_loader as prompts
 from ..schedule.negative_events import LEVEL_HINTS
 from ..schedule.store import (
+    DayContext,
     ScheduleStore,
     Segment,
     SegmentState,
@@ -229,7 +230,7 @@ class SegmentGenerator:
         day: date,
         segments: list[Segment],
         weather: str,
-        holiday: str,
+        context: DayContext,
         previous: tuple[Segment, SegmentState] | None,
         negative_levels: dict[str, str],
     ) -> DayOutcome:
@@ -244,7 +245,7 @@ class SegmentGenerator:
             day=day,
             segments=segments,
             weather=weather,
-            holiday=holiday,
+            context=context,
             previous=previous,
             negative_levels=negative_levels,
         )
@@ -306,7 +307,7 @@ class SegmentGenerator:
         day: date,
         segments: list[Segment],
         weather: str,
-        holiday: str,
+        context: DayContext,
         previous: tuple[Segment, SegmentState] | None,
         negative_levels: dict[str, str],
     ) -> str:
@@ -339,10 +340,11 @@ class SegmentGenerator:
             "01_生成全天故事与情绪",
             date=day.isoformat(),
             weekday=weekday_name(day),
-            holiday=f"　{holiday}" if holiday else "",
+            holiday=f"　【{context.holiday}】" if context.holiday else "",
             weather=prompts.render("01_生成全天故事与情绪", "weather", weather=weather)
             if weather
             else "",
+            day_note=self._day_note_block("01_生成全天故事与情绪", context),
             previous=previous_block,
             skeleton=self._skeleton_block("01_生成全天故事与情绪", day, segments),
             negative=(
@@ -380,6 +382,7 @@ class SegmentGenerator:
                     "description": (
                         "这一段她整个人的状态：还有多少劲、撑不撑得住。跟着 story 走，"
                         "不写心情，不写身体部位清单，不把舒服、清爽等表面感受当体力。"
+                        "只写体力本身，不写她在哪、手上拿着什么、周围在发生什么——那些归 story。"
                         "困意不归这个字段，凌晨两点之前不写困。"
                     ),
                 },
@@ -438,6 +441,43 @@ class SegmentGenerator:
                 "parameters": parameters,
             },
         }
+
+    @staticmethod
+    def _day_note_block(name: str, context: DayContext) -> str:
+        """把「今天为什么不一样」拼成一段，放在日期和天气下面。
+
+        改这里之前，祝日只是拼在日期后面的一个名字（``2026-09-21 星期一　【敬老の日】``），
+        而下面的骨架写着「已经确定的事实，每个时段都要保留」——硬约束对上一个装饰性的词，
+        模型只能照着上课写。名字本身也不带信息：写手不知道「敬老の日」该导致什么。
+
+        连休只在**三天以上**时才说。普通的周六周日在日语里不叫连休，
+        每周都注一句「第 1 天，共 2 天」是噪声。
+
+        「明天不用上学」则每天都判——它是已知唯一能把深夜从「不佳」拽回来的支点
+        （见 ``skeleton.toml`` 里那段实测）。只在明天真的不用上学时才说，
+        明天要上学就什么都不说：那是改动前的状态，不引入新的风险。
+        """
+        parts: list[str] = []
+        if context.holiday:
+            parts.append(
+                prompts.render(name, "holiday_open" if context.store_open else "holiday_closed")
+            )
+
+        if context.rest_total >= 3:
+            tail = "rest_tail_more" if context.rest_index < context.rest_total else "rest_tail_last"
+            parts.append(
+                prompts.render(
+                    name,
+                    "rest_run",
+                    index=context.rest_index,
+                    total=context.rest_total,
+                    tail=prompts.render(name, tail),
+                )
+            )
+        elif not context.tomorrow_school:
+            parts.append(prompts.render(name, "tomorrow_free"))
+
+        return "\n\n".join(parts)
 
     def _skeleton_block(self, name: str, day: date, segments: list[Segment]) -> str:
         """全天骨架清单。

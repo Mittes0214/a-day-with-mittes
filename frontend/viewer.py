@@ -16,14 +16,16 @@ from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import argparse
 import json
 import socket
 import sqlite3
 import sys
+import threading
 import tomllib
+import urllib.request
 
 
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
@@ -39,6 +41,14 @@ DB_PATH = PROJECT_ROOT / "data" / "plugins" / "khiqwq.a-day-with-mittes" / "sche
 WARDROBE_PATH = PLUGIN_DIR / "character" / "wardrobe.toml"
 CONFIG_PATH = PLUGIN_DIR / "config.toml"
 WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
+
+# 祝日表跟插件共用同一份缓存：插件生成日程时下载，viewer 画日历时读。
+# 路径必须跟 schedule/holidays.py 的 ``data_dir / "holidays" / "JP"`` 对齐，
+# 错开的话两边各下一份，改了数据源还会有一边继续吃旧缓存。
+HOLIDAY_DIR = DB_PATH.parent / "holidays" / "JP"
+HOLIDAY_URL_TEMPLATE = "https://holidays-jp.github.io/api/v1/{year}/date.json"
+_HOLIDAY_LOCK = threading.Lock()
+_HOLIDAY_MEM: dict[int, dict[str, Any]] = {}
 
 
 def _connect(db_path: Path, *, readonly: bool = True) -> sqlite3.Connection:
@@ -98,6 +108,86 @@ def _load_day(conn: sqlite3.Connection, day: str) -> dict[str, Any] | None:
         "manner_enabled": _manner_enabled(CONFIG_PATH),
         "shares": grouped,
     }
+
+
+def _normalize_holidays(data: Any) -> dict[str, str]:
+    """把缓存文件里的祝日表统一成 ``{"YYYY-MM-DD": "名字"}``。
+
+    Holidays JP 的原始格式就是这样；旧版中国节假日缓存的值是个 dict
+    （``{"name": ..., "type": ...}``），这里一并认下来，免得读到历史文件就整月空白。
+    """
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, str] = {}
+    for day, info in data.items():
+        if not isinstance(day, str) or len(day) != 10:
+            continue
+        if isinstance(info, str):
+            name = info
+        elif isinstance(info, dict):
+            name = str(info.get("name") or info.get("name_cn") or "")
+        else:
+            continue
+        if name:
+            out[day] = name
+    return out
+
+
+def _download_holidays(year: int) -> dict[str, str]:
+    """现下一年的祝日表。失败一律返回空表——日历照常画，只是没有祝日标记。"""
+    request = urllib.request.Request(
+        HOLIDAY_URL_TEMPLATE.format(year=year),
+        headers={"User-Agent": "a-day-with-mittes-viewer"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=6) as response:
+            if response.status != 200:
+                return {}
+            return _normalize_holidays(json.loads(response.read().decode("utf-8")))
+    except Exception:
+        return {}
+
+
+def _load_holidays(year: int) -> dict[str, Any]:
+    """取某一年的日本祝日表，优先读插件缓存，没有就下载并写回同一个文件。
+
+    viewer 自己也下是有意的：插件只在生成那一年的日程时才会去下，而日历可以被翻到
+    任意一年。写回的路径和格式跟插件完全一致，所以下完两边都受益。
+
+    ``source`` 会发到页面上：``none`` 时页面要写明"这一年的祝日表没取到"，
+    否则一整年没有任何标记，看着跟"这一年真的没有祝日"分不出来。
+    """
+    with _HOLIDAY_LOCK:
+        hit = _HOLIDAY_MEM.get(year)
+    if hit is not None:
+        return hit
+
+    cache_file = HOLIDAY_DIR / f"{year}.json"
+    days: dict[str, str] = {}
+    source = "cache"
+    if cache_file.exists():
+        try:
+            days = _normalize_holidays(json.loads(cache_file.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError):
+            days = {}
+    if not days:
+        days = _download_holidays(year)
+        source = "network" if days else "none"
+        if days:
+            try:
+                HOLIDAY_DIR.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(
+                    json.dumps(days, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+            except OSError:
+                pass
+
+    result = {"year": year, "source": source, "days": days}
+    # 没取到的年份不进内存缓存：否则断网时翻过一次，网络恢复了也要重启 viewer 才能拿到。
+    if source != "none":
+        with _HOLIDAY_LOCK:
+            _HOLIDAY_MEM[year] = result
+    return result
 
 
 def _manner_enabled(path: Path) -> bool:
@@ -223,6 +313,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/wardrobe":
             self._send_json(_load_wardrobe(self.wardrobe_path))
             return
+        if path == "/api/holidays":
+            query = parse_qs(urlparse(self.path).query)
+            try:
+                year = int((query.get("year") or [""])[0])
+            except ValueError:
+                self._send_json({"error": "年份不是数字"}, status=400)
+                return
+            if not 1970 <= year <= 2100:
+                self._send_json({"error": "年份超出范围"}, status=400)
+                return
+            self._send_json(_load_holidays(year))
+            return
         if path == "/api/days":
             with _connect(self.db_path) as conn:
                 self._send_json(_list_days(conn))
@@ -295,12 +397,19 @@ PAGE = """<!doctype html>
 <title>Mittes 的一天</title>
 <style>
 :root {
+  /* 告诉浏览器这页两套主题都支持。不写的话浏览器一律按浅色渲染它自己那部分 UI，
+     深色下滚动条就是亮白的一条，日期选择器同理。 */
+  color-scheme: light dark;
   --bg: #faf9f7; --panel: #fff; --line: #e6e2dc; --text: #2c2a28;
   --muted: #8a8378; --accent: #c96a5a; --badge: #f0ece6;
   /* 时间条上的三类 kind：睡眠 / 忙（工作·上学）/ 闲（自由·外出·通勤）。
      浅色主题下要压得够暗——条子上是白字，太浅会读不清 */
   --kind-sleep: #7d7568; --kind-busy: #a85b4d; --kind-idle: #4e7c6a;
   --band-ink: #fff;
+  /* 日历：按日本的习惯，土曜蓝、日曜和祝日红。蓝红分处冷暖两端，
+     红绿色觉也能分开——单靠深浅的话周六周日就成了一个颜色。 */
+  --sat: #3f6ea8; --sun: #bf5546; --hol-bg: #f6e9e5;
+  --bar: rgba(201, 106, 90, .32); --bar-on: rgba(201, 106, 90, .58);
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -308,9 +417,21 @@ PAGE = """<!doctype html>
     --muted: #9a9288; --accent: #e08b78; --badge: #322e29;
     --kind-sleep: #4d4840; --kind-busy: #7d4f47; --kind-idle: #456b5f;
     --band-ink: #eae6df;
+    --sat: #8bacd8; --sun: #e08b78; --hol-bg: #3a2b26;
+    --bar: rgba(224, 139, 120, .28); --bar-on: rgba(224, 139, 120, .52);
   }
 }
 * { box-sizing: border-box; }
+/* 默认滚动条在深色页面上是白亮的一条，比页面里任何内容都抢眼。
+   两套属性都写：Chrome 认标准的 scrollbar-color，老一点的 WebKit 认 ::-webkit-*。 */
+* { scrollbar-width: thin; scrollbar-color: var(--bar) transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--bar); border-radius: 10px;
+  border: 2px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--bar-on); background-clip: padding-box; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.7 -apple-system, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
@@ -334,6 +455,99 @@ aside #more-days {
   background: none; border: 0; border-top: 1px solid var(--line); cursor: pointer;
 }
 aside #more-days:hover { color: var(--text); }
+/* ── 右侧日历 ──
+   main 封了 900px，宽屏下右边一直空着一大块。这里放一张月历：
+   周末、祝日、連休、哪天有归档，一眼看全，点一下就跳过去。
+   margin-left:auto 让它贴右边——不加的话它紧挨着 main，右边照样空一条。 */
+#cal {
+  width: 300px; flex: none; margin-left: auto; padding: 16px 14px 28px;
+  border-left: 1px solid var(--line);
+  height: 100vh; position: sticky; top: 0; overflow-y: auto;
+}
+#cal .cal-head { display: flex; align-items: center; gap: 4px; margin-bottom: 10px; }
+#cal .cal-head h2 {
+  flex: 1; margin: 0; font-size: 14px; letter-spacing: .04em;
+  font-variant-numeric: tabular-nums;
+}
+#cal .cal-head button {
+  font: inherit; font-size: 12.5px; line-height: 1; padding: 5px 8px;
+  color: var(--muted); background: none; border: 1px solid var(--line);
+  border-radius: 6px; cursor: pointer;
+}
+#cal .cal-head button:hover { color: var(--text); border-color: var(--muted); }
+/* minmax(0, 1fr) 不能省：`1fr` 等价于 `minmax(auto, 1fr)`，auto 那一头是内容的
+   最小尺寸，格子撑不下去就整体往外溢——实测列宽被顶到 47.5px，七列 343px 塞进
+   270px 的盒子里，星期日那一列直接被挤出视口，页面上只剩六列。 */
+#cal .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+#cal .wd { text-align: center; font-size: 11px; color: var(--muted); padding-bottom: 3px; }
+#cal .wd.sat { color: var(--sat); }
+#cal .wd.sun { color: var(--sun); }
+#cal .cell {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  height: 34px; border-radius: 6px; text-decoration: none;
+  font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text);
+}
+#cal .cell.sat { color: var(--sat); }
+#cal .cell.sun, #cal .cell.hol { color: var(--sun); }
+#cal .cell.hol { background: var(--hol-bg); }
+/* 连休整段都铺底色，中间的格子不留圆角，一段连休就连成一条带子。
+   跨周换行时断在行尾，正好读成"接着下一行"。 */
+#cal .cell.rest { background: var(--hol-bg); border-radius: 0; }
+#cal .cell.run-start { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+#cal .cell.run-end { border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
+#cal .cell.out { opacity: .32; }
+/* 有归档的那天：底下一个点。加粗不够——周末本来就是彩色的，粗细混在一起看不出来 */
+#cal a.cell { font-weight: 600; }
+#cal a.cell::after {
+  content: ""; position: absolute; bottom: 3px; left: 50%; transform: translateX(-50%);
+  width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .55;
+}
+#cal a.cell:hover { background: var(--badge); }
+#cal .cell.today { box-shadow: inset 0 0 0 1.5px var(--muted); }
+#cal .cell.on {
+  background: var(--accent); color: var(--band-ink); box-shadow: none; border-radius: 6px;
+}
+#cal .cell.on::after { background: var(--band-ink); opacity: .8; }
+#cal .cal-sec { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+#cal .cal-sec b {
+  display: block; margin-bottom: 5px; font-size: 11px; font-weight: 600;
+  letter-spacing: .08em; color: var(--muted);
+}
+#cal .hol-item { display: flex; gap: 7px; font-size: 12.5px; line-height: 1.75; }
+#cal .hol-item i {
+  flex: none; min-width: 58px; font-style: normal; color: var(--sun);
+  font-variant-numeric: tabular-nums;
+}
+/* 「顺延」「夹日」「黄金周」这类小牌子，祝日行和连休行共用一套 */
+#cal .tag {
+  flex: none; font-size: 10.5px; color: var(--muted); white-space: nowrap;
+  border: 1px solid var(--line); border-radius: 4px; padding: 0 4px;
+  align-self: center; margin-left: 6px;
+}
+#cal .hol-item .tag { margin-left: 0; }
+/* 祝日 / 连休下面那行说明。左边缩进对齐日期后面的名字，读起来是一整块 */
+#cal .hol-why {
+  margin: 1px 0 9px 65px; font-size: 11.5px; line-height: 1.65; color: var(--muted);
+}
+#cal .hol-why.flush { margin-left: 0; }
+#cal .run { font-size: 12.5px; line-height: 1.8; font-variant-numeric: tabular-nums; }
+#cal .run em { font-style: normal; color: var(--accent); font-weight: 600; }
+#cal .cal-note { margin-top: 12px; font-size: 11.5px; line-height: 1.7; color: var(--muted); }
+#cal .legend {
+  display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 10px;
+  font-size: 11.5px; color: var(--muted);
+}
+#cal .legend i { font-style: normal; }
+#cal .legend .sw {
+  display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+  background: var(--hol-bg); vertical-align: -1px; margin-right: 4px;
+}
+#cal .legend .dot {
+  display: inline-block; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--muted); vertical-align: 3px; margin-right: 4px;
+}
+/* aside 238 + main 900 = 1138，再窄就该把日历让出去给正文 */
+@media (max-width: 1240px) { #cal { display: none; } }
 main { flex: 1; padding: 28px 32px 64px; max-width: 900px; }
 .dayhead { border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 24px; }
 .dayhead h2 { margin: 0 0 6px; font-size: 22px; }
@@ -594,6 +808,10 @@ button.action:disabled { opacity: .55; cursor: wait; }
   body { flex-direction: column; }
   aside { width: auto; height: auto; position: static; border-right: 0; border-bottom: 1px solid var(--line); }
   main { padding: 20px 16px 48px; }
+  #cal {
+    display: block; width: auto; height: auto; position: static; margin: 0;
+    border-left: 0; border-top: 1px solid var(--line);
+  }
 }
 </style>
 </head>
@@ -609,6 +827,7 @@ button.action:disabled { opacity: .55; cursor: wait; }
   <nav id="days"></nav>
 </aside>
 <main id="main"><p class="empty">加载中…</p></main>
+<aside id="cal"></aside>
 <div id="modal"></div>
 <script>
 const WD = ['一','二','三','四','五','六','日'];
@@ -666,6 +885,207 @@ function revealActiveDay() {
   if (box && box.hidden && box.querySelector('a.on')) toggleOlder(true);
 }
 
+// ── 右侧月历 ──
+// 周末、祝日、連休、哪天有归档，全画在一张月历上。祝日表走 /api/holidays，
+// 跟插件共用同一份缓存。
+//
+// 日期算术**一律走 Date.UTC + getUTC***：new Date(y, m, d) 是按打开页面那台机器的
+// 本地时区建的，浏览器在 UTC+X 时整张日历会错一格；UTC 里做加减则跟时区无关。
+// 十六个法定祝日各是什么。名字用 holidays-jp 发回来的原文当 key（就是日文原名），
+// 值是一句中文说明——这页面是给不熟悉日本节假日的人看的，只列个日文名等于没说。
+const HOLIDAY_NOTE = {
+  '元日': '元旦。日本过阳历新年，这天是一年之始，也是正月的头一天。',
+  '成人の日': '成人日。1 月的第二个周一，各地给刚成年的人办仪式。',
+  '建国記念の日': '建国纪念日。取传说中神武天皇即位的那一天。',
+  '天皇誕生日': '天皇生日。跟着在位的天皇走，换代就换日子。',
+  '春分の日': '春分。昼夜等长，传统上这几天去扫墓祭祖。',
+  '昭和の日': '昭和天皇的生日，留下来用作回顾昭和那段年代。',
+  '憲法記念日': '宪法纪念日。1947 年现行宪法正式施行的日子。',
+  'みどりの日': '绿之日。亲近草木、感谢自然的日子。',
+  'こどもの日': '儿童节。挂鲤鱼旗，祝孩子平安长大。',
+  '海の日': '海之日。7 月的第三个周一，感谢海的恩惠——岛国才有的节日。',
+  '山の日': '山之日。2016 年才开始放，十六个祝日里最年轻的一个。',
+  '敬老の日': '敬老日。9 月的第三个周一，敬重长者、祝贺长寿。',
+  '秋分の日': '秋分。跟春分一样，是扫墓追思的日子。',
+  'スポーツの日': '体育日。10 月的第二个周一，本来纪念 1964 年东京奥运会开幕。',
+  '文化の日': '文化日。1946 年宪法公布的日子，主题是热爱自由与和平。',
+  '勤労感謝の日': '勤劳感谢日。感谢一年的收成，也互相感谢彼此的劳动。',
+};
+
+// 振替休日的名字是「原祝日 振替休日」这种拼法，国民の休日则自成一条，
+// 两者都不在上面那张表里，单独处理。
+function holidayNote(name) {
+  if (/振替休日/.test(name)) {
+    const base = name.replace(/振替休日/, '').trim();
+    return base
+      ? `${base}赶上周日，补休顺延到之后头一个平日，就落在今天。`
+      : '祝日赶上周日，补休顺延到之后头一个平日，就落在今天。';
+  }
+  if (name === '国民の休日') return '前后两天都是祝日，夹在中间的这天也跟着放。';
+  return HOLIDAY_NOTE[name] || '';
+}
+
+const HOL = {};
+let calYM = null;        // 当前显示的月份 "YYYY-MM"
+let selectedDay = null;  // 正在看的那天，日历上要高亮
+
+const pad2 = n => String(n).padStart(2, '0');
+const isoOf = d => `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+const holOf = s => ((HOL[s.slice(0, 4)] || {}).days || {})[s] || '';
+// 非工作日 = 周六 / 周日 / 祝日。日本没有调休补班，不存在"周末被征用去上班"这种情况，
+// 所以这个判断不需要再查一张补班表。
+const isRest = d => d.getUTCDay() === 0 || d.getUTCDay() === 6 || !!holOf(isoOf(d));
+
+async function ensureHolidays(years) {
+  await Promise.all([...new Set(years)].map(async y => {
+    if (HOL[y]) return;
+    try { HOL[y] = await api('/api/holidays?year=' + y); }
+    catch { HOL[y] = {year: y, source: 'none', days: {}}; }
+  }));
+}
+
+// 连着的非工作日。三天起才算连休——两天就是普通周末，列出来全是噪音。
+function restRuns(y, m) {
+  const runs = [];
+  let cur = null;
+  const stop = new Date(Date.UTC(y, m + 1, 7));
+  // 往前后各多扫一周：连休经常跨月，只扫本月会把跨月的那段从中间切断
+  for (let d = new Date(Date.UTC(y, m, -6)); d <= stop; d.setUTCDate(d.getUTCDate() + 1)) {
+    if (isRest(d)) {
+      if (cur) { cur.to = isoOf(d); cur.n++; cur.days.push(isoOf(d)); }
+      else cur = {from: isoOf(d), to: isoOf(d), n: 1, days: [isoOf(d)]};
+    } else {
+      if (cur && cur.n >= 3) runs.push(cur);
+      cur = null;
+    }
+  }
+  if (cur && cur.n >= 3) runs.push(cur);
+  return runs;   // 不在这里按月过滤：格子上色要连邻月那几天一起标，列表才另外筛
+}
+
+const mdOf = s => `${+s.slice(5, 7)}/${+s.slice(8)}`;
+
+async function renderCal() {
+  const box = document.getElementById('cal');
+  if (!box) return;
+  // 「今天」取逻辑日（00:00~02:00 算前一天），跟左边的日期列表一个口径，
+  // 否则凌晨那两个小时里日历高亮的日子和列表选中的日子会差一天。
+  const today = jstNow().date;
+  if (!calYM) calYM = (selectedDay || today).slice(0, 7);
+  const y = +calYM.slice(0, 4);
+  const m = +calYM.slice(5, 7) - 1;
+
+  const lead = (new Date(Date.UTC(y, m, 1)).getUTCDay() + 6) % 7;  // 周一起排
+  const span = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const cells = [];
+  for (let i = 0; i < Math.ceil((lead + span) / 7) * 7; i++) {
+    cells.push(new Date(Date.UTC(y, m, 1 - lead + i)));
+  }
+  // 连休里每一天在整段中的位置，画底色时用：整段连成一条，只有两头是圆角。
+  // 在 draw() 里重算（祝日表到货前后不一样），这里先占个位。
+  let runMark = new Map();
+
+  const cell = d => {
+    const s = isoOf(d);
+    const w = d.getUTCDay();
+    const name = holOf(s);
+    const cls = ['cell'];
+    if (d.getUTCMonth() !== m) cls.push('out');
+    if (w === 6) cls.push('sat');
+    if (w === 0) cls.push('sun');
+    if (name) cls.push('hol');
+    // 连休的日子一律铺底色。只给祝日铺的话，凑成连休的那两天周末看着还是普通周末
+    const mark = runMark.get(s);
+    if (mark) cls.push('rest', 'run-' + mark);
+    if (s === today) cls.push('today');
+    if (s === selectedDay) cls.push('on');
+    const tip = name ? ` title="${esc(name)}"` : '';
+    return knownDays.includes(s)
+      ? `<a class="${cls.join(' ')}" href="#${s}"${tip}>${d.getUTCDate()}</a>`
+      : `<span class="${cls.join(' ')}"${tip}>${d.getUTCDate()}</span>`;
+  };
+
+  const draw = () => {
+  const spans = restRuns(y, m);
+  runMark = new Map();
+  spans.forEach(r => r.days.forEach((s, i) => {
+    runMark.set(s, i === 0 ? 'start' : i === r.days.length - 1 ? 'end' : 'mid');
+  }));
+
+  const holidays = Object.keys((HOL[y] || {}).days || {})
+    .filter(s => s.slice(0, 7) === calYM).sort()
+    .map(s => {
+      const name = holOf(s);
+      // 振替休日＝祝日撞上周日往后顺延；国民の休日＝两个祝日夹着的那天也放。
+      // 这两种是日本这边"多出来的假"，跟国内那种周末补班的调休不是一回事。
+      const tag = /振替休日/.test(name) ? '顺延'
+        : /国民の休日/.test(name) ? '夹日' : '';
+      const wd = WD[(new Date(`${s}T00:00:00Z`).getUTCDay() + 6) % 7];
+      const why = holidayNote(name);
+      return `<div class="hol-item"><i>${mdOf(s)} 周${wd}</i><span>${esc(name)}</span>`
+        + (tag ? `<span class="tag">${tag}</span>` : '') + `</div>`
+        + (why ? `<div class="hol-why">${esc(why)}</div>` : '');
+    }).join('');
+
+  const head = `${y}-${pad2(m + 1)}`;
+  const runs = spans
+    .filter(r => r.to >= `${head}-01` && r.from <= `${head}-31`)
+    .map(r => {
+    // 逐天写出理由：周末就写周几，祝日就写祝日名。连休为什么连得起来，一行就看明白了
+    const why = r.days.map(s => {
+      const name = holOf(s);
+      if (name) return name;
+      return new Date(`${s}T00:00:00Z`).getUTCDay() === 6 ? '周六' : '周日';
+    }).join(' · ');
+    // 两个有俗名的长假。日历上只标不解释的话，听别人说起"黄金周"会对不上号
+    const gw = r.days.some(s => ['04-29', '05-03', '05-04', '05-05'].includes(s.slice(5)));
+    const sw = !gw && r.n >= 5 && r.days.some(s => s.slice(5, 7) === '09');
+    const tag = gw ? '黄金周' : sw ? '白银周' : '';
+    return `<div class="run">${mdOf(r.from)} – ${mdOf(r.to)}　<em>连休 ${r.n} 天</em>`
+      + (tag ? `<span class="tag">${tag}</span>` : '') + `</div>`
+      + `<div class="hol-why flush">${esc(why)}</div>`;
+  }).join('');
+
+  const missing = ((HOL[y] || {}).source === 'none')
+    ? `<div class="cal-note">${y} 年的祝日表没取到（缓存里没有，也没连上 holidays-jp），
+         这一个月只标了周末。</div>`
+    : '';
+
+  box.innerHTML = `
+    <div class="cal-head">
+      <h2>${y} 年 ${m + 1} 月</h2>
+      <button type="button" data-cal="prev" title="上个月">‹</button>
+      <button type="button" data-cal="today">今天</button>
+      <button type="button" data-cal="next" title="下个月">›</button>
+    </div>
+    <div class="grid">
+      ${WD.map((w, i) => `<div class="wd${i === 5 ? ' sat' : i === 6 ? ' sun' : ''}">${w}</div>`).join('')}
+      ${cells.map(cell).join('')}
+    </div>
+    ${missing}
+    ${holidays ? `<div class="cal-sec"><b>本月祝日</b>${holidays}</div>` : ''}
+    ${runs ? `<div class="cal-sec"><b>连休</b>${runs}</div>` : ''}
+    <div class="cal-note">日本没有调休补班，只有多出来的假：祝日撞上周日，补休顺延到之后头一个平日；
+      两个祝日中间夹的那天也放。这两种都已经算在上面了。</div>
+    <div class="legend">
+      <i style="color:var(--sat)">周六</i>
+      <i style="color:var(--sun)">周日 · 祝日</i>
+      <i><span class="sw"></span>底色是祝日和连休</i>
+      <i><span class="dot"></span>有归档，可点</i>
+      <i>细框是今天</i>
+    </div>`;
+  };
+
+  // 缺哪年的祝日表就去取，但**先按手头有的画一遍**：取一年要走网络，最慢 6 秒，
+  // 这段时间里整条侧栏空着的话看着就像坏了。拿到之后再画一遍补上祝日。
+  const years = [y, cells[0].getUTCFullYear(), cells[cells.length - 1].getUTCFullYear()];
+  draw();
+  if (years.some(each => !HOL[each])) {
+    await ensureHolidays(years);
+    draw();
+  }
+}
+
 async function boot() {
   document.getElementById('generate-date').value = jstNow().date;
   await loadDays();
@@ -677,12 +1097,16 @@ async function route() {
   if (location.hash === '#expression') {
     document.querySelectorAll('#days a').forEach(a => a.classList.toggle('on', a.dataset.d === 'expression'));
     renderExpression();
+    selectedDay = null;
+    renderCal();
     window.scrollTo(0, 0);
     return;
   }
   if (location.hash === '#wardrobe') {
     document.querySelectorAll('#days a').forEach(a => a.classList.toggle('on', a.dataset.d === 'wardrobe'));
     renderWardrobe(await wardrobe());
+    selectedDay = null;
+    renderCal();
     window.scrollTo(0, 0);
     return;
   }
@@ -692,10 +1116,15 @@ async function route() {
   if (!day) {
     document.getElementById('main').innerHTML =
       '<p class="empty">归档库里还没有数据，可以从左侧指定日期生成。</p>';
+    renderCal();   // 一条归档都没有时日历照样画，至少能看祝日和周末
     return;
   }
   document.querySelectorAll('#days a').forEach(a => a.classList.toggle('on', a.dataset.d === day));
   revealActiveDay();
+  // 选中哪天，日历就翻到哪个月；手动翻月的结果保留到下次选日期为止
+  selectedDay = day;
+  calYM = day.slice(0, 7);
+  renderCal();
   const data = await api('/api/day/' + day);
   if (data.error) { document.getElementById('main').innerHTML = `<p class="empty">${esc(data.error)}</p>`; return; }
   render(day, data);
@@ -1095,6 +1524,17 @@ function jstNow() {
 }
 // 点穿搭名弹层；点空白或 × 关掉
 document.addEventListener('click', e => {
+  const page = e.target.closest('#cal [data-cal]');
+  if (page) {
+    if (page.dataset.cal === 'today') {
+      calYM = jstNow().date.slice(0, 7);
+    } else {
+      const step = page.dataset.cal === 'next' ? 1 : -1;
+      calYM = isoOf(new Date(Date.UTC(+calYM.slice(0, 4), +calYM.slice(5, 7) - 1 + step, 1))).slice(0, 7);
+    }
+    renderCal();
+    return;
+  }
   const jump = e.target.closest('.band-cell');
   if (jump) {
     const target = document.querySelector(`.seg[data-anchor="${CSS.escape(jump.dataset.jump)}"]`);

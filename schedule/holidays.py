@@ -75,6 +75,30 @@ class ScheduleGenerator:
         month_day = date_str[5:] if len(date_str) >= 5 else ""
         return FIXED_HOLIDAYS.get(month_day, "")
 
+    def holiday_dates(self, year: int, holiday_map: dict[str, Any]) -> dict[str, str]:
+        """把某年的祝日整理成 ``{YYYY-MM-DD: 名字}``，给骨架的日型解析用。
+
+        ``get_holiday_name`` 是逐日查询，日型解析要的是整年的日期集合——
+        ``ScheduleStore.segments_of`` 在回复热路径上，不能每段都去查一次。
+
+        API 数据取不到时退回 ``FIXED_HOLIDAYS``。**那一份只有日期固定的祝日**，
+        补不出成人の日、海の日、敬老の日、スポーツの日这些ハッピーマンデー，
+        也补不出春分/秋分和振替休日。所以冷启动又没网时，这些日子会漏判、
+        照常走周中骨架——退回的是改动前的行为，不会更糟。
+        """
+        if holiday_map:
+            prefix = f"{year}-"
+            dates = {}
+            for day in holiday_map:
+                if not isinstance(day, str) or not day.startswith(prefix):
+                    continue
+                name = self.get_holiday_name(day, holiday_map)
+                if name:
+                    dates[day] = name
+            if dates:
+                return dates
+        return {f"{year}-{month_day}": name for month_day, name in FIXED_HOLIDAYS.items()}
+
     async def download_holiday_data(self, year: int) -> dict[str, Any]:
         """下载指定年份的节假日数据
 

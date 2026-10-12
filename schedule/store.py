@@ -39,9 +39,56 @@ DAY_KEYS = [
 
 WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
 
+# 祝日专用的骨架表。**哪天用哪张表不由星期几决定**，见 ``day_key_for``。
+#
+# 日本的法定祝日学校一律放假，所以周一到周五那五张表（都排着 08:45-15:40 的课）
+# 在祝日当天全是错的。而 kind 是机器读的：``上学`` 在 busy_kinds 里，
+# 照周中骨架排等于让她在法定假日的白天既不主动开话头、注入的状态还写着在上课。
+HOLIDAY_SHIFT_KEY = "schedule_holiday_shift"  # 学校休、店照开 → 全天班
+HOLIDAY_FREE_KEY = "schedule_holiday_free"  # 学校和店都休 → 全休
+HOLIDAY_DAY_KEYS = [HOLIDAY_SHIFT_KEY, HOLIDAY_FREE_KEY]
+
+# 连休前后各探几天。日本最长的连假（GW）也就十天上下，14 够用；
+# 撞到上限说明这不是连休而是假期，由 rest_capped 标出来。
+_REST_PROBE_DAYS = 14
+
+# 店定休日（0 = 周一）。日本的ハッピーマンデー制度把一堆祝日挪到了周一
+# （敬老の日、スポーツの日、成人の日、海の日…），这些日子学校和店同时休，
+# 是她一年里少数几个真正整天空着的日子，所以单独给一张表，
+# 不能复用周日那张——连着两天写成同一场原宿逛街，一眼就看得出来。
+STORE_CLOSED_WEEKDAY = 0
+
 # 内存里最多保留几天（今天 + 明天，再多留一天做缓冲）。
 # 这只影响热路径的内存副本，归档库里是全量永久保留的。
 _MAX_CACHED_DAYS = 3
+
+
+@dataclass(frozen=True)
+class DayContext:
+    """这一天在日历上的性质，进第一轮 prompt 用。
+
+    骨架只说「这一天有哪些时段」，说不了「今天为什么不用上学」「这是连休的第几天」。
+    后者对写手是强支点：骨架注释里那次实测，整天判「不佳」的九天里唯一翻盘的两次
+    有一次就是末段写了「明天不用早起，越看越精神」——连休感知按住的是同一个开关。
+    """
+
+    # 祝日名，已带书名号；空串 = 不是祝日
+    holiday: str = ""
+    # 今天店开不开。只在 holiday 非空时有意义
+    store_open: bool = True
+    # 今天是这段连休的第几天，从 1 起；0 = 今天有课，不在连休里
+    rest_index: int = 0
+    # 这段连休一共几天
+    rest_total: int = 0
+    # 明天要不要上学。**每天都算**，不只是连休里——实测唯一一次把深夜从「不佳」
+    # 拽回「一般」的，就是周五末段写了「明天不用早起，越看越精神」，而周五本身有课。
+    tomorrow_school: bool = True
+    # 这段连休里出现的全部祝日名，按日期先后、去重。今天不是祝日时用它说明
+    # 连休的成因——光说「连休第 2 天」，读的人无从判断这是法定连假还是普通周末。
+    rest_holidays: tuple[str, ...] = ()
+    # 前后探测撞到上限，这段"连休"的真实长度未知。换成假期骨架（整月没有 `上学` 段）
+    # 时会这样，那时报「第 15 天／共 29 天」是纯噪声，调用方应当整段不说。
+    rest_capped: bool = False
 
 
 @dataclass(frozen=True)
@@ -190,6 +237,13 @@ class ScheduleStore:
         self._cache: dict[str, DayCache] = {}
         # 谈资分享状态：{(日期, 时段, 会话): (注入次数, 说出口时刻)}
         self._shares: dict[tuple[str, str, str], tuple[int, str, int]] = {}
+        # {YYYY-MM-DD: 祝日名}。由插件在 on_load 和每次批次开头灌进来，见 set_holidays
+        self._holidays: dict[str, str] = {}
+        # {YYYY-MM-DD: 骨架表名}，手写的日历覆盖，优先于祝日规则
+        self._calendar: dict[str, str] = {}
+        # day_context 的按日缓存。它进 planner 的每轮注入，而算一次连休最多要
+        # 往前后各探 14 天、每天扫一遍骨架。结果只随祝日表和骨架变，缓存到这两者变为止。
+        self._context_cache: dict[str, DayContext] = {}
 
     # ── 骨架 ──
     def load_skeleton(self) -> None:
@@ -198,7 +252,7 @@ class ScheduleStore:
             raw = tomllib.load(handle)
 
         days: dict[str, list[Segment]] = {}
-        for key in DAY_KEYS:
+        for key in DAY_KEYS + HOLIDAY_DAY_KEYS:
             rows = raw.get(key)
             if not isinstance(rows, list) or not rows:
                 raise ValueError(f"骨架缺少 {key} 或为空：{self._skeleton_path}")
@@ -244,12 +298,124 @@ class ScheduleStore:
         if missing:
             raise ValueError(f"骨架用到的 kind 缺少对应底稿：{sorted(missing)}")
 
+        # 手写的日历覆盖。祝日走规则自动映射，不用写在这里；这里留给校历——
+        # 文化祭、体育祭、考试周、开校纪念日这些既不是祝日、又改变整天形状的日子。
+        calendar_raw = raw.get("calendar") or {}
+        overrides = calendar_raw.get("override") if isinstance(calendar_raw, dict) else None
+        calendar: dict[str, str] = {}
+        for day_str, key in (overrides or {}).items():
+            try:
+                date.fromisoformat(str(day_str))
+            except ValueError as exc:
+                raise ValueError(f"[calendar.override] 的日期不合法：{day_str}") from exc
+            if key not in days:
+                raise ValueError(f"[calendar.override] {day_str} 指向不存在的骨架表：{key}")
+            calendar[str(day_str)] = str(key)
+
         self._days = days
         self._fallback = fallback
+        self._calendar = calendar
+        self._context_cache.clear()
+
+    # ── 日型解析 ──
+    def set_holidays(self, holidays: dict[str, str]) -> None:
+        """灌入 {YYYY-MM-DD: 祝日名}，合并进已有的（跨年时两年的数据都要在）。
+
+        ``segments_of`` 是回复热路径，每轮 planner / replyer 都要走，所以必须同步、
+        不能碰网络。祝日数据由插件在 ``on_load`` 从磁盘缓存同步读进来、
+        再由每天的批次异步刷新，这里只负责收下。
+
+        **新增的祝日会改变日型，所以受影响那几天的内存副本必须作废。**
+        内存副本是 ``_drop_stale`` 按「当时的骨架」裁过的：某天在灌入祝日之前
+        按周中表裁过一遍，祝日表的 slot 会被当成陈旧段全部删掉，而
+        ``load_day_cache`` 命中内存后不再查库，那一天就永久退底稿。
+        实测过一次：9/21 的 11 段被裁到只剩两表共有的 24:00-26:00，
+        整天的注入都是 ``[fallback."通勤"]`` 的底稿原文。
+        丢掉缓存是安全的——归档库是权威，下次取用时按新日型重新装载。
+        """
+        fresh = {day: name for day, name in holidays.items() if day not in self._holidays}
+        self._holidays.update(holidays)
+        for day in fresh:
+            self._cache.pop(day, None)
+        # 祝日一变，日型和连休跟着变，缓存整份作废
+        self._context_cache.clear()
+
+    def holiday_name(self, day: date) -> str:
+        """当天的祝日名，不是祝日则返回空串。"""
+        return self._holidays.get(day.isoformat(), "")
+
+    def day_key_for(self, day: date) -> str:
+        """这一天该用哪张骨架表。
+
+        优先级：手写日历覆盖 > 祝日规则 > 星期几。
+
+        祝日规则只有一条分叉——落在店定休日（周一）就是学校和店都休的全休日，
+        否则学校休、店照开，她顶一整天的班。
+        """
+        override = self._calendar.get(day.isoformat())
+        if override:
+            return override
+        if day.isoformat() in self._holidays:
+            if day.weekday() == STORE_CLOSED_WEEKDAY:
+                return HOLIDAY_FREE_KEY
+            return HOLIDAY_SHIFT_KEY
+        return DAY_KEYS[day.weekday()]
+
+    def has_school(self, day: date) -> bool:
+        """这一天要不要上学。直接数骨架里有没有 ``上学`` 段，不另外维护一份校历。"""
+        return any(segment.kind == "上学" for segment in self.segments_of(day))
+
+    def day_context(self, day: date) -> DayContext:
+        """这一天在日历上的性质。连休按「有没有课」前后各探一段，上限两周。
+
+        结果按日缓存：这个方法在 planner 的每轮注入里都要调一次。
+        """
+        key = day.isoformat()
+        hit = self._context_cache.get(key)
+        if hit is not None:
+            return hit
+        context = self._compute_day_context(day)
+        self._context_cache[key] = context
+        return context
+
+    def _compute_day_context(self, day: date) -> DayContext:
+        holiday = self.holiday_name(day)
+        store_open = self.day_key_for(day) != HOLIDAY_FREE_KEY
+        tomorrow_school = self.has_school(day + timedelta(days=1))
+
+        if self.has_school(day):
+            return DayContext(
+                holiday=holiday, store_open=store_open, tomorrow_school=tomorrow_school
+            )
+
+        # 连休 = 连着不用上学的那一串。周末自然算在内，所以 9/19 周六起的
+        # シルバーウィーク 会整段被认出来，不用手写「这是五连休」。
+        before = 0
+        while before < _REST_PROBE_DAYS and not self.has_school(day - timedelta(days=before + 1)):
+            before += 1
+        after = 0
+        while after < _REST_PROBE_DAYS and not self.has_school(day + timedelta(days=after + 1)):
+            after += 1
+
+        names: list[str] = []
+        for offset in range(-before, after + 1):
+            name = self.holiday_name(day + timedelta(days=offset))
+            if name and name not in names:
+                names.append(name)
+
+        return DayContext(
+            holiday=holiday,
+            store_open=store_open,
+            rest_index=before + 1,
+            rest_total=before + after + 1,
+            tomorrow_school=tomorrow_school,
+            rest_holidays=tuple(names),
+            rest_capped=before >= _REST_PROBE_DAYS or after >= _REST_PROBE_DAYS,
+        )
 
     def segments_of(self, day: date) -> list[Segment]:
         """取某一天的全部时段骨架。"""
-        return self._days[DAY_KEYS[day.weekday()]]
+        return self._days[self.day_key_for(day)]
 
     def all_segments(self) -> list[Segment]:
         """全周七天的时段骨架，供加载时做全局校验用。"""
@@ -380,9 +546,20 @@ class ScheduleStore:
             )
 
         # 骨架改过之后，库里会留着旧 slot——这一天正在被重写，顺手裁掉
-        removed = self._db.prune_day(day, {segment.slot for segment in self.segments_of(day)})
+        keep = {segment.slot for segment in self.segments_of(day)}
+        removed = self._db.prune_day(day, keep)
         if removed:
             _logger.info("[归档] %s 清掉 %d 段不属于当前骨架的旧记录", day, removed)
+
+        # **内存副本也要裁**。只裁库的话，这一天的 DayCache 里会同时躺着新旧两套段：
+        # 库是对的、前端显示是对的，但凡是读内存的地方都会多出一批查不到出处的段。
+        # 实测表现是批次报告写出「22/11 段完成」——祝日骨架 11 段，加上库里原先那
+        # 12 段周一的，重叠掉 24:00-26:00 之后正好 22。
+        stale = [slot for slot in cached.segments if slot not in keep]
+        for slot in stale:
+            del cached.segments[slot]
+        if stale:
+            _logger.info("[内存] %s 清掉 %d 段不属于当前骨架的旧状态", day, len(stale))
 
         # 内存只留**离今天最近**的几天；其余全在库里，用到时 load_day_cache 现装。
         # 不能按日期从大到小留：前端生成几个未来日期就会把今天挤出去，
@@ -532,11 +709,20 @@ class ScheduleStore:
         self._db.delete_shares(day, slot)
 
     def day_generated_count(self, day: date) -> int:
-        """某天已生成成功的段数。"""
+        """某天已生成成功的段数。
+
+        **只数当前骨架里有的段。** 调用点在 ``flush()`` 之前（批次报告要用这个数），
+        那时内存里可能还留着上一版骨架的段——换季或祝日改表的当天就会这样，
+        数进去会报出「22/11 段完成」这种分子大于分母的数。
+        """
         cached = self._cache.get(day.isoformat())
         if cached is None:
             return 0
-        return sum(1 for state in cached.segments.values() if state.generated)
+        return sum(
+            1
+            for segment in self.segments_of(day)
+            if (state := cached.segments.get(segment.slot)) is not None and state.generated
+        )
 
 
 _MINUTES_PER_DAY = 24 * 60
