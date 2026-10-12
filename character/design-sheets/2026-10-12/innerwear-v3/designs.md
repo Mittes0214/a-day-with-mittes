@@ -9,9 +9,9 @@
 - [Intimissimi La Collezione](https://www.intimissimi.com/us/women/capsule_collection/)：缎面与其他面料组合的视觉层次。
 - [Wacoal Size Order Collection](https://www.wacoal.jp/sizeorder/collection/)：丝缎与哑光质感、成片纹样、装饰与衣片结构的结合。
 
-以下为结合 Mittes 服装用途重新设计的原创方案，不是品牌原款复刻。图片生成暂缓，前一轮已生成的图片不作为本版设定图。
+以下为结合 Mittes 服装用途重新设计的原创方案，不是品牌原款复刻。本版图片固定已认可的女仆装内搭画风，前一轮草稿图片不作为本版设定图。
 
-## 02 · 绿色西装外套冬季校服
+## 02 · 白色长袖水手服配藏青百褶裙
 
 **杏米色斜裁拼缝**
 

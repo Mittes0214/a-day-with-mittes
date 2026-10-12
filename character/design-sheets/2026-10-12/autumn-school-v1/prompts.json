@@ -1,0 +1,10 @@
+{
+  "tool": "imagegen (built-in)",
+  "filename": "02_白色长袖水手服配藏青百褶裙_外装.png",
+  "references": [
+    "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/maid-split-v2/01_黑白女仆装_外装.png",
+    "/home/mittes/.codex/attachments/373ff080-db1a-40ea-a97b-f68442a9e2e4/codex-clipboard-98e4d642-5608-499d-bc77-fb1757f3ccd6.png"
+  ],
+  "prompt": "Use case: stylized-concept. Generate a NEW empty clothing-only Japanese anime design sheet.\nImage 1 is the STRICT illustration-style reference: match its warm thin hand-drawn outlines, airy flat ivory background, soft simplified cel-shadow folds, pastel palette dots, hand-lettered Chinese captions and pink heading underline. Image 2 is CLOTHING CUT ONLY: reproduce the white long-sleeved sailor uniform with navy sailor collar and two thin white stripes, navy triangular chest insert and broad soft navy neckerchief, navy cuffs with two white stripes, high-waist plain navy pleated skirt. Do not copy people, hair, bodies, scene, pose, cards or other objects from image 2.\nExact wardrobe:\n白色长袖水手服，略宽松，衣长刚到裙腰，藏青水手领双白线、藏青三角挡片、宽软藏青领巾；微蓬长袖，藏青袖口双白线。藏青纯色高腰宽褶裙，膝上约十厘米，素色平整腰头，无花边。\n藏青不透细罗纹及膝袜，棕色圆头低跟乐福鞋，黑色制服手提包，一个小挂件。奶白细针织开衫是可选外搭，另放一小图标“早晚可选”。\nComposition: main large front and smaller back of empty sailor top and pleated skirt with no body inside, readable collar construction front/back. Separate neckerchief, pair of flat empty socks, pair of loafers, bag and small optional cardigan arranged neatly, full garments unclipped. Heading “秋季水手校服”, small handwritten labels and color dots like Image 1. No person, face, hair, skin, mannequin, anatomical outline, underwear, safety shorts, winter blazer, school emblem, tartan, red bow, garters, jewelry, cats, cards or watermark. All clothing only, no realism, no 3D, no fabric grain. Keep faithful white/navy sailor cut from image 2 and style only from image 1.",
+  "source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-1b355480-6160-4feb-a5cc-1b577d92533f.png"
+}

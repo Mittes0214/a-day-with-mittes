@@ -1,6 +1,6 @@
 {
   "tool": "imagegen (built-in)",
-  "status": "text-redesigned; image generation paused",
+  "status": "complete",
   "sources": [
     {
       "title": "Etam Live Show 2025 官方发布",
@@ -26,16 +26,17 @@
   "images": [
     {
       "n": "02",
-      "outfit": "绿色西装外套冬季校服",
+      "outfit": "白色长袖水手服配藏青百褶裙",
       "title": "杏米色斜裁拼缝",
       "feature": "平直领线、斜向拼缝、低对比织纹，借用衬衫的利落感。",
       "upper": "文胸：浅杏米色无钢圈薄杯文胸，上沿接近平直，两侧自然转入稍宽肩带；杯面由光面微纤维和细人字织纹拼接，斜向拼缝从外侧收向中央，以奶白细滚边描出，背带宽而平整。",
       "lower": "内裤：浅杏米色中腰三角内裤，侧片稍宽，前片两侧接入细人字织纹拼片；拼缝沿腰线斜向展开，奶白平整窄腰边，裤口软包边，常规包覆剪裁。",
-      "filename": "02_绿色西装外套冬季校服_内搭.png",
+      "filename": "02_白色长袖水手服配藏青百褶裙_内搭.png",
       "references": [
         "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/maid-split-v2/02_黑白女仆装_内搭.png"
       ],
-      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n文胸：浅杏米色无钢圈薄杯文胸，上沿接近平直，两侧自然转入稍宽肩带；杯面由光面微纤维和细人字织纹拼接，斜向拼缝从外侧收向中央，以奶白细滚边描出，背带宽而平整。\n内裤：浅杏米色中腰三角内裤，侧片稍宽，前片两侧接入细人字织纹拼片；拼缝沿腰线斜向展开，奶白平整窄腰边，裤口软包边，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “杏米色斜裁拼缝”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D."
+      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n文胸：浅杏米色无钢圈薄杯文胸，上沿接近平直，两侧自然转入稍宽肩带；杯面由光面微纤维和细人字织纹拼接，斜向拼缝从外侧收向中央，以奶白细滚边描出，背带宽而平整。\n内裤：浅杏米色中腰三角内裤，侧片稍宽，前片两侧接入细人字织纹拼片；拼缝沿腰线斜向展开，奶白平整窄腰边，裤口软包边，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “杏米色斜裁拼缝”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D.",
+      "source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-abfe7c64-9f4b-40e4-bec0-7b9ec66cf25c.png"
     },
     {
       "n": "03",
@@ -48,7 +49,8 @@
       "references": [
         "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/maid-split-v2/02_黑白女仆装_内搭.png"
       ],
-      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n内衣：柔樱粉棉莫代尔细罗纹短背心，稍宽肩带，胸前两片面料浅浅交叠并缝合固定，领口开度适中；交叠边用奶白窄包边，宽下围为同色双层平纹，内置可拆薄衬垫，背面是一整片柔软罗纹。\n内裤：柔樱粉中腰宽侧三角内裤，前腰以两条奶白窄边交叠出浅弧线，下方一小段扇形细褶自然展开；其余为同色细罗纹，裤口平整，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “樱粉色交叠短背心”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D."
+      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n内衣：柔樱粉棉莫代尔细罗纹短背心，稍宽肩带，胸前两片面料浅浅交叠并缝合固定，领口开度适中；交叠边用奶白窄包边，宽下围为同色双层平纹，内置可拆薄衬垫，背面是一整片柔软罗纹。\n内裤：柔樱粉中腰宽侧三角内裤，前腰以两条奶白窄边交叠出浅弧线，下方一小段扇形细褶自然展开；其余为同色细罗纹，裤口平整，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “樱粉色交叠短背心”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D.",
+      "source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-11c1d4b9-895d-4b9d-8060-daa147d4caec.png"
     },
     {
       "n": "04",
@@ -61,7 +63,8 @@
       "references": [
         "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/maid-split-v2/02_黑白女仆装_内搭.png"
       ],
-      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n文胸：浅鼠尾草绿无钢圈长下围文胸，浅方领、宽肩带，杯身与下围通过纵向分割线连接；奶白色铃兰花纹织带横贯领边，并沿两侧向下延伸，下摆是平缓波浪边，花纹处有同色不透底衬，背面宽而平整。\n内裤：同色高腰三角内裤，前片两侧各一条纵向铃兰花纹拼片，中央为素面细棉；腰边窄而平整，裤口小波浪边，花纹拼片带同色底衬，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “鼠尾草绿长下围花纹款”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D."
+      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n文胸：浅鼠尾草绿无钢圈长下围文胸，浅方领、宽肩带，杯身与下围通过纵向分割线连接；奶白色铃兰花纹织带横贯领边，并沿两侧向下延伸，下摆是平缓波浪边，花纹处有同色不透底衬，背面宽而平整。\n内裤：同色高腰三角内裤，前片两侧各一条纵向铃兰花纹拼片，中央为素面细棉；腰边窄而平整，裤口小波浪边，花纹拼片带同色底衬，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “鼠尾草绿长下围花纹款”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D.",
+      "source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-36373940-57d9-475e-941a-793723d5ffeb.png"
     },
     {
       "n": "05",
@@ -74,7 +77,8 @@
       "references": [
         "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/maid-split-v2/02_黑白女仆装_内搭.png"
       ],
-      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n文胸：低饱和莓果粉薄杯文胸，圆弧领线，杯面用柔光弹力缎面；三片扇形裁片以浅奶油细滚边分隔，线条从杯底向外展开，侧翼改用哑光同色面料，肩带为平整单带，调节扣磨砂银色。\n内裤：莓果粉中腰三角内裤，前片为扇形分割的柔光缎面，浅奶油细滚边呼应文胸；宽侧片与后片用哑光弹力细棉，腰口和裤口平整，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “莓果粉扇形缎面”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D."
+      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n文胸：低饱和莓果粉薄杯文胸，圆弧领线，杯面用柔光弹力缎面；三片扇形裁片以浅奶油细滚边分隔，线条从杯底向外展开，侧翼改用哑光同色面料，肩带为平整单带，调节扣磨砂银色。\n内裤：莓果粉中腰三角内裤，前片为扇形分割的柔光缎面，浅奶油细滚边呼应文胸；宽侧片与后片用哑光弹力细棉，腰口和裤口平整，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “莓果粉扇形缎面”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D.",
+      "source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-ee7602aa-39f4-486e-95c0-2c63472248e6.png"
     },
     {
       "n": "06",
@@ -87,7 +91,8 @@
       "references": [
         "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/maid-split-v2/02_黑白女仆装_内搭.png"
       ],
-      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n文胸：浅雾紫薄杯文胸，杯面以三片圆弧花瓣形面料拼成，上沿一片为奶白色密实绣花布，绣纹是疏密相间的小花与弧形叶脉；花瓣交界用同色细滚边，下围素面，肩带同色，整体圆润但不堆叠装饰。\n内裤：浅雾紫中腰宽侧三角内裤，前片上方嵌入一片奶白色花瓣形绣花布，边线自然下弯；两侧与后片为素面细棉，腰边平整，裤口仅收一道细扇贝边，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “雾紫色花瓣拼接”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D."
+      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n文胸：浅雾紫薄杯文胸，杯面以三片圆弧花瓣形面料拼成，上沿一片为奶白色密实绣花布，绣纹是疏密相间的小花与弧形叶脉；花瓣交界用同色细滚边，下围素面，肩带同色，整体圆润但不堆叠装饰。\n内裤：浅雾紫中腰宽侧三角内裤，前片上方嵌入一片奶白色花瓣形绣花布，边线自然下弯；两侧与后片为素面细棉，腰边平整，裤口仅收一道细扇贝边，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “雾紫色花瓣拼接”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D.",
+      "source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-259cf460-7992-4617-8303-c27fb2400af2.png"
     },
     {
       "n": "07",
@@ -100,7 +105,8 @@
       "references": [
         "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/maid-split-v2/02_黑白女仆装_内搭.png"
       ],
-      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n运动内衣：冰蓝灰吸湿速干运动内衣，较高的浅圆领、宽肩带，固定式薄衬垫，背片向中央收成工字形；奶白色弧形拼片由肩部延伸至两侧，浅樱粉细线沿拼接边绕过胸前，下围为宽软弹力带，所有接缝平整。\n内裤：冰蓝灰中腰运动三角内裤，宽侧片，奶白色弧形拼片沿腰侧向后延伸，浅樱粉细线呼应上装；细密不透的速干面料，平缝裤口，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “冰蓝灰流线运动款”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D."
+      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n运动内衣：冰蓝灰吸湿速干运动内衣，较高的浅圆领、宽肩带，固定式薄衬垫，背片向中央收成工字形；奶白色弧形拼片由肩部延伸至两侧，浅樱粉细线沿拼接边绕过胸前，下围为宽软弹力带，所有接缝平整。\n内裤：冰蓝灰中腰运动三角内裤，宽侧片，奶白色弧形拼片沿腰侧向后延伸，浅樱粉细线呼应上装；细密不透的速干面料，平缝裤口，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “冰蓝灰流线运动款”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D.",
+      "source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-8f8f8f36-db9a-45e0-b570-75924a3af8fd.png"
     },
     {
       "n": "08",
@@ -113,7 +119,8 @@
       "references": [
         "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/maid-split-v2/02_黑白女仆装_内搭.png"
       ],
-      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n文胸：浅奶茶色无钢圈薄杯文胸，接近平直的领线，两片光面杯身连成完整前片；淡香槟色弧形侧翼从下围包向外侧肩带根部，表面只有低对比的压线，肩带可调节，背扣平薄，领口热压收边。\n内裤：浅奶茶色中腰宽侧三角内裤，前片素面，淡香槟色月牙形侧片向后延伸；腰口和裤口热压收边，面料柔软不透，常规包覆剪裁，外层衣服下轮廓平整。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “奶茶色弧线贴合款”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D."
+      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n文胸：浅奶茶色无钢圈薄杯文胸，接近平直的领线，两片光面杯身连成完整前片；淡香槟色弧形侧翼从下围包向外侧肩带根部，表面只有低对比的压线，肩带可调节，背扣平薄，领口热压收边。\n内裤：浅奶茶色中腰宽侧三角内裤，前片素面，淡香槟色月牙形侧片向后延伸；腰口和裤口热压收边，面料柔软不透，常规包覆剪裁，外层衣服下轮廓平整。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “奶茶色弧线贴合款”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D.",
+      "source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-6b3c5e99-fb29-48cb-b043-1b1514d6a357.png"
     },
     {
       "n": "09",
@@ -126,7 +133,8 @@
       "references": [
         "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/maid-split-v2/02_黑白女仆装_内搭.png"
       ],
-      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n背心：浅雾蓝棉莫代尔软背心，宽肩带、方圆领，无衬垫，长度到腰下；前片领下压三组细褶，领口接一圈带实底的奶白小叶纹棉花边，背面素净，下摆微微散开，所有接缝柔软。\n内裤：浅雾蓝偏高腰三角内裤，柔软细棉，腰口两道平行的细包布松紧；前片两侧各压两道短细褶，裤口收窄窄的奶白小叶纹实底花边，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “雾蓝色细褶软背心”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D."
+      "prompt": "Use case: stylized-concept. Generate a new everyday clothing-only anime innerwear design sheet. Reference image is for illustration style only, not for garment shapes. Match thin warm hand-drawn outlines, soft simple cel shading, mostly white background, handwritten labels. Create the DISTINCT garment construction described below, not a recolored version of the reference.\n背心：浅雾蓝棉莫代尔软背心，宽肩带、方圆领，无衬垫，长度到腰下；前片领下压三组细褶，领口接一圈带实底的奶白小叶纹棉花边，背面素净，下摆微微散开，所有接缝柔软。\n内裤：浅雾蓝偏高腰三角内裤，柔软细棉，腰口两道平行的细包布松紧；前片两侧各压两道短细褶，裤口收窄窄的奶白小叶纹实底花边，常规包覆剪裁。\nAll fabric and patterned panels have opaque backing. Ordinary functional coverage, empty flat garments. Front/back views of each piece, generous margins, color swatches, title “雾蓝色细褶软背心”. No human, skin, body, mannequin or anatomy; no outerwear, safety shorts, stockings, sheer panels, cutouts, garters, exaggerated shaping, cartoon motifs or watermark. Do not add floral embroidery unless specifically described. No photorealism or 3D.",
+      "source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-5ac7dfe0-52ed-4531-86eb-94d0e937089d.png"
     }
   ]
 }
