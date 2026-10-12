@@ -242,18 +242,39 @@ def _load_gate_config(path: Path) -> dict[str, Any]:
     return {key: pitch.get(key, value) for key, value in defaults.items()}
 
 
+def _outfit_images(wardrobe_path: Path) -> dict[str, Path]:
+    """与模型参考图共用映射，只允许读取衣柜目录内的 PNG，不开放任意文件下载。"""
+    manifest = wardrobe_path.with_name("outfit_images.toml")
+    if not manifest.exists():
+        return {}
+    with manifest.open("rb") as handle:
+        images = tomllib.load(handle)["images"]
+    root = wardrobe_path.parent.resolve()
+    paths: dict[str, Path] = {}
+    for name, relative in images.items():
+        image = (root / relative).resolve()
+        if not image.is_relative_to(root) or image.suffix.lower() != ".png":
+            raise ValueError(f"服饰图片路径不合法：{name}")
+        if not image.is_file():
+            raise FileNotFoundError(f"缺少服饰设定图：{name}")
+        paths[name] = image
+    return paths
+
+
 def _load_wardrobe(path: Path) -> dict[str, Any]:
     """读衣柜。**每次请求都重读**——它是手写资产，改完刷新页面就该看到，
-    不该为了省一次文件读取而要求重启 viewer。文件不到 10KB。
+    不该为了省一次文件读取而要求重启 viewer。图片仅返回可用套装名，原图按需加载。
     """
     try:
         with path.open("rb") as handle:
             raw = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        return {"error": f"读不了 wardrobe.toml：{exc}"}
+        images = _outfit_images(path)
+    except (OSError, ValueError) as exc:
+        return {"error": f"读不了衣柜资料：{exc}"}
     return {
         "always": raw.get("always") or {},
         "wardrobe": raw.get("wardrobe") or {},
+        "images": list(images),
     }
 
 
@@ -312,6 +333,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/wardrobe":
             self._send_json(_load_wardrobe(self.wardrobe_path))
+            return
+        if path == "/api/outfit-image":
+            query = parse_qs(urlparse(self.path).query)
+            name = (query.get("name") or [""])[0]
+            try:
+                image = _outfit_images(self.wardrobe_path).get(name)
+                if image is None:
+                    self._send_json({"error": "这套穿搭没有设定图"}, status=404)
+                    return
+                self._send(200, "image/png", image.read_bytes(), cache_control="private, max-age=300")
+            except (OSError, ValueError) as exc:
+                self._send_json({"error": f"读不了服饰设定图：{exc}"}, status=500)
             return
         if path == "/api/holidays":
             query = parse_qs(urlparse(self.path).query)
@@ -376,10 +409,10 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self._send(status, "application/json; charset=utf-8", body)
 
-    def _send(self, status: int, content_type: str, body: bytes) -> None:
+    def _send(self, status: int, content_type: str, body: bytes, *, cache_control: str = "no-store") -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -548,7 +581,7 @@ aside #more-days:hover { color: var(--text); }
 }
 /* aside 238 + main 900 = 1138，再窄就该把日历让出去给正文 */
 @media (max-width: 1240px) { #cal { display: none; } }
-main { flex: 1; padding: 28px 32px 64px; max-width: 900px; }
+main { flex: 1; min-width: 0; padding: 28px 32px 64px; max-width: 900px; }
 .dayhead { border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 24px; }
 .dayhead h2 { margin: 0 0 6px; font-size: 22px; }
 .dayhead .meta { color: var(--muted); font-size: 13px; }
@@ -783,6 +816,35 @@ button.action:disabled { opacity: .55; cursor: wait; }
   border-radius: 4px; padding: 1px 6px;
 }
 
+/* 服饰以完整设定图为主，不裁切单品；文字清单默认折叠。 */
+.outfit-section { margin-bottom: 24px; }
+.outfit-section-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.outfit-section-head h3 { font-size: 15px; margin: 0; }
+.outfit-section-head span, .outfit-section-head a { font-size: 12px; color: var(--muted); }
+.outfit-section-head a { margin-left: auto; text-underline-offset: 3px; }
+.outfit-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.outfit-strip { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
+.outfit-strip .outfit-card { flex: 0 0 min(85%, 360px); scroll-snap-align: start; }
+.outfit-card { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.outfit-picture { display: block; position: relative; width: 100%; padding: 0; border: 0; cursor: zoom-in; background: var(--badge); }
+.outfit-picture img { display: block; width: 100%; height: auto; aspect-ratio: 3 / 2; object-fit: contain; background: #fffdf8; }
+.outfit-picture .zoom-hint {
+  position: absolute; right: 10px; bottom: 10px; border-radius: 5px; padding: 2px 7px;
+  background: var(--panel); color: var(--text); font-size: 11px; opacity: 0;
+}
+.outfit-picture:hover .zoom-hint, .outfit-picture:focus-visible .zoom-hint { opacity: 1; }
+.outfit-picture:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.outfit-caption { padding: 12px 14px; }
+.outfit-caption h3 { margin: 0; font-size: 14px; line-height: 1.6; }
+.outfit-current { color: var(--accent); font-size: 11px; margin-bottom: 4px; }
+.outfit-details { border-top: 1px solid var(--line); font-size: 12.5px; }
+.outfit-details summary { color: var(--muted); cursor: pointer; padding: 10px 14px; }
+.outfit-details summary:hover { color: var(--text); }
+.outfit-details .fields { margin: 0; padding: 2px 14px 16px; overflow-wrap: anywhere; }
+.outfit-missing { margin: 0; padding: 32px 16px; color: var(--muted); background: var(--badge); font-size: 13px; }
+.outfit-image-error { display: grid; place-items: center; aspect-ratio: 3 / 2; margin: 0; padding: 16px; color: var(--muted); background: var(--badge); }
+.wardrobe-always { margin-top: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+
 /* 穿搭细节弹层 */
 #modal {
   display: none; position: fixed; inset: 0; z-index: 20;
@@ -791,23 +853,28 @@ button.action:disabled { opacity: .55; cursor: wait; }
 #modal.on { display: flex; align-items: flex-start; justify-content: center; }
 #modal .sheet {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  padding: 20px 22px; max-width: 620px; width: 100%; margin: auto;
+  padding: 20px 22px; max-width: 1040px; width: 100%; margin: auto;
   box-shadow: 0 10px 40px rgba(0,0,0,.25); position: relative;
 }
-#modal .sheet h3 { margin: 0 0 12px; font-size: 17px; }
+#modal .sheet h3 { margin: 0 32px 12px 0; font-size: 17px; }
+#modal .outfit-full { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; background: #fffdf8; border-radius: 6px; }
+#modal .original { display: block; width: fit-content; margin: 8px 0 14px auto; font-size: 12px; color: var(--muted); text-underline-offset: 3px; }
+#modal .outfit-details { margin-top: 12px; }
 #modal .close {
   position: absolute; top: 10px; right: 12px; font-size: 22px; line-height: 1;
   background: none; border: 0; color: var(--muted); cursor: pointer;
 }
 #modal .close:hover { color: var(--text); }
-#modal .always { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
-#modal .always b { font-size: 12.5px; color: var(--muted); }
 #modal .none { color: var(--muted); font-style: italic; }
 .wardrobe-link { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 12px !important; }
 @media (max-width: 640px) {
   body { flex-direction: column; }
   aside { width: auto; height: auto; position: static; border-right: 0; border-bottom: 1px solid var(--line); }
   main { padding: 20px 16px 48px; }
+  .outfit-gallery { grid-template-columns: minmax(0, 1fr); }
+  .outfit-picture .zoom-hint { opacity: 1; }
+  #modal { padding: 12px; }
+  #modal .sheet { padding: 16px; }
   #cal {
     display: block; width: auto; height: auto; position: static; margin: 0;
     border-left: 0; border-top: 1px solid var(--line);
@@ -831,7 +898,7 @@ button.action:disabled { opacity: .55; cursor: wait; }
 <div id="modal"></div>
 <script>
 const WD = ['一','二','三','四','五','六','日'];
-const esc = s => (s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const esc = s => (s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // 表达方式那张表由 viewer 从 reply_style.py 原样发过来（见 _page_bytes），
 // 前端不留副本。心情决定口吻，体力决定这个口吻还剩多少输出；体力那层是先按心情
@@ -1127,7 +1194,7 @@ async function route() {
   renderCal();
   const data = await api('/api/day/' + day);
   if (data.error) { document.getElementById('main').innerHTML = `<p class="empty">${esc(data.error)}</p>`; return; }
-  render(day, data);
+  render(day, data, await wardrobe());
   focusNow();
 }
 
@@ -1143,7 +1210,7 @@ function focusNow() {
   }
 }
 
-function render(day, data) {
+function render(day, data, w) {
   const m = data.meta;
   const d = new Date(day + 'T00:00:00');
   const jst = jstNow();
@@ -1212,7 +1279,7 @@ function render(day, data) {
         ${data.manner_enabled === false ? '' : `<button class="action" id="regen-expressions" data-day="${day}">重新生成表达方式</button>`}
         <span id="day-job-status" class="job-status"></span>
       </div>
-    </div>${styleGrid(current)}${segs}`;
+    </div>${dayOutfits(data.segments, nowSlot, w)}${styleGrid(current)}${segs}`;
 }
 
 // 九宫格本体。current 只决定「现在」标记和默认选中格；点别的格子只换预览。
@@ -1464,38 +1531,100 @@ function outfitRows(o) {
     .map(([k, label]) => `<dt>${label}</dt><dd>${esc(o[k])}</dd>`).join('');
 }
 
-// 点段落里的穿搭名 → 弹出这一套的从头到脚
+// URL 在前端构造，让面板的 /embed/schedule/ 代理与独立 viewer 使用同一路径。
+function outfitImageUrl(name, w) {
+  return (w.images || []).includes(name) ? '/api/outfit-image?name=' + encodeURIComponent(name) : '';
+}
+
+function outfitDescription(o) {
+  return o ? `<details class="outfit-details"><summary>服饰文字说明</summary>
+      <dl class="fields">${outfitRows(o)}</dl></details>` : '';
+}
+
+function alwaysDescription(w, className = '') {
+  return `<details class="outfit-details ${className}"><summary>固定细节 · 发型、美甲与随身物品</summary>
+    <dl class="fields">${ALWAYS_LABELS.filter(([k]) => (w.always || {})[k])
+      .map(([k, label]) => `<dt>${label}</dt><dd>${esc(w.always[k])}</dd>`).join('')}</dl></details>`;
+}
+
+function outfitCard(name, w, current = false) {
+  const url = outfitImageUrl(name, w);
+  const o = (w.wardrobe || {})[name];
+  const picture = url ? `<button type="button" class="outfit-picture" data-o="${esc(name)}" aria-label="放大查看${esc(name)}">
+      <img src="${esc(url)}" alt="${esc(name)}服饰设定图" width="1536" height="1024" loading="lazy" decoding="async">
+      <span class="zoom-hint" aria-hidden="true">查看大图 ↗</span></button>`
+    : `<p class="outfit-missing">${o ? '这套穿搭尚未添加设定图' : '当日临时搭配 · 暂无设定图'}</p>`;
+  return `<article class="outfit-card">${picture}<div class="outfit-caption">
+      ${current ? '<div class="outfit-current">此刻穿着</div>' : ''}<h3>${esc(name)}</h3>
+    </div>${outfitDescription(o)}</article>`;
+}
+
+function dayOutfits(segments, nowSlot, w) {
+  const names = [...new Set(segments.map(s => s.outfit).filter(Boolean))];
+  if (!names.length) return '';
+  if (w.error) return `<section class="outfit-section"><h3>当日穿搭</h3><p class="empty">${esc(w.error)}</p></section>`;
+  const current = segments.find(s => {
+    const [a, b] = slotMinutes(s.slot);
+    return nowSlot >= a && nowSlot < b;
+  });
+  // 当前搭配排在最前，归档日则保持当天首次穿着的顺序。
+  if (current && names.includes(current.outfit)) {
+    names.splice(names.indexOf(current.outfit), 1);
+    names.unshift(current.outfit);
+  }
+  return `<section class="outfit-section" aria-label="当日穿搭">
+    <div class="outfit-section-head"><h3>当日穿搭</h3><span>${names.length} 套</span><a href="#wardrobe">查看全部衣柜 ↗</a></div>
+    <div class="outfit-strip" tabindex="0" aria-label="当日服饰图片，可横向滚动">${names.map(name => outfitCard(name, w, name === current?.outfit)).join('')}</div>
+    </section>`;
+}
+
+let outfitTrigger = null;
+function closeOutfit() {
+  document.getElementById('modal').classList.remove('on');
+  document.body.style.overflow = '';
+  document.querySelectorAll('body > aside, body > main').forEach(node => node.inert = false);
+  if (outfitTrigger?.isConnected) outfitTrigger.focus({preventScroll: true});
+}
+
+// 点段落里的穿搭名或画廊图片 → 先看完整设定图，文字默认收起。
 async function showOutfit(name) {
+  outfitTrigger = document.activeElement;
   const w = await wardrobe();
   const o = (w.wardrobe || {})[name];
-  const body = o
-    ? `<dl class="fields">${outfitRows(o)}</dl>`
-    : `<p class="none">这一身不在衣柜里——当天临时定的衣服（品牌方或角色的），每次都不一样。</p>`;
-  const always = (o && w.always) ? `<div class="always"><b>不分场合一直有的</b>
-      <dl class="fields">${ALWAYS_LABELS.filter(([k]) => w.always[k])
-        .map(([k, label]) => `<dt>${label}</dt><dd>${esc(w.always[k])}</dd>`).join('')}</dl></div>` : '';
+  const url = outfitImageUrl(name, w);
+  const body = w.error ? `<p class="none">${esc(w.error)}</p>`
+    : url ? `<img class="outfit-full" src="${esc(url)}" alt="${esc(name)}服饰设定图" width="1536" height="1024">
+        <a class="original" href="${esc(url)}" target="_blank" rel="noopener">查看原图 ↗</a>`
+    : `<p class="none">${o ? '这套穿搭尚未添加设定图。' : '这一身不在衣柜里，是当天临时定的搭配，暂无设定图。'}</p>`;
+  const always = o ? alwaysDescription(w) : '';
   document.getElementById('modal').innerHTML =
-    `<div class="sheet"><button class="close">×</button><h3>${esc(name)}</h3>${body}${always}</div>`;
+    `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="outfit-title">
+      <button type="button" class="close" aria-label="关闭服饰详情">×</button>
+      <h3 id="outfit-title">${esc(name)}</h3>${body}${outfitDescription(o)}${always}</div>`;
   document.getElementById('modal').classList.add('on');
+  document.body.style.overflow = 'hidden';
+  document.querySelectorAll('body > aside, body > main').forEach(node => node.inert = true);
+  document.querySelector('#modal .close').focus({preventScroll: true});
 }
 
 function renderWardrobe(w) {
   if (w.error) { document.getElementById('main').innerHTML = `<p class="empty">${esc(w.error)}</p>`; return; }
-  const sets = Object.entries(w.wardrobe || {}).map(([name, o]) => `
-    <article class="seg">
-      <h3>${esc(name)}</h3>
-      <dl class="fields">${outfitRows(o)}</dl>
-    </article>`).join('');
-  const always = `<article class="seg">
-      <h3>不分场合一直有的</h3>
-      <dl class="fields">${ALWAYS_LABELS.filter(([k]) => (w.always||{})[k])
-        .map(([k, label]) => `<dt>${label}</dt><dd>${esc(w.always[k])}</dd>`).join('')}</dl>
-    </article>`;
+  const sets = Object.keys(w.wardrobe || {}).map(name => outfitCard(name, w)).join('');
   document.getElementById('main').innerHTML =
     `<div class="dayhead"><h2>衣柜</h2>
-       <div class="meta">${Object.keys(w.wardrobe || {}).length} 套　·　骨架的穿搭栏填的就是这些名字</div>
-     </div>${sets}${always}`;
+       <div class="meta">${Object.keys(w.wardrobe || {}).length} 套搭配　·　点击图片查看大图，文字说明可展开</div>
+     </div><div class="outfit-gallery">${sets}</div>${alwaysDescription(w, 'wardrobe-always')}`;
 }
+
+// 请求失败时给出明确提示，不能留下看起来像已加载的破图。
+document.addEventListener('error', e => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.closest('.outfit-picture, #modal')) return;
+  const message = document.createElement('p');
+  message.className = 'outfit-image-error';
+  message.textContent = '设定图加载失败，请刷新页面重试';
+  img.replaceWith(message);
+}, true);
 
 // 日程逻辑日的起点（分钟）。骨架各天首段都是 02:00。
 const DAY_START = 2 * 60;
@@ -1554,7 +1683,7 @@ document.addEventListener('click', e => {
   const more = e.target.closest('#more-days');
   if (more) { toggleOlder(document.getElementById('older-days').hidden); return; }
 
-  const btn = e.target.closest('.outfit');
+  const btn = e.target.closest('.outfit, .outfit-picture');
   if (btn) { showOutfit(btn.dataset.o); return; }
 
   const save = e.target.closest('.save-expression');
@@ -1592,7 +1721,7 @@ document.addEventListener('click', e => {
   }
 
   const modal = document.getElementById('modal');
-  if (e.target.closest('.close') || e.target === modal) modal.classList.remove('on');
+  if (e.target.closest('.close') || e.target === modal) closeOutfit();
 });
 document.getElementById('generate-day').addEventListener('click', () => {
   const day = document.getElementById('generate-date').value;
@@ -1607,7 +1736,15 @@ document.getElementById('generate-day').addEventListener('click', () => {
     .then(() => refreshDay(day)).catch(() => {});
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') document.getElementById('modal').classList.remove('on');
+  const modal = document.getElementById('modal');
+  if (!modal.classList.contains('on')) return;
+  if (e.key === 'Escape') closeOutfit();
+  if (e.key === 'Tab') {
+    const focusable = [...modal.querySelectorAll('button, a, summary')];
+    const first = focusable[0], last = focusable.at(-1);
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
 });
 
 boot();
