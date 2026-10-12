@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.6.1
+版本：3.6.2
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """
@@ -40,6 +40,14 @@ import uuid
 from maibot_sdk import Command, HookHandler, MaiBotPlugin, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
+from .character.outfit_images import (
+    IMAGES_ARG,
+    OutfitImages,
+    OutfitQueryBridge,
+    QUERY_ARG,
+    REFERENCE_TITLE,
+    TURN_ARG,
+)
 from .character.wardrobe import Wardrobe
 from .generation.pipeline import SegmentGenerator
 from .observability.prompt_preview import PromptPreview
@@ -97,6 +105,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._plugin_dir = Path(__file__).parent
         self._store: ScheduleStore | None = None
         self._wardrobe: Wardrobe | None = None
+        self._outfit_images = OutfitImages(self._plugin_dir / "character" / "outfit_images.toml")
+        self._outfit_queries = OutfitQueryBridge()
         self._generator: SegmentGenerator | None = None
         self._negative: NegativeScheduler | None = None
         self._holidays: ScheduleGenerator | None = None
@@ -142,6 +152,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
         self._wardrobe = Wardrobe(self._plugin_dir / "character" / "wardrobe.toml")
         self._wardrobe.load()
+        self._outfit_images.load(self._wardrobe.names)
         self._warn_unknown_outfits()
 
         self._generator = SegmentGenerator(
@@ -173,6 +184,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._batch_task = None
         self._admin_task = None
         self._background.clear()
+        self._outfit_queries.clear()
         if self._store is not None:
             self._store.close_db()
 
@@ -801,7 +813,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         "get_mittes_outfit",
         brief_description=(
             "当需要描述 Mittes 穿什么时，必须调用此工具获取真实穿搭，不得推测。"
-            "从头到脚都有；不填 time 就是此刻。"
+            "返回对应服饰设定图，供你和 replyer 看图回答；不填 time 就是此刻。"
         ),
         parameters=[
             ToolParameterInfo(
@@ -816,42 +828,123 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             ),
         ],
     )
-    async def tool_get_outfit(self, time: str = "", **kwargs: Any) -> dict[str, str]:
-        del kwargs
-        return {"name": "get_mittes_outfit", "content": self._render_outfit_at(time)}
+    async def tool_get_outfit(self, time: str = "", **kwargs: Any) -> dict[str, Any]:
+        try:
+            name = self._outfit_name_at(time)
+            image = await self._outfit_images.image(name)
+        except (ValueError, LookupError, OSError) as exc:
+            return {"name": "get_mittes_outfit", "success": False, "content": str(exc)}
+        self._outfit_queries.record(
+            str(kwargs.get("stream_id") or kwargs.get("chat_id") or ""),
+            str(kwargs.get(TURN_ARG) or ""),
+            str(kwargs.get(QUERY_ARG) or ""),
+            name,
+        )
+        return {
+            "name": "get_mittes_outfit",
+            "content": REFERENCE_TITLE,
+            "content_items": [{"content_type": "image", "mime_type": "image/png", "data": image}],
+        }
 
-    def _render_outfit_at(self, raw_time: str) -> str:
-        """渲染某一时刻的穿搭。
+    def _outfit_name_at(self, raw_time: str) -> str:
+        """按查询时刻解析套装名，时间与名称只用于选图，不注入模型。"""
 
-        穿搭来自骨架的 ``outfit``（一个套装名），细节来自 ``character/wardrobe.toml``。
-        名字查不到不算错误——周五拍摄现场那身是当天临时定的，衣柜里本来就没有。
-        """
         store = self._require_store()
-        wardrobe = self._require_wardrobe()
-        now = now_jst()
-        moment = now
+        moment = now_jst()
         if raw_time.strip():
             parsed = parse_moment(raw_time)
             if parsed is None:
-                return (
+                raise ValueError(
                     f"看不懂「{raw_time.strip()}」这个时间。"
                     "请用「HH:MM」或「YYYY-MM-DD HH:MM」，比如 19:30、2026-08-19 19:30。"
                 )
             moment = parsed
-
-        day, _minutes = store.resolve_moment(moment)
         try:
             segment = store.segment_at(moment)
-        except LookupError:
-            return f"{moment:%Y-%m-%d %H:%M} 不在骨架覆盖的范围里，查不到。"
+        except LookupError as exc:
+            raise LookupError(f"{moment:%Y-%m-%d %H:%M} 不在骨架覆盖的范围里，查不到。") from exc
+        return segment.outfit
 
-        return (
-            f"【Mittes 的穿搭】{day:%Y-%m-%d} 周{weekday_name(day)}　"
-            f"{'此刻 ' if moment is now else ''}{moment:%H:%M}　"
-            f"（{segment.slot}　{segment.title}）\n\n"
-            f"{wardrobe.render(segment.outfit)}\n\n"
-            "问到哪儿说哪儿，别把整份清单报一遍——没有人会那样描述自己的衣服。"
-        )
+    @HookHandler(
+        "maisaka.planner.after_response",
+        name="outfit_query_planner",
+        mode="blocking",
+        timeout_ms=3000,
+        error_policy="skip",
+    )
+    async def handle_outfit_planner_response(
+        self, output_items: list[Any] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        """给查询与 reply 绑定逻辑轮次和调用 ID，避免跨会话、跨轮次串图。"""
+        updated = self._outfit_queries.tag_calls(str(kwargs.get("session_id") or ""), output_items or [])
+        return {
+            "success": True,
+            "action": "continue",
+            "modified_kwargs": {**kwargs, "output_items": updated},
+        }
+
+    @HookHandler(
+        "maisaka.replyer.before_request",
+        name="outfit_snapshot_replyer",
+        mode="blocking",
+        timeout_ms=3000,
+        error_policy="skip",
+    )
+    async def handle_outfit_replyer_request(
+        self, reply_tool_args: dict[str, Any] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        """在 replyer 第一次请求时固定成功查询的图片名单，重试沿用。"""
+        args = self._outfit_queries.snapshot(str(kwargs.get("session_id") or ""), reply_tool_args or {})
+        return {
+            "success": True,
+            "action": "continue",
+            "modified_kwargs": {**kwargs, "reply_tool_args": args},
+        }
+
+    @HookHandler(
+        "maisaka.replyer.before_model_request",
+        name="outfit_images_replyer",
+        mode="blocking",
+        timeout_ms=3000,
+        error_policy="skip",
+    )
+    async def handle_outfit_replyer_model_request(
+        self,
+        items: list[Any] | None = None,
+        reply_tool_args: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """仅向本次模型请求加入标题与原图，不写入真实聊天或伪造工具历史。"""
+        args = reply_tool_args or {}
+        names = args.get(IMAGES_ARG, [])
+        if not items or not names:
+            return {"success": True, "action": "continue"}
+        if not kwargs.get("selected_model_visual", False):
+            _logger.warning("[穿搭] replyer 模型 %s 不支持图片，本次未注入服饰图", kwargs.get("selected_model_name"))
+            return {"success": True, "action": "continue"}
+        # 同一批 items 再经过 hook 时替换自己的资料块，不能重复堆图。
+        updated = [
+            item for item in items
+            if not str(item.get("meta", {}).get("item_id", "")).startswith("mittes-outfit-reference-")
+        ]
+        reference = _new_user_item(REFERENCE_TITLE)
+        reference["meta"]["item_id"] = f"mittes-outfit-reference-{uuid.uuid4().hex}"
+        for name in names:
+            reference["parts"].append({
+                "type": "image",
+                "image_format": "png",
+                "image_base64": await self._outfit_images.image(name),
+            })
+        expected = str(args.get("reply_reference") or "").strip()
+        if not expected and kwargs.get("reply_reason"):
+            expected = f"当前思考：\n{kwargs['reply_reason']}".strip()
+        index = _find_item_index(updated, lambda text: bool(expected) and expected in text)
+        if index < 0:
+            index = _find_item_index(updated, lambda text: text.startswith(_REPLYER_FALLBACK_PREFIX))
+        if index < 0:
+            raise ValueError("replyer 缺少服饰参考资料的插入锚点")
+        updated.insert(index, reference)
+        return _hook_response(updated, kwargs, extra={"reply_tool_args": reply_tool_args})
 
     @Tool(
         "get_weather",

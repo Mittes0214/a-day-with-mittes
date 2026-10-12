@@ -14,7 +14,8 @@ MaiBot 插件。给角色一份每天自动生成的日程，让它影响她的�
   同时不再提（`stop_after_shared` 可以只关掉 replyer 那半边，用来观察她会不会自己重复）。
   关联起来的几个群算同一个"说过"。
 - 心情有起伏但不随机。每周随机安排几次"不顺心的事"，让心情跟着具体事件走。
-- 能查她在哪、穿什么。两个工具，可以问此刻，也可以问她今天早些时候或明天。
+- 能查她在哪、穿什么。穿搭工具返回对应套装的设定图，planner 与 replyer 共用原图，
+  可以问此刻，也可以问她今天早些时候或明天。
 - 结果永久归档进 SQLite，自带管理页，可以热编辑表达方式、按日期生成日程或重跑 topic。
 - 生成失败不影响聊天。冷启动或调用失败时用手写底稿顶着，回复链路不阻塞。
 
@@ -93,11 +94,28 @@ enable_get_weather         = true
 | `frontend/` | 日程归档与管理页面 |
 | `data/` | 数据库、节假日缓存等运行时数据，不进版本库 |
 
-三份手写资产分别是 `schedule/skeleton.toml`、`character/wardrobe.toml` 和
+手写资产包括 `schedule/skeleton.toml`、`character/wardrobe.toml`、
+`character/outfit_images.toml` 和
 `generation/prompts/*.prompt`。prompt 一次请求使用一个完整文件，改配方不用碰 Python。
 
 骨架的 `outfit` 填的是衣柜里的套装名。名字进 prompt 给 story 用，
-从头到脚的细节只给查询工具。两种粒度为什么分开，见 [DESIGN.md](DESIGN.md)。
+服装细节保存在衣柜并展示在管理页，穿搭工具只返回设定图。两种粒度为什么分开，见 [DESIGN.md](DESIGN.md)。
+
+`get_mittes_outfit` 按查询时刻选择套装，通过 `content_items` 向 planner 返回原图；
+成功结果的文字仅为 `【Mittes 的服饰参考资料】`。replyer 会过滤主程序历史中的工具媒体，
+所以插件通过请求前 Hook 单独补一条 `user` 多模态消息，放在 `reply_reference` 前，
+内容同样只有这个标题与图片。不追加服装清单、时间或套装名，也不主动发送图片到聊天。
+
+图片关联使用主程序的逻辑轮次 ID 和工具调用 ID，全部在插件内部完成。
+同一轮查询多个时刻时按顺序保留不同套装；跨轮、跨会话不沿用，失败的查询不注入。
+replyer 第一次请求固定图片名单，重试保持不变。实际选中的模型必须支持视觉；
+非视觉模型会跳过图片并记录警告，不退回文字清单。
+
+换季时同步更新 `outfit_images.toml` 和图片文件，映射必须覆盖衣柜中的全部套装。
+图片首次读取和编码在线程中完成，随后缓存；替换图片后重启插件以刷新缓存。
+
+回归检查（在 MaiBot 根目录运行，不请求模型）：
+`uv run python -m pytest plugins/01_a_day_with_mittes/tests/test_outfit_images.py -q`。
 
 一天从凌晨 02:00 算起，跨零点那段写成 `24:00-26:00`，归属当天。
 

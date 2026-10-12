@@ -236,10 +236,12 @@ Python 侧只负责填空，占位符用 `{名字}`，可选块和重复项写�
 | 类型 | 名称 | 说明 |
 |---|---|---|
 | Tool | `get_mittes_schedule` | 事实层：某一时刻的时段与故事，被问才吐；未来只给安排 |
-| Tool | `get_mittes_outfit` | 那一刻从头到脚的穿搭 |
+| Tool | `get_mittes_outfit` | 那一刻对应套装的服饰设定图 |
 | Tool | `get_weather` | 查询指定城市的实时天气和近 3 天预报 |
 | Hook | `maisaka.planner.before_request` | 给「时间：」那条 item 的行尾补上祝日和连休，并在它后面插入所在地点、心情、这一段的行程；另按窗口决定是否从 `tool_definitions` 里摘掉谈资工具 |
 | Hook | `maisaka.replyer.before_model_request` | 谈资接话版放在 system 后/聊天记录前，开口版和表达方式一起放在 `reply_reference` 前 |
+| Hook | `maisaka.planner.after_response` | 用逻辑轮次与调用 ID 关联穿搭查询和 reply，内部参数不进入资料正文 |
+| Hook | `maisaka.replyer.before_request` | 固定本次 reply 使用的服饰图片名单，重试沿用 |
 | Command | `/status *` | 调试命令，仅 operator |
 
 注入全部走插件 hook，没有修改主程序源码。但有两处直接 import 主程序内部模块，
@@ -268,14 +270,31 @@ Python 侧只负责填空，占位符用 `{名字}`，可选块和重复项写�
 凡是拿时刻查日程的地方都走它。直接用 `moment.date()` 会在每天午夜到 02:00
 之间查错一整个日期，而且不报错，只会悄悄注入前一天的状态。
 
-### 穿搭：名字进骨架，细节进工具
+### 穿搭：名字进骨架，图片进工具
 
 `character/wardrobe.toml` 存几套穿搭，每套一个名字加从头到脚的细节。
 骨架的 `outfit` 只填名字。
 
-名字跟着骨架进时段生成的 prompt，是 story 拿到的全部服装信息。细节只留在
-`get_mittes_outfit` 工具里，绝不进 story 的 prompt。分开是因为从头到脚的清单喂进
+名字跟着骨架进时段生成的 prompt，是 story 拿到的全部服装信息。细节留在衣柜和管理页，
+`get_mittes_outfit` 改为返回对应设定图，绝不进 story 的 prompt。分开是因为从头到脚的清单喂进
 story 会把它往服装说明书上带（原则一的应用）。
+
+图由 `character/outfit_images.toml` 按套装名映射，正常工具结果只有
+`【Mittes 的服饰参考资料】` 与图片。planner 走主程序已有的工具媒体通道。
+replyer 过滤了工具历史及工具图片，插件在 `before_model_request` 中单独加入
+一条相同内容的 `UserMessageItem`，放在 `reply_reference` 前；它是输入资料，
+所以不用表示过去输出的 assistant 角色，也不伪造 function call/output 历史。
+
+只记“每个会话最后查过哪套”会把旧图带进下次回复；在 planner 的
+`before_request` 中清空又会把工具调用后的续轮误判成新轮。插件改用
+`after_response` 里已绑定的 `logical_turn_id`：给查询和 reply 实参附加内部关联 ID，
+成功查询记录图片，replyer 请求前固定本次调用之前的查询结果。名单进入
+reply 工具的透传参数，重试不再读取会话中的可变状态。多个时刻查询保留不同套装，
+重复套装去重；失败的查询、其他会话、其他逻辑轮都不注入。
+
+原图首次读取和 base64 编码放到线程，之后复用同一份缓存。只在实际模型
+`selected_model_visual` 为真时注入；不支持视觉时记警告并跳过，不擅自改模型或退回文字。
+这些改动均在插件内完成，无需改主程序。
 
 名字是写手拿到的唯一线索，所以怎么命名很要紧：
 
