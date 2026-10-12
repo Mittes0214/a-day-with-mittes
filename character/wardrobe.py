@@ -30,6 +30,7 @@ _PART_LABELS: tuple[tuple[str, str], ...] = (
     ("legs", "腿"),
     ("feet", "脚"),
     ("accessories", "配饰"),
+    ("underwear", "内衣与打底"),
 )
 
 _ALWAYS_LABELS: tuple[tuple[str, str], ...] = (

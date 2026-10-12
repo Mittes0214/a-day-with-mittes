@@ -1026,7 +1026,8 @@ async function wardrobe() {
 }
 
 const PART_LABELS = [['hair','头发'],['top','上身'],['bottom','下身'],
-                     ['legs','腿'],['feet','脚'],['accessories','配饰'],['optional','有时会加']];
+                     ['legs','腿'],['feet','脚'],['accessories','配饰'],
+                     ['underwear','内衣与打底'],['optional','有时会加']];
 const ALWAYS_LABELS = [['hair_base','头发底子'],['nails','美甲'],['props','道具']];
 
 function outfitRows(o) {
