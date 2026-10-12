@@ -1,0 +1,20 @@
+{
+  "tool": "imagegen (built-in)",
+  "images": [
+    {
+      "filename": "01_黑白女仆装_外装.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/anime-v2/01_黑白女仆装_anime-v2.png",
+        "/home/mittes/.codex/attachments/7cdafe20-9288-45dc-b5bf-a78965fbb017/codex-clipboard-9833dbb3-398c-43d0-92ba-16ad8cf02543.png"
+      ],
+      "prompt": "Use case: stylized-concept. Generate a NEW garment-only anime reference sheet.\nReference roles: Image 1 is the PRECISE STYLE AND PRESENTATION target: use its light warm fine linework, airy hand-drawn anime fashion sketch look, soft pinkish ivory whites, clean almost-white background, gentle cel-shaded folds, playful small handwritten labels. Image 2 is the CLOTHING CUT reference only: adapt its maid dress shape, white rounded collar and thin black ribbon, white pintuck chest inset, short puff sleeves, crossed ruffled apron straps at back, broad ruffle apron and bow, short flared black skirt, opaque ivory over-knee socks, black round-toe platform block heels. Do not copy either image's characters or bodies.\nDraw a flat-lay clothing-only sheet with two large empty garment front/back views and accessories as detached objects. Exact clothes:\n墨黑色连衣裙，白色小圆领与细黑丝带领结、白色细褶胸前拼片、外沿黑色圆弧领线。短泡泡袖、白色窄荷叶袖边，高腰膝上短蓬裙、白色细衬裙边。\n白色围裙，宽荷叶肩带背后交叉，宽荷叶下摆、腰后大蝴蝶结；侧边口袋放小点单本和笔。\n奶白色80D平纹哑光过膝长袜，平整宽袜口。黑色圆头浅口鞋，6厘米粗跟、1.5厘米前掌厚底。白色荷叶边发箍，侧边浅灰紫小布花；两个黑色发带，猫耳发箍只作为小型可选道具单独放置，标“活动用”。\nComposition: generous clean margins and unclipped full garments. Main front and back plus detached pair of socks, shoes, headband and ribbon. A small muted palette row. Heading “黑白女仆装”, restrained handwritten labels.\nMatch image 1's loose light illustrated sweetness closely. Broad simple shadow shapes, no fabric grain, no realistic material macro details, no glossy catalog finish, no museum diagram layout.\nNo people, body, face, hair, skin, mannequin or human silhouettes. Socks are flat empty textile items, not on legs. No underwear, no safety shorts, no tights, no ankle socks, no mask, smartphone, basket or tail. No extra jewelry. No watermark."
+    },
+    {
+      "filename": "02_黑白女仆装_内搭.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/anime-v2/01_黑白女仆装_anime-v2.png"
+      ],
+      "prompt": "Use case: stylized-concept. Generate a NEW clothing-only flat-lay anime reference sheet of two coordinated everyday undergarments.\nInput image role: STYLE ONLY. Match its airy hand-drawn Japanese anime garment illustration: thin warm brown outlines, pale ivory/pink whites, softly simplified cel shadows, mostly white background, small handwritten captions. Do not copy the maid uniform, safety shorts or other objects from it.\nGarment design:\n文胸：暖奶白色无钢圈薄杯文胸，哑光光面杯身，上沿绣一小段浅灰紫花枝，细小叶片用灰绿色线点缀；领边以浅灰紫细扇贝包边收口，同色可调节肩带配小巧的磨砂银色调节扣，下围平整。\n内裤：暖奶白色中腰三角内裤，棉莫代尔面料、常规包覆剪裁；浅灰紫窄腰边，一侧绣与文胸呼应的小花枝，裤口用柔软细扇贝包边，主体面料不透。\nOrdinary functional coverage, lightweight refined floral detail with plenty of plain cloth. Opaque solid fabric throughout. No decorative bow. Visually prettier and more considered than entirely plain beige basics, still understated. Subtle lilac contrast edging and small botanical embroidery are the main design interest.\nComposition: four empty laid-flat garment views, bra front/back upper half, panties front/back lower half, with generous open space. Main front views larger. Tiny embroidery motif drawing and color swatches, no photoreal closeups. Heading “日常内搭”, short handwritten labels “正面” “背面”. A soft pale lilac underline.\nStrongly anime hand illustration like reference, simple 2D fills with one or two broad cel shadows, no material grain or realistic textile rendering, no beige catalog panel grid.\nOnly clothing products. Absolutely no person, model, skin, torso, legs, mannequin, body silhouette, provocative styling or anatomy. No sheer panels, cutouts, push-up shaping, garters, bows, cartoon motifs, stockings, outerwear or safety shorts. No watermark."
+    }
+  ]
+}
