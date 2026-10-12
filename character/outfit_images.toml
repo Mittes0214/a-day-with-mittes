@@ -1,11 +1,11 @@
-# 套装名与设定图一一对应。换季时与 wardrobe.toml 一起更新。
+# 外搭图片；与 wardrobe.toml 名称一致。内搭独立映射见 innerwear_images.toml。
 [images]
 "黑白女仆装" = "design-sheets/2026-10-12/maid-split-v2/01_黑白女仆装_外装.png"
-"白色长袖水手服配藏青百褶裙" = "design-sheets/2026-10-12/autumn-school-v1/02_白色长袖水手服配藏青百褶裙_外装.png"
-"奶白色水手领卫衣配浅灰短裤" = "design-sheets/2026-10-12/anime-v2/03_奶白色水手领卫衣配浅灰短裤_anime-v2.png"
-"有口袋的燕麦色针织背心裙" = "design-sheets/2026-10-12/anime-v2/04_有口袋的燕麦色针织背心裙_anime-v2.png"
-"米白短风衣配酒红格纹百褶裙" = "design-sheets/2026-10-12/anime-v2/05_米白短风衣配酒红格纹百褶裙_anime-v2.png"
-"浅樱粉短开衫配藏青细格百褶裙" = "design-sheets/2026-10-12/redesign-v5/06_浅樱粉短开衫配藏青细格百褶裙_anime-v5.png"
-"白色短款外套配浅樱粉滑冰练习裙" = "design-sheets/2026-10-12/anime-v2/07_白色短款外套配浅樱粉滑冰练习裙_anime-v2.png"
-"赶场用的燕麦色宽大开衫配黑百褶短裙" = "design-sheets/2026-10-12/anime-v2/08_赶场用的燕麦色宽大开衫配黑百褶短裙_anime-v2.png"
-"浅蓝细棉长袖睡衣" = "design-sheets/2026-10-12/anime-v2/09_浅蓝细棉长袖睡衣_anime-v2.png"
+"白色长袖水手服配藏青百褶裙" = "design-sheets/2026-10-12/outerwear-v6/02_白色长袖水手服配藏青百褶裙_外搭.png"
+"奶白色水手领卫衣配浅灰短裤" = "design-sheets/2026-10-12/outerwear-v6/03_奶白色水手领卫衣配浅灰短裤_外搭.png"
+"有口袋的燕麦色针织背心裙" = "design-sheets/2026-10-12/outerwear-v6/04_有口袋的燕麦色针织背心裙_外搭.png"
+"米白短风衣配酒红格纹百褶裙" = "design-sheets/2026-10-12/outerwear-v6/05_米白短风衣配酒红格纹百褶裙_外搭.png"
+"浅樱粉短开衫配藏青细格百褶裙" = "design-sheets/2026-10-12/outerwear-v6/06_浅樱粉短开衫配藏青细格百褶裙_外搭.png"
+"白色短款外套配浅樱粉滑冰练习裙" = "design-sheets/2026-10-12/outerwear-v6/07_白色短款外套配浅樱粉滑冰练习裙_外搭.png"
+"赶场用的燕麦色宽大开衫配黑百褶短裙" = "design-sheets/2026-10-12/outerwear-v6/08_赶场用的燕麦色宽大开衫配黑百褶短裙_外搭.png"
+"浅蓝细棉长袖睡衣" = "design-sheets/2026-10-12/outerwear-v6/09_浅蓝细棉长袖睡衣_外搭.png"

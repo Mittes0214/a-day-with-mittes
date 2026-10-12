@@ -1,0 +1,18 @@
+{
+  "style_version": "mittes-wardrobe-anime-v1",
+  "approved_on": "2026-10-12",
+  "references": [
+    {
+      "filename": "reference-outer.png",
+      "sha256": "6168d21522f0c397e5e3a487e203439bca033d0b534e96809decc05919255a83",
+      "source": "../design-sheets/2026-10-12/maid-split-v2/01_黑白女仆装_外装.png",
+      "role": "style and presentation only"
+    },
+    {
+      "filename": "reference-inner.png",
+      "sha256": "5344fe937f27cd3ce5463bfbc24f608359caf2e0d356677b166fcd54975cd298",
+      "source": "../design-sheets/2026-10-12/maid-split-v2/02_黑白女仆装_内搭.png",
+      "role": "style and presentation only"
+    }
+  ]
+}

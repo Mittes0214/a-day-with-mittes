@@ -1,0 +1,7 @@
+Use case: stylized-concept. Generate a NEW clothing-only anime costume reference sheet.
+The supplied image is the STRICT STYLE AND PRESENTATION reference, not the garment design. Match its airy hand-drawn Japanese anime illustration: thin warm-brown linework, almost-white clean background, softly colored flat fills, broad simple folds with only one or two gentle cel-shadow tones, small warm-brown handwritten Chinese labels, a pastel title underline and a few palette dots. No realistic fabric grain, gradients, photographic lighting, 3D, dense diagram grids or heavy black outlines.
+Create the specific clothing described below. Preserve this outfit's own cut, color and practical details; do not copy the maid uniform's frills or silhouette.
+Outfit: {name}
+{description}
+Composition: large empty front garment view and smaller consistent back view, plus separate shoes, socks and explicitly described accessories. Optional outer layers are separate and labeled “可选”. Hair ribbons/headbands may be drawn alone, never hair. Show full garments unclipped with generous margins. Short title “{name}”; only short useful labels, not the entire description. Do not copy the reference image’s Set 01/09 numbering; omit set numbers entirely.
+Only empty garments laid flat. No people, skin, face, head, hair, body silhouettes, mannequins or anatomical shaping. No underwear, safety shorts, invented items, logos or watermark. Sweet refined Japanese wardrobe reference, same visual language as the reference image.

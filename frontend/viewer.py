@@ -242,9 +242,11 @@ def _load_gate_config(path: Path) -> dict[str, Any]:
     return {key: pitch.get(key, value) for key, value in defaults.items()}
 
 
-def _outfit_images(wardrobe_path: Path) -> dict[str, Path]:
-    """与模型参考图共用映射，只允许读取衣柜目录内的 PNG，不开放任意文件下载。"""
-    manifest = wardrobe_path.with_name("outfit_images.toml")
+def _outfit_images(wardrobe_path: Path, part: str = "outer") -> dict[str, Path]:
+    """外搭复用模型映射，内搭单列；只读取衣柜目录内的 PNG。"""
+    if part not in ("outer", "inner"):
+        raise ValueError("服饰图片类型不合法")
+    manifest = wardrobe_path.with_name("innerwear_images.toml" if part == "inner" else "outfit_images.toml")
     if not manifest.exists():
         return {}
     with manifest.open("rb") as handle:
@@ -269,12 +271,21 @@ def _load_wardrobe(path: Path) -> dict[str, Any]:
         with path.open("rb") as handle:
             raw = tomllib.load(handle)
         images = _outfit_images(path)
+        inner_images = _outfit_images(path, "inner")
+        names = set(raw.get("wardrobe") or {})
+        if set(images) != names or set(inner_images) != names:
+            raise ValueError("外搭、内搭图片映射必须覆盖衣柜中的全部搭配")
     except (OSError, ValueError) as exc:
         return {"error": f"读不了衣柜资料：{exc}"}
     return {
         "always": raw.get("always") or {},
         "wardrobe": raw.get("wardrobe") or {},
         "images": list(images),
+        "inner_images": list(inner_images),
+        "image_versions": {
+            part: {name: str(image.stat().st_mtime_ns) for name, image in paths.items()}
+            for part, paths in (("outer", images), ("inner", inner_images))
+        },
     }
 
 
@@ -337,8 +348,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/outfit-image":
             query = parse_qs(urlparse(self.path).query)
             name = (query.get("name") or [""])[0]
+            part = (query.get("part") or ["outer"])[0]
+            if part not in ("outer", "inner"):
+                self._send_json({"error": "服饰图片类型不合法"}, status=400)
+                return
             try:
-                image = _outfit_images(self.wardrobe_path).get(name)
+                image = _outfit_images(self.wardrobe_path, part).get(name)
                 if image is None:
                     self._send_json({"error": "这套穿搭没有设定图"}, status=404)
                     return
@@ -816,32 +831,49 @@ button.action:disabled { opacity: .55; cursor: wait; }
   border-radius: 4px; padding: 1px 6px;
 }
 
-/* 服饰以完整设定图为主，不裁切单品；文字清单默认折叠。 */
+/* Hallmark · 衣柜局部：沿用页面色彩，每套外搭 / 内搭成对，完整展示图片。 */
+.wardrobe-view main { max-width: none; }
+.wardrobe-view #cal { display: none; }
 .outfit-section { margin-bottom: 24px; }
-.outfit-section-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.outfit-section-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 12px; }
 .outfit-section-head h3 { font-size: 15px; margin: 0; }
 .outfit-section-head span, .outfit-section-head a { font-size: 12px; color: var(--muted); }
 .outfit-section-head a { margin-left: auto; text-underline-offset: 3px; }
-.outfit-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.outfit-gallery { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
 .outfit-strip { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
-.outfit-strip .outfit-card { flex: 0 0 min(85%, 360px); scroll-snap-align: start; }
-.outfit-card { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-.outfit-picture { display: block; position: relative; width: 100%; padding: 0; border: 0; cursor: zoom-in; background: var(--badge); }
+.outfit-strip .outfit-card { flex: 0 0 min(95%, 680px); scroll-snap-align: start; }
+.outfit-card { container-type: inline-size; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.outfit-caption { padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.outfit-caption h3 { margin: 0; font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; }
+.outfit-current { color: var(--accent); font-size: 11px; margin-bottom: 4px; }
+.outfit-panels { display: grid; grid-template-columns: minmax(0, 1fr); }
+.outfit-panel { min-width: 0; }
+.outfit-panel + .outfit-panel { border-top: 1px solid var(--line); }
+.outfit-panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 16px; }
+.outfit-panel-head h4 { margin: 0; font-size: 13px; }
+.outfit-panel-head span { font-size: 11px; color: var(--muted); }
+@container (min-width: 36rem) {
+  .outfit-panels { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .outfit-panel + .outfit-panel { border-top: 0; border-left: 1px solid var(--line); }
+}
+.outfit-picture { display: block; position: relative; width: 100%; padding: 0; border: 0; cursor: zoom-in; background: #fffdf8; color: var(--text); }
 .outfit-picture img { display: block; width: 100%; height: auto; aspect-ratio: 3 / 2; object-fit: contain; background: #fffdf8; }
+.outfit-picture[data-status="loading"]::after { content: "正在加载…"; position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
 .outfit-picture .zoom-hint {
-  position: absolute; right: 10px; bottom: 10px; border-radius: 5px; padding: 2px 7px;
+  position: absolute; right: 10px; bottom: 10px; border-radius: 5px; padding: 3px 8px;
   background: var(--panel); color: var(--text); font-size: 11px; opacity: 0;
 }
-.outfit-picture:hover .zoom-hint, .outfit-picture:focus-visible .zoom-hint { opacity: 1; }
-.outfit-picture:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
-.outfit-caption { padding: 12px 14px; }
-.outfit-caption h3 { margin: 0; font-size: 14px; line-height: 1.6; }
-.outfit-current { color: var(--accent); font-size: 11px; margin-bottom: 4px; }
+@media (hover: hover) { .outfit-picture:hover .zoom-hint { opacity: 1; } }
+.outfit-picture:focus-visible .zoom-hint { opacity: 1; }
+.outfit-picture:focus-visible { outline: 2px solid var(--text); outline-offset: -3px; }
+.outfit-picture:active { opacity: .85; }
 .outfit-details { border-top: 1px solid var(--line); font-size: 12.5px; }
-.outfit-details summary { color: var(--muted); cursor: pointer; padding: 10px 14px; }
+.outfit-details summary { color: var(--muted); cursor: pointer; padding: 12px 16px; min-height: 44px; }
 .outfit-details summary:hover { color: var(--text); }
-.outfit-details .fields { margin: 0; padding: 2px 14px 16px; overflow-wrap: anywhere; }
-.outfit-missing { margin: 0; padding: 32px 16px; color: var(--muted); background: var(--badge); font-size: 13px; }
+.outfit-details summary:focus-visible { outline: 2px solid var(--text); outline-offset: -3px; }
+.outfit-details .fields { margin: 0; padding: 2px 16px 16px; overflow-wrap: anywhere; }
+.outfit-details dd { white-space: pre-line; }
+.outfit-missing { display: grid; place-items: center; aspect-ratio: 3 / 2; margin: 0; padding: 16px; color: var(--muted); background: var(--badge); font-size: 13px; }
 .outfit-image-error { display: grid; place-items: center; aspect-ratio: 3 / 2; margin: 0; padding: 16px; color: var(--muted); background: var(--badge); }
 .wardrobe-always { margin-top: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 
@@ -853,7 +885,7 @@ button.action:disabled { opacity: .55; cursor: wait; }
 #modal.on { display: flex; align-items: flex-start; justify-content: center; }
 #modal .sheet {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  padding: 20px 22px; max-width: 1040px; width: 100%; margin: auto;
+  padding: 20px 22px; max-width: 1280px; width: 100%; margin: auto;
   box-shadow: 0 10px 40px rgba(0,0,0,.25); position: relative;
 }
 #modal .sheet h3 { margin: 0 32px 12px 0; font-size: 17px; }
@@ -861,7 +893,7 @@ button.action:disabled { opacity: .55; cursor: wait; }
 #modal .original { display: block; width: fit-content; margin: 8px 0 14px auto; font-size: 12px; color: var(--muted); text-underline-offset: 3px; }
 #modal .outfit-details { margin-top: 12px; }
 #modal .close {
-  position: absolute; top: 10px; right: 12px; font-size: 22px; line-height: 1;
+  position: absolute; top: 4px; right: 6px; width: 44px; height: 44px; font-size: 22px; line-height: 1;
   background: none; border: 0; color: var(--muted); cursor: pointer;
 }
 #modal .close:hover { color: var(--text); }
@@ -1161,6 +1193,7 @@ async function boot() {
 }
 
 async function route() {
+  document.body.classList.toggle('wardrobe-view', location.hash === '#wardrobe');
   if (location.hash === '#expression') {
     document.querySelectorAll('#days a').forEach(a => a.classList.toggle('on', a.dataset.d === 'expression'));
     renderExpression();
@@ -1526,19 +1559,22 @@ const PART_LABELS = [['hair','头发'],['top','上身'],['bottom','下身'],
                      ['underwear','内衣与打底'],['optional','有时会加']];
 const ALWAYS_LABELS = [['hair_base','头发底子'],['nails','美甲'],['props','道具']];
 
-function outfitRows(o) {
-  return PART_LABELS.filter(([k]) => o[k])
+function outfitRows(o, part = 'outer') {
+  return PART_LABELS.filter(([k]) => o[k] && (part === 'inner' ? k === 'underwear' : k !== 'underwear'))
     .map(([k, label]) => `<dt>${label}</dt><dd>${esc(o[k])}</dd>`).join('');
 }
 
 // URL 在前端构造，让面板的 /embed/schedule/ 代理与独立 viewer 使用同一路径。
-function outfitImageUrl(name, w) {
-  return (w.images || []).includes(name) ? '/api/outfit-image?name=' + encodeURIComponent(name) : '';
+function outfitImageUrl(name, w, part = 'outer') {
+  const names = part === 'inner' ? w.inner_images : w.images;
+  if (!(names || []).includes(name)) return '';
+  const version = w.image_versions?.[part]?.[name] || '';
+  return '/api/outfit-image?name=' + encodeURIComponent(name) + '&part=' + part + '&v=' + encodeURIComponent(version);
 }
 
-function outfitDescription(o) {
-  return o ? `<details class="outfit-details"><summary>服饰文字说明</summary>
-      <dl class="fields">${outfitRows(o)}</dl></details>` : '';
+function outfitDescription(o, part = 'outer') {
+  return o ? `<details class="outfit-details"><summary>${part === 'inner' ? '内搭' : '外搭'}文字说明</summary>
+      <dl class="fields">${outfitRows(o, part)}</dl></details>` : '';
 }
 
 function alwaysDescription(w, className = '') {
@@ -1547,16 +1583,21 @@ function alwaysDescription(w, className = '') {
       .map(([k, label]) => `<dt>${label}</dt><dd>${esc(w.always[k])}</dd>`).join('')}</dl></details>`;
 }
 
-function outfitCard(name, w, current = false) {
-  const url = outfitImageUrl(name, w);
+function outfitPanel(name, w, part) {
+  const url = outfitImageUrl(name, w, part);
   const o = (w.wardrobe || {})[name];
-  const picture = url ? `<button type="button" class="outfit-picture" data-o="${esc(name)}" aria-label="放大查看${esc(name)}">
-      <img src="${esc(url)}" alt="${esc(name)}服饰设定图" width="1536" height="1024" loading="lazy" decoding="async">
+  const label = part === 'inner' ? '内搭' : '外搭';
+  const picture = url ? `<button type="button" class="outfit-picture" data-status="loading" data-o="${esc(name)}" data-part="${part}" aria-label="放大查看${esc(name)}${label}">
+      <img src="${esc(url)}" alt="${esc(name)}${label}设定图" width="1536" height="1024" loading="lazy" decoding="async">
       <span class="zoom-hint" aria-hidden="true">查看大图 ↗</span></button>`
-    : `<p class="outfit-missing">${o ? '这套穿搭尚未添加设定图' : '当日临时搭配 · 暂无设定图'}</p>`;
-  return `<article class="outfit-card">${picture}<div class="outfit-caption">
+    : `<p class="outfit-missing">${o ? label + '设定图尚未添加' : '当日临时搭配 · 暂无设定图'}</p>`;
+  return `<section class="outfit-panel" aria-label="${esc(name)}${label}"><div class="outfit-panel-head"><h4>${label}</h4><span>独立设定图</span></div>${picture}${outfitDescription(o, part)}</section>`;
+}
+
+function outfitCard(name, w, current = false) {
+  return `<article class="outfit-card"><div class="outfit-caption">
       ${current ? '<div class="outfit-current">此刻穿着</div>' : ''}<h3>${esc(name)}</h3>
-    </div>${outfitDescription(o)}</article>`;
+    </div><div class="outfit-panels">${outfitPanel(name, w, 'outer')}${outfitPanel(name, w, 'inner')}</div></article>`;
 }
 
 function dayOutfits(segments, nowSlot, w) {
@@ -1587,20 +1628,21 @@ function closeOutfit() {
 }
 
 // 点段落里的穿搭名或画廊图片 → 先看完整设定图，文字默认收起。
-async function showOutfit(name) {
+async function showOutfit(name, part = 'outer') {
   outfitTrigger = document.activeElement;
   const w = await wardrobe();
   const o = (w.wardrobe || {})[name];
-  const url = outfitImageUrl(name, w);
+  const url = outfitImageUrl(name, w, part);
+  const label = part === 'inner' ? '内搭' : '外搭';
   const body = w.error ? `<p class="none">${esc(w.error)}</p>`
-    : url ? `<img class="outfit-full" src="${esc(url)}" alt="${esc(name)}服饰设定图" width="1536" height="1024">
+    : url ? `<img class="outfit-full" src="${esc(url)}" alt="${esc(name)}${label}设定图" width="1536" height="1024">
         <a class="original" href="${esc(url)}" target="_blank" rel="noopener">查看原图 ↗</a>`
     : `<p class="none">${o ? '这套穿搭尚未添加设定图。' : '这一身不在衣柜里，是当天临时定的搭配，暂无设定图。'}</p>`;
   const always = o ? alwaysDescription(w) : '';
   document.getElementById('modal').innerHTML =
     `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="outfit-title">
       <button type="button" class="close" aria-label="关闭服饰详情">×</button>
-      <h3 id="outfit-title">${esc(name)}</h3>${body}${outfitDescription(o)}${always}</div>`;
+      <h3 id="outfit-title">${esc(name)} · ${label}</h3>${body}${outfitDescription(o, part)}${always}</div>`;
   document.getElementById('modal').classList.add('on');
   document.body.style.overflow = 'hidden';
   document.querySelectorAll('body > aside, body > main').forEach(node => node.inert = true);
@@ -1612,17 +1654,24 @@ function renderWardrobe(w) {
   const sets = Object.keys(w.wardrobe || {}).map(name => outfitCard(name, w)).join('');
   document.getElementById('main').innerHTML =
     `<div class="dayhead"><h2>衣柜</h2>
-       <div class="meta">${Object.keys(w.wardrobe || {}).length} 套搭配　·　点击图片查看大图，文字说明可展开</div>
+       <div class="meta">${Object.keys(w.wardrobe || {}).length} 套搭配　·　外搭与内搭分开展示　·　点击图片查看大图</div>
      </div><div class="outfit-gallery">${sets}</div>${alwaysDescription(w, 'wardrobe-always')}`;
 }
 
 // 请求失败时给出明确提示，不能留下看起来像已加载的破图。
+document.addEventListener('load', e => {
+  if (e.target instanceof HTMLImageElement && e.target.closest('.outfit-picture')) {
+    e.target.closest('.outfit-picture').dataset.status = 'ready';
+  }
+}, true);
 document.addEventListener('error', e => {
   const img = e.target;
   if (!(img instanceof HTMLImageElement) || !img.closest('.outfit-picture, #modal')) return;
   const message = document.createElement('p');
   message.className = 'outfit-image-error';
   message.textContent = '设定图加载失败，请刷新页面重试';
+  const picture = img.closest('.outfit-picture');
+  if (picture) picture.dataset.status = 'error';
   img.replaceWith(message);
 }, true);
 
@@ -1684,7 +1733,7 @@ document.addEventListener('click', e => {
   if (more) { toggleOlder(document.getElementById('older-days').hidden); return; }
 
   const btn = e.target.closest('.outfit, .outfit-picture');
-  if (btn) { showOutfit(btn.dataset.o); return; }
+  if (btn) { showOutfit(btn.dataset.o, btn.dataset.part || 'outer'); return; }
 
   const save = e.target.closest('.save-expression');
   if (save) {

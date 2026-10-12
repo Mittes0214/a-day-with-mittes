@@ -1,0 +1,7 @@
+Use case: stylized-concept. Generate a NEW clothing-only anime everyday innerwear reference sheet.
+The supplied image controls STYLE AND PRESENTATION only. Match its thin warm-brown hand-drawn outlines, almost-white clean background, softly colored flat fills, broad gentle cel shadows, small handwritten Chinese labels, pastel heading underline and palette dots. Do not copy the reference garment's cut, color or floral motif.
+Outfit: {name}
+Exact design:
+{description}
+Composition: empty upper garment front/back in the upper half and empty briefs front/back below, larger front views, generous spacing. Preserve this design's independent construction. Short title “{name} · 内搭”, short useful labels only.
+Only opaque empty clothing products with ordinary functional coverage. No people, skin, torso, body outline, mannequin, outerwear, shoes, stockings, safety shorts, sheer panels, cutouts, garters, exaggerated shaping, invented decorations or watermark. No cartoon motifs unless explicitly requested. No photorealism, fabric grain, realistic macro detail or 3D.

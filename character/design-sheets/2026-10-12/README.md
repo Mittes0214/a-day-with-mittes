@@ -1,8 +1,8 @@
 # Mittes 服饰设定图 · 2026-10-12
 
-- [八款新版独立内搭图集](innerwear-v3/README.md)：版型、拼接与面料组合各不相同，统一已认可的女仆装画风。
-- [秋季水手校服](autumn-school-v1/README.md)：替代当前冬季西装校服，按用户参考款式重设计。
-- [黑白女仆装外装与内搭](maid-split-v2/README.md)：已认可的两张独立设定图。
-- [全部九套服饰索引](anime-v2/README.md)：包含未重画的外装与新版独立内搭入口。
+- [固定画风规范与参考图](../../art-direction/STYLE.md)：后续生图的唯一画风基准。
+- [八款新版独立外搭图集](outerwear-v6/README.md)：按已认可的女仆装画风重画，只包含外搭及配件。
+- [八款新版独立内搭图集](innerwear-v3/README.md)：不同版型、拼接与面料组合。
+- [黑白女仆装外装与内搭](maid-split-v2/README.md)：已认可的两张图，继续使用。
 
-以上均为内置 imagegen 生成的二次元服饰图，无人物。独立内搭图不含安全裤；旧合图中的内搭已由独立图替代。各版本目录保留生成时的文字与提示词，早期版本仅作历史存档。
+以上均由内置 imagegen 生成，无人物、无人台。图片当前映射以 `character/outfit_images.toml` 和 `innerwear_images.toml` 为准；冬季校服已移除。各版本目录保留文字与提示词，早期版本仅作历史存档。

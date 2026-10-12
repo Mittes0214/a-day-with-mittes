@@ -1,0 +1,110 @@
+{
+  "style_version": "mittes-wardrobe-anime-v1",
+  "tool": "imagegen (built-in)",
+  "wardrobe_sha256": "1d7ddbcda450ebbfa3f946e5a64593dfd114365c7b6d4c71e439d1621796c4ff",
+  "images": [
+    {
+      "number": 2,
+      "outfit": "白色长袖水手服配藏青百褶裙",
+      "part": "outer",
+      "filename": "02_白色长袖水手服配藏青百褶裙_外搭.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/art-direction/reference-outer.png"
+      ],
+      "reference_role": "fixed style and presentation only",
+      "prompt": "Use case: stylized-concept. Generate a NEW clothing-only anime costume reference sheet.\nThe supplied image is the STRICT STYLE AND PRESENTATION reference, not the garment design. Match its airy hand-drawn Japanese anime illustration: thin warm-brown linework, almost-white clean background, softly colored flat fills, broad simple folds with only one or two gentle cel-shadow tones, small warm-brown handwritten Chinese labels, a pastel title underline and a few palette dots. No realistic fabric grain, gradients, photographic lighting, 3D, dense diagram grids or heavy black outlines.\nCreate the specific clothing described below. Preserve this outfit's own cut, color and practical details; do not copy the maid uniform's frills or silhouette.\nOutfit: 白色长袖水手服配藏青百褶裙\n上身：白色长袖水手服上衣，衣长刚到高腰裙腰头，略宽松；藏青色水手领滚两道细白线，胸前同色三角挡片，系一条宽而柔软的藏青领巾；长袖稍蓬，藏青袖口也滚两道细白线\n下身：纯藏青色高腰百褶裙，腰头平整、宽褶利落，裙长在膝上约十厘米；素色裙摆不加花边\n鞋袜中的袜子：藏青色棉混纺细罗纹及膝袜，不透底，袜口是平整宽罗纹，脚跟和脚尖加密，脚尖接缝平整\n鞋：棕色圆头乐福鞋，低跟，鞋面一道横皮带，轮廓简洁\n配饰：黑色制服手提包，只挂一个结束祈的小挂件，包里放白色猫咪图案折叠伞和白色无线耳机；领巾用上衣同色藏青\n可选单品：奶白色细针织开衫——早晚凉时搭在水手服外，领巾和水手领仍露在外面\n发饰规则（只提取发饰，不画头发）：低双马尾，黑色丝带系成小结；赶时间就披着，用素银细发夹别开刘海\nComposition: large empty front garment view and smaller consistent back view, plus separate shoes, socks and explicitly described accessories. Optional outer layers are separate and labeled “可选”. Hair ribbons/headbands may be drawn alone, never hair. Show full garments unclipped with generous margins. Short title “白色长袖水手服配藏青百褶裙”; only short useful labels, not the entire description.\nOnly empty garments laid flat. No people, skin, face, head, hair, body silhouettes, mannequins or anatomical shaping. No underwear, safety shorts, invented items, logos or watermark. Sweet refined Japanese wardrobe reference, same visual language as the reference image.\n",
+      "generated_source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-e4912b07-0aa3-442e-a8df-eb40cfa69d6e.png",
+      "initial_generated_source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-0fafe00a-a172-49f7-9b0e-698faee0468f.png",
+      "edit_prompt": "Edit only the text line “Set 01 / 09.” underneath the Chinese title: remove that numbering line completely, leaving clean almost-white paper in its place. Preserve every other part of the image exactly: title, underline, palette circles, clothing design, layout, accessories, labels, warm fine linework, colors and anime art style. Do not add any text or objects.",
+      "edit_reference_role": "initial generated image; remove copied numbering only"
+    },
+    {
+      "number": 3,
+      "outfit": "奶白色水手领卫衣配浅灰短裤",
+      "part": "outer",
+      "filename": "03_奶白色水手领卫衣配浅灰短裤_外搭.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/art-direction/reference-outer.png"
+      ],
+      "reference_role": "fixed style and presentation only",
+      "prompt": "Use case: stylized-concept. Generate a NEW clothing-only anime costume reference sheet.\nThe supplied image is the STRICT STYLE AND PRESENTATION reference, not the garment design. Match its airy hand-drawn Japanese anime illustration: thin warm-brown linework, almost-white clean background, softly colored flat fills, broad simple folds with only one or two gentle cel-shadow tones, small warm-brown handwritten Chinese labels, a pastel title underline and a few palette dots. No realistic fabric grain, gradients, photographic lighting, 3D, dense diagram grids or heavy black outlines.\nCreate the specific clothing described below. Preserve this outfit's own cut, color and practical details; do not copy the maid uniform's frills or silhouette.\nOutfit: 奶白色水手领卫衣配浅灰短裤\n上身：奶白色宽松卫衣，带一片藏青色的水手领，领边两道白线，领口垂着一截没系紧的浅樱粉丝带；袖子长出一截，正好盖住半个手背\n下身：浅灰色针织短裤，裤脚一圈小荷叶边，被卫衣下摆盖住大半，只露出一道边\n鞋袜中的袜子：奶白色棉质粗罗纹堆堆袜，袜筒偏长，松松地堆在脚踝上面；袜口用松口罗纹，脚底织得厚一点，没有蕾丝和蝴蝶结，丢进洗衣袋就能洗\n鞋：浅木色绒面室内拖鞋，走在地板上会有很轻的啪嗒声\n配饰：手腕上还留着白天那根黑色发圈\n发饰规则（只提取发饰，不画头发）：自然披散，碍事了就用一枚浅木色爪夹随手挽到脑后\nComposition: large empty front garment view and smaller consistent back view, plus separate shoes, socks and explicitly described accessories. Optional outer layers are separate and labeled “可选”. Hair ribbons/headbands may be drawn alone, never hair. Show full garments unclipped with generous margins. Short title “奶白色水手领卫衣配浅灰短裤”; only short useful labels, not the entire description.\nOnly empty garments laid flat. No people, skin, face, head, hair, body silhouettes, mannequins or anatomical shaping. No underwear, safety shorts, invented items, logos or watermark. Sweet refined Japanese wardrobe reference, same visual language as the reference image.\n",
+      "generated_source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-97aca850-1b83-41a6-a044-42f7b25b6417.png",
+      "initial_generated_source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-5802aaf6-9ae9-44d9-bebd-744bd5431231.png",
+      "edit_prompt": "Edit only the text line “Set 01 / 09.” underneath the Chinese title: remove that numbering line completely, leaving clean almost-white paper in its place. Preserve every other part of the image exactly: title, underline, palette circles, clothing design, layout, accessories, labels, warm fine linework, colors and anime art style. Do not add any text or objects.",
+      "edit_reference_role": "initial generated image; remove copied numbering only"
+    },
+    {
+      "number": 4,
+      "outfit": "有口袋的燕麦色针织背心裙",
+      "part": "outer",
+      "filename": "04_有口袋的燕麦色针织背心裙_外搭.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/art-direction/reference-outer.png"
+      ],
+      "reference_role": "fixed style and presentation only",
+      "prompt": "Use case: stylized-concept. Generate a NEW clothing-only anime costume reference sheet.\nThe supplied image is the STRICT STYLE AND PRESENTATION reference, not the garment design. Match its airy hand-drawn Japanese anime illustration: thin warm-brown linework, almost-white clean background, softly colored flat fills, broad simple folds with only one or two gentle cel-shadow tones, small warm-brown handwritten Chinese labels, a pastel title underline and a few palette dots. No realistic fabric grain, gradients, photographic lighting, 3D, dense diagram grids or heavy black outlines.\nCreate the specific clothing described below. Preserve this outfit's own cut, color and practical details; do not copy the maid uniform's frills or silhouette.\nOutfit: 有口袋的燕麦色针织背心裙\n上身：燕麦色针织背心裙，V 领开得不深，领边和袖窿各织一道藏青色细条；里面是白色小圆领衬衫，领口系一根细黑丝带打成蝴蝶结\n下身：同一条背心裙的裙摆，微微散开，到膝盖上面一点；侧缝两个藏起来的口袋——她挑中这条有一半是因为有口袋\n鞋袜中的袜子：奶白色棉混纺中筒袜，长度到小腿中段，袜筒两侧各织一条窄窄的麦穗纹，袜口收一圈小荷叶边；脚背是平纹，穿室内鞋不会堆出一团\n鞋：深棕色皮面室内鞋，软底，走木地板几乎没声音，不会吵到看书的客人\n配饰：手腕上一根细麻绳编的手绳，磨得有点起毛；口袋里通常揣着手机和一支笔\n发饰规则（只提取发饰，不画头发）：低马尾，用黑色丝带随手一系；刘海拿素银发夹别到一边\nComposition: large empty front garment view and smaller consistent back view, plus separate shoes, socks and explicitly described accessories. Optional outer layers are separate and labeled “可选”. Hair ribbons/headbands may be drawn alone, never hair. Show full garments unclipped with generous margins. Short title “有口袋的燕麦色针织背心裙”; only short useful labels, not the entire description. Do not copy the reference image’s Set 01/09 numbering; omit set numbers entirely.\nOnly empty garments laid flat. No people, skin, face, head, hair, body silhouettes, mannequins or anatomical shaping. No underwear, safety shorts, invented items, logos or watermark. Sweet refined Japanese wardrobe reference, same visual language as the reference image.\n",
+      "generated_source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-04f5bcea-4fac-4569-b01f-6686a6057585.png"
+    },
+    {
+      "number": 5,
+      "outfit": "米白短风衣配酒红格纹百褶裙",
+      "part": "outer",
+      "filename": "05_米白短风衣配酒红格纹百褶裙_外搭.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/art-direction/reference-outer.png"
+      ],
+      "reference_role": "fixed style and presentation only",
+      "prompt": "Use case: stylized-concept. Generate a NEW clothing-only anime costume reference sheet.\nThe supplied image is the STRICT STYLE AND PRESENTATION reference, not the garment design. Match its airy hand-drawn Japanese anime illustration: thin warm-brown linework, almost-white clean background, softly colored flat fills, broad simple folds with only one or two gentle cel-shadow tones, small warm-brown handwritten Chinese labels, a pastel title underline and a few palette dots. No realistic fabric grain, gradients, photographic lighting, 3D, dense diagram grids or heavy black outlines.\nCreate the specific clothing described below. Preserve this outfit's own cut, color and practical details; do not copy the maid uniform's frills or silhouette.\nOutfit: 米白短风衣配酒红格纹百褶裙\n上身：米白色短款风衣，长度只到腰，双排扣不系，腰带在背后打成一个蝴蝶结；里面是白色衬衫叠一件藏青色 V 领针织背心，领口系细黑丝带\n下身：酒红色格纹百褶短裙，高腰，格子里穿着细细的白线和藏青线，裙长在大腿中段\n鞋袜中的袜子：暖灰色 60D 哑光连裤袜，平纹、无印花，宽腰口和同色加固脚尖；外面叠奶白色棉质粗罗纹堆堆袜，袜筒堆到小腿一半，袜口不缀装饰，和格纹裙错开花样\n鞋：深棕色乐福鞋，鞋面一枚小小的金属扣\n配饰：酒红色贝雷帽，稍微歪着戴；一只小小的珍珠耳夹；深棕色小号剑桥包，斜挎，装得下手机、纸巾和随手买的东西\n发饰规则（只提取发饰，不画头发）：披散，或者松松编一条侧辫垂在左肩，发尾系一小截黑丝带\nComposition: large empty front garment view and smaller consistent back view, plus separate shoes, socks and explicitly described accessories. Optional outer layers are separate and labeled “可选”. Hair ribbons/headbands may be drawn alone, never hair. Show full garments unclipped with generous margins. Short title “米白短风衣配酒红格纹百褶裙”; only short useful labels, not the entire description. Do not copy the reference image’s Set 01/09 numbering; omit set numbers entirely.\nOnly empty garments laid flat. No people, skin, face, head, hair, body silhouettes, mannequins or anatomical shaping. No underwear, safety shorts, invented items, logos or watermark. Sweet refined Japanese wardrobe reference, same visual language as the reference image.\n",
+      "generated_source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-09dd8487-ba59-449e-b09f-06cb98a5503b.png"
+    },
+    {
+      "number": 6,
+      "outfit": "浅樱粉短开衫配藏青细格百褶裙",
+      "part": "outer",
+      "filename": "06_浅樱粉短开衫配藏青细格百褶裙_外搭.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/art-direction/reference-outer.png"
+      ],
+      "reference_role": "fixed style and presentation only",
+      "prompt": "Use case: stylized-concept. Generate a NEW clothing-only anime costume reference sheet.\nThe supplied image is the STRICT STYLE AND PRESENTATION reference, not the garment design. Match its airy hand-drawn Japanese anime illustration: thin warm-brown linework, almost-white clean background, softly colored flat fills, broad simple folds with only one or two gentle cel-shadow tones, small warm-brown handwritten Chinese labels, a pastel title underline and a few palette dots. No realistic fabric grain, gradients, photographic lighting, 3D, dense diagram grids or heavy black outlines.\nCreate the specific clothing described below. Preserve this outfit's own cut, color and practical details; do not copy the maid uniform's frills or silhouette.\nOutfit: 浅樱粉短开衫配藏青细格百褶裙\n上身：浅樱粉色短款 V 领针织开衫，纯色细针织，长度刚到高腰裙腰头，肩线略落，袖身稍宽，袖口和下摆收窄罗纹；前襟四颗小小的同色包扣，敞开穿；里面是奶白色长袖衬衫，小尖领，领下系细黑丝带，结很小、两端自然垂下，袖口从开衫里露出一道奶白边\n下身：藏青色高腰细格纹百褶短裙，裙长在膝上约十厘米，腰头平整，腰下留一小段不展开的褶线，再散成利落的宽褶；格纹由极细的浅灰线和淡粉线交织，远看接近纯藏青，侧面隐藏拉链，裙摆不缀花边\n鞋袜中的袜子：烟灰色 60D 哑光连裤袜，袜筒是很细的同色竖纹，脚背和脚尖改成平纹，宽软腰口、同色加固脚尖；单穿这一双，不叠短袜\n鞋：深巧克力棕色玛丽珍鞋，圆杏形鞋头，脚背两根窄横带各配一枚小银搭扣；三厘米低方跟，鞋底只略加厚，皮面柔和微亮，鞋面不加蝴蝶结\n配饰：米白色小号翻盖斜挎包，深棕色细皮肩带和窄窄包边，包盖中央一枚小银搭扣；小号素银圆耳夹和细发夹；黑色丝带只用在领结或发尾，不另戴项链\n发饰规则（只提取发饰，不画头发）：披散，耳侧用一枚素银细发夹别开头发；或者松松编一条侧辫，发尾系一小截黑丝带\nComposition: large empty front garment view and smaller consistent back view, plus separate shoes, socks and explicitly described accessories. Optional outer layers are separate and labeled “可选”. Hair ribbons/headbands may be drawn alone, never hair. Show full garments unclipped with generous margins. Short title “浅樱粉短开衫配藏青细格百褶裙”; only short useful labels, not the entire description. Do not copy the reference image’s Set 01/09 numbering; omit set numbers entirely.\nOnly empty garments laid flat. No people, skin, face, head, hair, body silhouettes, mannequins or anatomical shaping. No underwear, safety shorts, invented items, logos or watermark. Sweet refined Japanese wardrobe reference, same visual language as the reference image.\n",
+      "generated_source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-5cb20013-8695-4232-b093-024d0a38d27b.png"
+    },
+    {
+      "number": 7,
+      "outfit": "白色短款外套配浅樱粉滑冰练习裙",
+      "part": "outer",
+      "filename": "07_白色短款外套配浅樱粉滑冰练习裙_外搭.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/art-direction/reference-outer.png"
+      ],
+      "reference_role": "fixed style and presentation only",
+      "prompt": "Use case: stylized-concept. Generate a NEW clothing-only anime costume reference sheet.\nThe supplied image is the STRICT STYLE AND PRESENTATION reference, not the garment design. Match its airy hand-drawn Japanese anime illustration: thin warm-brown linework, almost-white clean background, softly colored flat fills, broad simple folds with only one or two gentle cel-shadow tones, small warm-brown handwritten Chinese labels, a pastel title underline and a few palette dots. No realistic fabric grain, gradients, photographic lighting, 3D, dense diagram grids or heavy black outlines.\nCreate the specific clothing described below. Preserve this outfit's own cut, color and practical details; do not copy the maid uniform's frills or silhouette.\nOutfit: 白色短款外套配浅樱粉滑冰练习裙\n上身：白色短款立领针织外套，前襟一排小圆扣，长度刚到腰；里面是浅灰色的修身长袖练习衫。冰场里常年十度上下，这件上冰也不脱\n下身：浅樱粉的滑冰练习裙，裹身式，在腰侧系一个结，裙摆很轻，滑起来会飘\n鞋袜中的袜子：黑色不透底的加厚弹力滑冰裤袜，细密哑光面，腰口宽而平，裤裆用便于活动的拼片；裤脚是可套住鞋帮的训练款，盖住冰鞋的鞋帮；里面一双薄运动袜，脚尖平缝、袜口不堆在鞋里，冰鞋里不能穿厚的\n鞋：路上穿白色帆布鞋；到了场边换冰场租的白色花滑冰鞋，鞋带每次都要重新勒两遍\n配饰：浅樱粉的薄针织手套，掌心有防滑胶点，摔了能撑一下；一只白色帆布双肩包，装着换下来的校服、水壶和一条小毛巾\n发饰规则（只提取发饰，不画头发）：高马尾，再用黑色丝带缠一圈固定——转起来不能有头发甩到脸上\nComposition: large empty front garment view and smaller consistent back view, plus separate shoes, socks and explicitly described accessories. Optional outer layers are separate and labeled “可选”. Hair ribbons/headbands may be drawn alone, never hair. Show full garments unclipped with generous margins. Short title “白色短款外套配浅樱粉滑冰练习裙”; only short useful labels, not the entire description. Do not copy the reference image’s Set 01/09 numbering; omit set numbers entirely.\nOnly empty garments laid flat. No people, skin, face, head, hair, body silhouettes, mannequins or anatomical shaping. No underwear, safety shorts, invented items, logos or watermark. Sweet refined Japanese wardrobe reference, same visual language as the reference image.\n",
+      "generated_source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-12fd1284-c3c0-441a-82d7-ee7430066d91.png"
+    },
+    {
+      "number": 8,
+      "outfit": "赶场用的燕麦色宽大开衫配黑百褶短裙",
+      "part": "outer",
+      "filename": "08_赶场用的燕麦色宽大开衫配黑百褶短裙_外搭.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/art-direction/reference-outer.png"
+      ],
+      "reference_role": "fixed style and presentation only",
+      "prompt": "Use case: stylized-concept. Generate a NEW clothing-only anime costume reference sheet.\nThe supplied image is the STRICT STYLE AND PRESENTATION reference, not the garment design. Match its airy hand-drawn Japanese anime illustration: thin warm-brown linework, almost-white clean background, softly colored flat fills, broad simple folds with only one or two gentle cel-shadow tones, small warm-brown handwritten Chinese labels, a pastel title underline and a few palette dots. No realistic fabric grain, gradients, photographic lighting, 3D, dense diagram grids or heavy black outlines.\nCreate the specific clothing described below. Preserve this outfit's own cut, color and practical details; do not copy the maid uniform's frills or silhouette.\nOutfit: 赶场用的燕麦色宽大开衫配黑百褶短裙\n上身：燕麦色宽大针织开衫，比她大出两个码，袖子盖过指尖，走快了会从一边肩膀滑下去；里面是前开扣的白色衬衫，换装时不用从头上套，不蹭妆也不碰假发网\n下身：黑色百褶短裙，侧拉链，一拉就能脱；裙长在大腿中段\n鞋袜中的袜子：黑色 80D 哑光弹力过膝丝袜，不带提花，袜口是一段加宽的双层弹力织边，没有蕾丝和吊带配件；脚尖同色加固、平缝；托特包里备一双同款，现场换服装时按当天造型另换\n鞋：黑色乐福鞋，一脚蹬，不用系带\n配饰：大号米白帆布托特包，提手上系着一截黑丝带，里面装着当天的服装、假发盒、化妆包和一瓶水\n可选单品：一副金色细圆框的平光眼镜——素颜出门、不想被认出来的时候戴\n发饰规则（只提取发饰，不画头发）：低双马尾用黑色丝带松松系住，不上定型——反正到现场要拆开重做\nComposition: large empty front garment view and smaller consistent back view, plus separate shoes, socks and explicitly described accessories. Optional outer layers are separate and labeled “可选”. Hair ribbons/headbands may be drawn alone, never hair. Show full garments unclipped with generous margins. Short title “赶场用的燕麦色宽大开衫配黑百褶短裙”; only short useful labels, not the entire description. Do not copy the reference image’s Set 01/09 numbering; omit set numbers entirely.\nOnly empty garments laid flat. No people, skin, face, head, hair, body silhouettes, mannequins or anatomical shaping. No underwear, safety shorts, invented items, logos or watermark. Sweet refined Japanese wardrobe reference, same visual language as the reference image.\n",
+      "generated_source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-71ebc916-fed4-4e3f-8ddb-58768f403786.png"
+    },
+    {
+      "number": 9,
+      "outfit": "浅蓝细棉长袖睡衣",
+      "part": "outer",
+      "filename": "09_浅蓝细棉长袖睡衣_外搭.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/art-direction/reference-outer.png"
+      ],
+      "reference_role": "fixed style and presentation only",
+      "prompt": "Use case: stylized-concept. Generate a NEW clothing-only anime costume reference sheet.\nThe supplied image is the STRICT STYLE AND PRESENTATION reference, not the garment design. Match its airy hand-drawn Japanese anime illustration: thin warm-brown linework, almost-white clean background, softly colored flat fills, broad simple folds with only one or two gentle cel-shadow tones, small warm-brown handwritten Chinese labels, a pastel title underline and a few palette dots. No realistic fabric grain, gradients, photographic lighting, 3D, dense diagram grids or heavy black outlines.\nCreate the specific clothing described below. Preserve this outfit's own cut, color and practical details; do not copy the maid uniform's frills or silhouette.\nOutfit: 浅蓝细棉长袖睡衣\n上身：浅蓝色细棉长袖睡衣，小圆领镶一圈白色荷叶边，领口一根细细的白丝带系成蝴蝶结；一排贝壳色小纽扣\n下身：同色细棉长睡裤，裤脚收一道白色荷叶边，长了一点，会踩到\n配饰：床头有只旧了的白兔布偶雪球，耳朵和绒毛都能看出用了很久——不是每天都抱，累了、病了、半梦半醒时才会无意识地拉过来\n发饰规则（只提取发饰，不画头发）：梳开打结、上完护理产品后松松编起，或者拨到不会被压住的一侧\nComposition: large empty front garment view and smaller consistent back view, plus separate shoes, socks and explicitly described accessories. Optional outer layers are separate and labeled “可选”. Hair ribbons/headbands may be drawn alone, never hair. Show full garments unclipped with generous margins. Short title “浅蓝细棉长袖睡衣”; only short useful labels, not the entire description. Do not copy the reference image’s Set 01/09 numbering; omit set numbers entirely.\nOnly empty garments laid flat. No people, skin, face, head, hair, body silhouettes, mannequins or anatomical shaping. No underwear, safety shorts, invented items, logos or watermark. Sweet refined Japanese wardrobe reference, same visual language as the reference image.\n",
+      "generated_source": "/home/mittes/.codex/generated_images/01a13051-3f93-7af0-b052-244332fcf093/exec-b88cefcd-9556-4bda-a42f-91fcffd70df9.png"
+    }
+  ],
+  "status": "complete"
+}
