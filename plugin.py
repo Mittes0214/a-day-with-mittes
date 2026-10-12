@@ -814,8 +814,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         brief_description=(
             "当需要描述 Mittes 穿什么时，必须调用此工具获取真实穿搭，不得推测。"
             "查询后会向你和 replyer 的请求上下文加入服饰参考图；不填 time 就是此刻。"
-            "参考图是内部设定资料，仅用于理解穿搭，不提供发送或转发功能；"
-            "不能通过 attach_pic 引用，也不要让 replyer 宣称附图或发图。"
         ),
         parameters=[
             ToolParameterInfo(
