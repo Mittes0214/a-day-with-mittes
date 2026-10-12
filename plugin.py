@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.6.2
+版本：3.6.3
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.0+)
 """
@@ -813,7 +813,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         "get_mittes_outfit",
         brief_description=(
             "当需要描述 Mittes 穿什么时，必须调用此工具获取真实穿搭，不得推测。"
-            "返回对应服饰设定图，供你和 replyer 看图回答；不填 time 就是此刻。"
+            "查询后会向你和 replyer 的请求上下文加入服饰参考图；不填 time 就是此刻。"
+            "参考图是内部设定资料，仅用于理解穿搭，不提供发送或转发功能；"
+            "不能通过 attach_pic 引用，也不要让 replyer 宣称附图或发图。"
         ),
         parameters=[
             ToolParameterInfo(
@@ -831,7 +833,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def tool_get_outfit(self, time: str = "", **kwargs: Any) -> dict[str, Any]:
         try:
             name = self._outfit_name_at(time)
-            image = await self._outfit_images.image(name)
+            # 先验证并预热图片；工具结果不携带媒体，避免 host 为它分配可转发索引。
+            await self._outfit_images.image(name)
         except (ValueError, LookupError, OSError) as exc:
             return {"name": "get_mittes_outfit", "success": False, "content": str(exc)}
         self._outfit_queries.record(
@@ -843,7 +846,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         return {
             "name": "get_mittes_outfit",
             "content": REFERENCE_TITLE,
-            "content_items": [{"content_type": "image", "mime_type": "image/png", "data": image}],
         }
 
     def _outfit_name_at(self, raw_time: str) -> str:
@@ -864,6 +866,42 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         except LookupError as exc:
             raise LookupError(f"{moment:%Y-%m-%d %H:%M} 不在骨架覆盖的范围里，查不到。") from exc
         return segment.outfit
+
+    async def _outfit_reference_item(self, names: list[str]) -> dict[str, Any]:
+        reference = _new_user_item(REFERENCE_TITLE)
+        reference["meta"]["item_id"] = f"mittes-outfit-reference-{uuid.uuid4().hex}"
+        for name in names:
+            reference["parts"].append({
+                "type": "image",
+                "image_format": "png",
+                "image_base64": await self._outfit_images.image(name),
+            })
+        return reference
+
+    @HookHandler(
+        "maisaka.planner.before_request",
+        name="outfit_images_planner",
+        mode="blocking",
+        timeout_ms=3000,
+        error_policy="skip",
+    )
+    async def handle_outfit_planner_request(
+        self, items: list[Any] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        """图片只加入当前模型请求，不注册媒体索引，也不进入聊天历史。"""
+        if not items:
+            return {"success": True, "action": "continue"}
+        updated = [
+            item for item in items
+            if not str(item.get("meta", {}).get("item_id", "")).startswith("mittes-outfit-reference-")
+        ]
+        references = self._outfit_queries.planner_references(str(kwargs.get("session_id") or ""), updated)
+        if not references:
+            return {"success": True, "action": "continue"}
+        # 一批查询的结果之后放一条标题＋原图，不提供 msg_id、路径或媒体索引。
+        names = list(dict.fromkeys(name for _, name in references))
+        updated.insert(references[-1][0] + 1, await self._outfit_reference_item(names))
+        return _hook_response(updated, kwargs)
 
     @HookHandler(
         "maisaka.planner.after_response",
@@ -927,14 +965,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             item for item in items
             if not str(item.get("meta", {}).get("item_id", "")).startswith("mittes-outfit-reference-")
         ]
-        reference = _new_user_item(REFERENCE_TITLE)
-        reference["meta"]["item_id"] = f"mittes-outfit-reference-{uuid.uuid4().hex}"
-        for name in names:
-            reference["parts"].append({
-                "type": "image",
-                "image_format": "png",
-                "image_base64": await self._outfit_images.image(name),
-            })
+        reference = await self._outfit_reference_item(names)
         expected = str(args.get("reply_reference") or "").strip()
         if not expected and kwargs.get("reply_reason"):
             expected = f"当前思考：\n{kwargs['reply_reason']}".strip()

@@ -104,6 +104,24 @@ class OutfitQueryBridge:
         if turn is not None and turn.turn_id == turn_id and query_id in turn.queries:
             turn.results[query_id] = name
 
+    def planner_references(self, session_id: str, items: list[Any]) -> list[tuple[int, str]]:
+        """只补充请求中成功查询对应的图片；图片不进入可转发的聊天历史。"""
+        turn = self._sessions.get(session_id)
+        if turn is None:
+            return []
+        references: list[tuple[int, str]] = []
+        for index, item in enumerate(items):
+            if (
+                item.get("item_type") == "FunctionCallOutputItem"
+                and item.get("tool_name") == "get_mittes_outfit"
+                and item.get("success") is True
+                and item.get("meta", {}).get("logical_turn_id") == turn.turn_id
+            ):
+                name = turn.results.get(item["call_id"])
+                if name is not None:
+                    references.append((index, name))
+        return references
+
     def snapshot(self, session_id: str, reply_args: dict[str, Any]) -> dict[str, Any]:
         """第一次 replyer 请求固定图片名单；后续重试不再读会话的可变状态。"""
         result = dict(reply_args)

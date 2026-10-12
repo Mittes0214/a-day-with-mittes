@@ -239,6 +239,7 @@ Python 侧只负责填空，占位符用 `{名字}`，可选块和重复项写�
 | Tool | `get_mittes_outfit` | 那一刻对应套装的服饰设定图 |
 | Tool | `get_weather` | 查询指定城市的实时天气和近 3 天预报 |
 | Hook | `maisaka.planner.before_request` | 给「时间：」那条 item 的行尾补上祝日和连休，并在它后面插入所在地点、心情、这一段的行程；另按窗口决定是否从 `tool_definitions` 里摘掉谈资工具 |
+| Hook | `maisaka.planner.before_request` | 成功穿搭查询的结果后补入标题与原图，仅存在于本次模型请求 |
 | Hook | `maisaka.replyer.before_model_request` | 谈资接话版放在 system 后/聊天记录前，开口版和表达方式一起放在 `reply_reference` 前 |
 | Hook | `maisaka.planner.after_response` | 用逻辑轮次与调用 ID 关联穿搭查询和 reply，内部参数不进入资料正文 |
 | Hook | `maisaka.replyer.before_request` | 固定本次 reply 使用的服饰图片名单，重试沿用 |
@@ -280,10 +281,16 @@ Python 侧只负责填空，占位符用 `{名字}`，可选块和重复项写�
 story 会把它往服装说明书上带（原则一的应用）。
 
 图由 `character/outfit_images.toml` 按套装名映射，正常工具结果只有
-`【Mittes 的服饰参考资料】` 与图片。planner 走主程序已有的工具媒体通道。
-replyer 过滤了工具历史及工具图片，插件在 `before_model_request` 中单独加入
-一条相同内容的 `UserMessageItem`，放在 `reply_reference` 前；它是输入资料，
+`【Mittes 的服饰参考资料】`。planner 的 `before_request` 在成功查询结果后补入
+标题与原图的 `UserMessageItem`；replyer 的 `before_model_request` 单独加入
+相同资料，放在 `reply_reference` 前。两处都只改模型请求，不写入运行时历史；它是输入资料，
 所以不用表示过去输出的 assistant 角色，也不伪造 function call/output 历史。
+
+不再使用 `content_items` 返回服饰图。主程序会为工具媒体生成可供 `reply.attach_pic`
+引用的 `tool_result:…` 索引；2026-10-12 的私聊中 planner 据此把睡衣设定图当附件发送。
+改为请求内资料后，图片没有聊天消息 ID、媒体索引或可供附件解析器读取的历史项。
+工具说明明确不提供发送/转发功能，也不要安排附图。这里去掉来源上的转发能力，
+不采用发送前拦截，以免 planner 认为发送失败而再次尝试。
 
 只记“每个会话最后查过哪套”会把旧图带进下次回复；在 planner 的
 `before_request` 中清空又会把工具调用后的续轮误判成新轮。插件改用
@@ -292,8 +299,9 @@ replyer 过滤了工具历史及工具图片，插件在 `before_model_request` 
 reply 工具的透传参数，重试不再读取会话中的可变状态。多个时刻查询保留不同套装，
 重复套装去重；失败的查询、其他会话、其他逻辑轮都不注入。
 
-原图首次读取和 base64 编码放到线程，之后复用同一份缓存。只在实际模型
+原图首次读取和 base64 编码放到线程，之后复用同一份缓存。replyer 只在实际模型
 `selected_model_visual` 为真时注入；不支持视觉时记警告并跳过，不擅自改模型或退回文字。
+planner 沿用主程序的视觉模型配置。
 这些改动均在插件内完成，无需改主程序。
 
 名字是写手拿到的唯一线索，所以怎么命名很要紧：

@@ -29,6 +29,18 @@ def run(awaitable):
     return asyncio.run(awaitable)
 
 
+def query_context(plugin, moment, query_id="q1"):
+    tagged = plugin._outfit_queries.tag_calls("group-a", [call("get_mittes_outfit", query_id, time=moment)])[0]
+    result = run(plugin.tool_get_outfit(stream_id="group-a", **tagged["tool_call"]["args"]))
+    output = {
+        "item_type": "FunctionCallOutputItem",
+        "meta": {**tagged["meta"], "item_id": f"output-{query_id}"},
+        "call_id": query_id, "tool_name": "get_mittes_outfit",
+        "output": result["content"], "success": result.get("success", True),
+    }
+    return result, [plugin_module._new_user_item("今天穿的什么搭配？"), tagged, output]
+
+
 @pytest.fixture
 def plugin():
     p = plugin_module.ADayWithMittesPlugin()
@@ -47,24 +59,30 @@ def test_all_nine_assets_are_real_pngs(plugin):
         assert b64decode(run(plugin._outfit_images.image(name))).startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_tool_returns_only_title_and_matching_image_for_explicit_time(plugin):
+def test_tool_returns_only_title_and_planner_gets_matching_private_image(plugin):
     captured = []
     name = "浅蓝细棉长袖睡衣"
     plugin._store = SimpleNamespace(segment_at=lambda moment: (captured.append(moment), SimpleNamespace(outfit=name))[1])
-    result = run(plugin.tool_get_outfit("2026-10-12 00:30"))
+    result, context = query_context(plugin, "2026-10-12 00:30")
     assert captured[0].hour == 0 and captured[0].day == 12
     assert result["content"] == images_module.REFERENCE_TITLE
-    assert result["content_items"] == [{
-        "content_type": "image", "mime_type": "image/png", "data": run(plugin._outfit_images.image(name)),
-    }]
-    assert "metadata" not in result
+    assert result == {"name": "get_mittes_outfit", "content": images_module.REFERENCE_TITLE}
+    request = run(plugin.handle_outfit_planner_request(items=context, session_id="group-a"))["modified_kwargs"]
+    reference = request["items"][-1]
+    assert reference["parts"] == [
+        {"type": "text", "text": images_module.REFERENCE_TITLE},
+        {"type": "image", "image_format": "png", "image_base64": run(plugin._outfit_images.image(name))},
+    ]
+    assert reference["item_type"] == "UserMessageItem"
+    assert len(context) == 3  # 没有写回历史或原请求。
 
 
 @pytest.mark.parametrize("moment", ["2026-10-12 00:30", "2026-10-12 09:00", "2026-10-13 18:00"])
 def test_query_follows_schedule_including_midnight_and_future(plugin, moment):
     expected = plugin._store.segment_at(plugin_module.parse_moment(moment)).outfit
-    result = run(plugin.tool_get_outfit(moment))
-    assert result["content_items"][0]["data"] == run(plugin._outfit_images.image(expected))
+    _, context = query_context(plugin, moment)
+    request = run(plugin.handle_outfit_planner_request(items=context, session_id="group-a"))["modified_kwargs"]
+    assert request["items"][-1]["parts"][1]["image_base64"] == run(plugin._outfit_images.image(expected))
 
 
 def test_invalid_time_and_unknown_outfit_fail_without_inventing_image(plugin):
@@ -140,7 +158,9 @@ def test_replyer_uses_user_image_before_reference_and_preserves_retry_snapshot(p
     parsed = deserialize_context_item_snapshot(block)
     assert isinstance(parsed, UserMessageItem)
     assert isinstance(parsed.parts[1], ContextImagePart)
-    assert parsed.parts[1].image_base64 == tool["content_items"][0]["data"]
+    assert "content_items" not in tool
+    expected = plugin._store.segment_at(plugin_module.parse_moment(payload["time"])).outfit
+    assert parsed.parts[1].image_base64 == run(plugin._outfit_images.image(expected))
     twice = run(plugin.handle_outfit_replyer_model_request(
         items=injected["items"], reply_tool_args=frozen, selected_model_visual=True,
     ))["modified_kwargs"]["items"]
@@ -159,13 +179,56 @@ def test_replyer_without_query_or_visual_model_has_no_injected_image(plugin):
     ))
 
 
-def test_planner_tool_result_matches_host_image_protocol(plugin):
+def test_tool_result_cannot_register_forwardable_media(plugin):
     from src.plugin_runtime.component_query import ComponentQueryService
+    from src.maisaka.context.image_attachment import resolve_context_image
+    from src.maisaka.context.messages import ToolResultMessage
+    from src.maisaka.reasoning_engine import MaisakaReasoningEngine
 
     entry = SimpleNamespace(name="get_mittes_outfit", plugin_id="khiqwq.a-day-with-mittes")
     raw = run(plugin.tool_get_outfit("2026-10-12 09:00"))
     parsed = ComponentQueryService._parse_tool_invoke_result(entry, raw)
     assert parsed.success
     assert parsed.get_history_content() == images_module.REFERENCE_TITLE
-    assert parsed.content_items[0].content_type == "image"
-    assert parsed.content_items[0].data == raw["content_items"][0]["data"]
+    assert parsed.content_items == []
+    assert MaisakaReasoningEngine._iter_tool_result_media_items(parsed) == []
+    engine = MaisakaReasoningEngine.__new__(MaisakaReasoningEngine)
+    tool_call = SimpleNamespace(call_id="q1", func_name=entry.name)
+    history = engine._build_tool_result_history_content(tool_call, parsed)
+    assert history == images_module.REFERENCE_TITLE
+    assert "tool_result:" not in history
+    engine._runtime = SimpleNamespace(_chat_history=[], find_source_message_by_id=lambda _: None)
+    engine._active_logical_turn_id = "turn-a"
+    engine._append_tool_execution_result(tool_call, parsed)
+    assert len(engine._runtime._chat_history) == 1
+    assert isinstance(engine._runtime._chat_history[0], ToolResultMessage)
+    # 按实际附件解析器验证：没有供 attach_pic 读取的图片源。
+    with pytest.raises(ValueError, match="没有找到消息"):
+        run(resolve_context_image(engine._runtime, "tool_result:q1:1"))
+
+
+def test_private_planner_images_preserve_host_protocol_and_are_idempotent(plugin):
+    from src.plugin_runtime.hook_payloads import deserialize_prompt_items
+
+    _, context = query_context(plugin, "2026-10-12 09:00")
+    before = copy.deepcopy(context)
+    injected = run(plugin.handle_outfit_planner_request(
+        items=context, session_id="group-a", item_schema_version=1, tool_definitions=[],
+    ))["modified_kwargs"]
+    assert context == before
+    assert injected["session_id"] == "group-a" and injected["tool_definitions"] == []
+    deserialize_prompt_items(injected["items"])
+    twice = run(plugin.handle_outfit_planner_request(**injected))["modified_kwargs"]["items"]
+    assert sum(i["item_type"] == "UserMessageItem" and len(i["parts"]) == 2 for i in twice) == 1
+    assert "tool_result:" not in str(twice)
+    assert "modified_kwargs" not in run(plugin.handle_outfit_planner_request(items=context, session_id="group-b"))
+
+
+def test_planner_ignores_failed_queries_and_queries_missing_from_context(plugin):
+    _, context = query_context(plugin, "2026-10-12 09:00")
+    assert "modified_kwargs" not in run(plugin.handle_outfit_planner_request(items=context[:2], session_id="group-a"))
+    context[-1]["success"] = False
+    assert "modified_kwargs" not in run(plugin.handle_outfit_planner_request(items=context, session_id="group-a"))
+    context[-1]["success"] = True
+    plugin._outfit_queries.tag_calls("group-a", [call("reply", "r2", turn="turn-b")])
+    assert "modified_kwargs" not in run(plugin.handle_outfit_planner_request(items=context, session_id="group-a"))
