@@ -832,14 +832,10 @@ button.action:disabled { opacity: .55; cursor: wait; }
 }
 
 /* Hallmark · 衣柜局部：沿用页面色彩，每套外搭 / 内搭成对，完整展示图片。 */
-.wardrobe-view main { max-width: none; }
-.wardrobe-view #cal { display: none; }
 .outfit-section { margin-bottom: 24px; }
 .outfit-section-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 12px; }
 .outfit-section-head h3 { font-size: 15px; margin: 0; }
-.outfit-section-head span, .outfit-section-head a { font-size: 12px; color: var(--muted); }
-.outfit-section-head a { margin-left: auto; text-underline-offset: 3px; }
-.outfit-gallery { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
+.outfit-section-head span { font-size: 12px; color: var(--muted); }
 .outfit-strip { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
 .outfit-strip .outfit-card { flex: 0 0 min(95%, 680px); scroll-snap-align: start; }
 .outfit-card { container-type: inline-size; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
@@ -875,7 +871,6 @@ button.action:disabled { opacity: .55; cursor: wait; }
 .outfit-details dd { white-space: pre-line; }
 .outfit-missing { display: grid; place-items: center; aspect-ratio: 3 / 2; margin: 0; padding: 16px; color: var(--muted); background: var(--badge); font-size: 13px; }
 .outfit-image-error { display: grid; place-items: center; aspect-ratio: 3 / 2; margin: 0; padding: 16px; color: var(--muted); background: var(--badge); }
-.wardrobe-always { margin-top: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 
 /* 穿搭细节弹层 */
 #modal {
@@ -898,12 +893,11 @@ button.action:disabled { opacity: .55; cursor: wait; }
 }
 #modal .close:hover { color: var(--text); }
 #modal .none { color: var(--muted); font-style: italic; }
-.wardrobe-link { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 12px !important; }
+.extra-link { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 12px !important; }
 @media (max-width: 640px) {
   body { flex-direction: column; }
   aside { width: auto; height: auto; position: static; border-right: 0; border-bottom: 1px solid var(--line); }
   main { padding: 20px 16px 48px; }
-  .outfit-gallery { grid-template-columns: minmax(0, 1fr); }
   .outfit-picture .zoom-hint { opacity: 1; }
   #modal { padding: 12px; }
   #modal .sheet { padding: 16px; }
@@ -957,7 +951,7 @@ async function loadDays() {
     return `<a href="#${d.date}" data-d="${d.date}">${d.date.slice(5)} 周${WD[d.weekday]}
       <span class="sub">${bad}${neg}</span></a>`;
   };
-  // 归档只会越来越长，全列出来衣柜入口会被顶到要滚动才够得着。
+  // 归档只会越来越长，全列出来底下的「表达」入口会被顶到要滚动才够得着。
   // 近七天是日常真正会点的范围，更早的收进折叠区（days 已按日期倒序）。
   const older = days.slice(7);
   const foldout = older.length
@@ -965,8 +959,8 @@ async function loadDays() {
        <div id="older-days" hidden>${older.map(link).join('')}</div>`
     : '';
   document.getElementById('days').innerHTML = days.slice(0, 7).map(link).join('') + foldout
-    + `<a href="#wardrobe" data-d="wardrobe" class="wardrobe-link">衣柜　<span class="sub">全部搭配</span></a>`
-    + `<a href="#expression" data-d="expression">表达　<span class="sub">心情 × 体力</span></a>`;
+    // 衣柜整页已移到 mittes-panel 的 /wardrobe 单独维护，这里只留当日穿搭
+    + `<a href="#expression" data-d="expression" class="extra-link">表达　<span class="sub">心情 × 体力</span></a>`;
 }
 
 function toggleOlder(open) {
@@ -1193,18 +1187,9 @@ async function boot() {
 }
 
 async function route() {
-  document.body.classList.toggle('wardrobe-view', location.hash === '#wardrobe');
   if (location.hash === '#expression') {
     document.querySelectorAll('#days a').forEach(a => a.classList.toggle('on', a.dataset.d === 'expression'));
     renderExpression();
-    selectedDay = null;
-    renderCal();
-    window.scrollTo(0, 0);
-    return;
-  }
-  if (location.hash === '#wardrobe') {
-    document.querySelectorAll('#days a').forEach(a => a.classList.toggle('on', a.dataset.d === 'wardrobe'));
-    renderWardrobe(await wardrobe());
     selectedDay = null;
     renderCal();
     window.scrollTo(0, 0);
@@ -1614,7 +1599,7 @@ function dayOutfits(segments, nowSlot, w) {
     names.unshift(current.outfit);
   }
   return `<section class="outfit-section" aria-label="当日穿搭">
-    <div class="outfit-section-head"><h3>当日穿搭</h3><span>${names.length} 套</span><a href="#wardrobe">查看全部衣柜 ↗</a></div>
+    <div class="outfit-section-head"><h3>当日穿搭</h3><span>${names.length} 套</span></div>
     <div class="outfit-strip" tabindex="0" aria-label="当日服饰图片，可横向滚动">${names.map(name => outfitCard(name, w, name === current?.outfit)).join('')}</div>
     </section>`;
 }
@@ -1647,15 +1632,6 @@ async function showOutfit(name, part = 'outer') {
   document.body.style.overflow = 'hidden';
   document.querySelectorAll('body > aside, body > main').forEach(node => node.inert = true);
   document.querySelector('#modal .close').focus({preventScroll: true});
-}
-
-function renderWardrobe(w) {
-  if (w.error) { document.getElementById('main').innerHTML = `<p class="empty">${esc(w.error)}</p>`; return; }
-  const sets = Object.keys(w.wardrobe || {}).map(name => outfitCard(name, w)).join('');
-  document.getElementById('main').innerHTML =
-    `<div class="dayhead"><h2>衣柜</h2>
-       <div class="meta">${Object.keys(w.wardrobe || {}).length} 套搭配　·　外搭与内搭分开展示　·　点击图片查看大图</div>
-     </div><div class="outfit-gallery">${sets}</div>${alwaysDescription(w, 'wardrobe-always')}`;
 }
 
 // 请求失败时给出明确提示，不能留下看起来像已加载的破图。
