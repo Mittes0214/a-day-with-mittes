@@ -6,21 +6,21 @@
   "origin_style": "用户认可的 v4 人设画风及其跨场景测试",
   "references": [
     {
-      "file": "00_人物局部_画风主基准.png",
+      "file": "02_画风主基准_人物入镜.png",
       "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/00_人物局部_画风主基准.png",
       "sha256": "62d31ab117b372b2f3ef98ac8a59bf0b150d4d17d6b024175874d575d9953cb2",
       "role": "已认可的主画风基准；人物局部、头发、皮肤与衣物的画法",
       "category": "portrait"
     },
     {
-      "file": "01_食物_红茶无花果慕斯.png",
+      "file": "03_人物画风补充_食物.png",
       "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/01_食物_红茶无花果慕斯.png",
       "sha256": "91f65f3a53ebfc7b6a36835c0c7b02222c1d2ee1686b91aa8400b0703e08db67",
       "role": "食物与器皿的画风参考",
       "category": "food"
     },
     {
-      "file": "02_饮品_吧台拿铁.png",
+      "file": "04_人物画风补充_饮品.png",
       "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/02_饮品_吧台拿铁.png",
       "sha256": "5daab7d9bfda24a0e2a62bd12dbbb4d674f053194ea5f10435d17f8477aff973",
       "role": "饮品与室内物件的画风参考",
@@ -28,14 +28,14 @@
       "revision_note": "2026-10-18 按用户要求重绘吧台拿铁：完整杯碟及自然吧台环境，取消物品局部构图限制。"
     },
     {
-      "file": "03_室外_雨后银杏叶.png",
+      "file": "05_人物画风补充_室外.png",
       "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/03_室外_雨后银杏叶.png",
       "sha256": "c8431723aa357736eaa2fdd89dffa67048fd7561805acf65a6255632bd5473fa",
       "role": "室外生活细节的画风参考",
       "category": "outdoor"
     },
     {
-      "file": "04_随身物品_斜挎包.png",
+      "file": "06_人物画风补充_随身物品.png",
       "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/04_随身物品_斜挎包.png",
       "sha256": "b013fd78db2055cc732c3059c77cf430008be6b30785dfac9fb217079571a374",
       "role": "随身物品及可见穿搭的画风参考",
@@ -46,18 +46,18 @@
   "validation": "固定文件来源及 SHA-256 已核验；CPA 实测另记于相机任务。",
   "identity": {
     "body": {
-      "file": "identity/body.png",
+      "file": "07_外貌参考_发色与身形.png",
       "source": "workspace:doc/Mittes人设图/a0370464-7db7-46f9-8555-6c3f46b5a832.png",
       "sha256": "a4566be97513df832dc345b3645c3b698d10c8ec00d9f7704924e5dcbb1262f0"
     },
     "head": {
-      "file": "identity/head.png",
+      "file": "08_外貌参考_头部轮廓.png",
       "source": "workspace:doc/Mittes人设图/d9be7298-4cb1-4923-bbc8-4d4e2154c6a2.png",
       "sha256": "4b7a970d58e3f87eec534b705218502bdc15737957266532ecef95bdb58d00ed"
     }
   },
   "scene_reference": {
-    "file": "05_景物_咖啡近景.png",
+    "file": "01_画风主基准_纯景物.png",
     "source": "workspace:doc/画风测试/02_早期画风_衣柜参考随拍/CPA接口测试/咖啡近景/attempt-1.png",
     "sha256": "a7883f7b5010742b02cc65ce08ff7367ec78157d09b479e8a347e991f66a9a5b",
     "role": "纯景物画风基准；仅画法、材质和光影层次，不复制物件、布景、构图或实际光照"
