@@ -13,7 +13,7 @@ import logging
 from PIL import Image
 
 from .client import CPAClient, GenerationUnknown, read_provider
-from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, STYLE
+from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, PERSON_STYLE, SCENE_STYLE, STYLE
 from .reference_images import build_references
 from .store import CameraStore, timestamp
 
@@ -104,7 +104,7 @@ class PhotoService:
         return await asyncio.to_thread(self.store.create, {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v2",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v3",
             "images": [], "references": [],
             "previous_photo": previous_photo,
             "requester": requester,
@@ -186,11 +186,16 @@ class PhotoService:
                 raise ValueError("拍摄方案的场景类型或穿搭标记无效")
             if plan.get("style_category") not in {"portrait", "food", "drink", "outdoor", "object"} or plan.get("identity_reference") not in {"none", "body", "head"}:
                 raise ValueError("拍摄方案的参考图用途无效")
+            if not isinstance(plan.get("contains_mittes"), bool):
+                raise ValueError("拍摄方案缺少人物入镜标记")
+            if not plan["contains_mittes"] and plan["identity_reference"] != "none":
+                raise ValueError("无人物拍摄方案不能使用人物外貌参考")
             if not isinstance(plan.get("use_previous_photo"), bool):
                 raise ValueError("拍摄方案缺少连续照片标记")
             images = await asyncio.to_thread(self._references, record, plan)
             check_references = list(images)
-            prompt = STYLE + "\n\n本次拍摄：\n" + plan["prompt"] + "\n\n事实依据：\n" + json.dumps(record["snapshot"], ensure_ascii=False)
+            style = PERSON_STYLE if plan["contains_mittes"] else SCENE_STYLE
+            prompt = STYLE + "\n" + style + "\n\n本次拍摄：\n" + plan["prompt"] + "\n\n事实依据：\n" + json.dumps(record["snapshot"], ensure_ascii=False)
             prompt += "\n\n参考图用途：\n" + json.dumps(record["references"], ensure_ascii=False)
             record["prompt"] = prompt
             folder = self.store.root / record["id"]
@@ -205,6 +210,7 @@ class PhotoService:
                 check, usage = await client.json(settings["check_model"], CHECK, {
                     "instruction": record["instruction"], "source_text": record["source_text"],
                     "plan": plan, "snapshot": record["snapshot"], "reference_roles": record["references"],
+                    "style_family": record["style_family"],
                 }, images=[raw, *check_references])
                 if not isinstance(check.get("passed"), bool) or not isinstance(check.get("issues"), list) or not isinstance(check.get("repairable"), bool):
                     raise ValueError("图片检查未返回有效判断")

@@ -1,7 +1,7 @@
 {
-  "version": "mittes-phone-photo-style-v2",
+  "version": "mittes-phone-photo-style-v3",
   "approved_on": "2026-10-17",
-  "status": "已接入；用户认可的 v4 人设画风及跨场景补充，按主体选择参考",
+  "status": "插件 3.10.0：人物使用 v4 画风；无人物景物使用指定咖啡近景原图，按是否有人物入镜选择。",
   "runtime_integrated": true,
   "origin_style": "用户认可的 v4 人设画风及其跨场景测试",
   "references": [
@@ -42,7 +42,7 @@
       "category": "object"
     }
   ],
-  "selection": "按当次主体选择相关画风图；不全部加载，不复制姿势、物件、光照、构图或服装，不让新生成图自动替换基准。",
+  "selection": "有人物或身体局部入镜时使用 v4 主基准及相关 v4 补充；无人物景物只使用 scene_reference，不传 v4 画风图。外貌与衣柜图按需单独加载。",
   "validation": "固定文件来源及 SHA-256 已核验；CPA 实测另记于相机任务。",
   "identity": {
     "body": {
@@ -55,5 +55,11 @@
       "source": "workspace:doc/Mittes人设图/d9be7298-4cb1-4923-bbc8-4d4e2154c6a2.png",
       "sha256": "4b7a970d58e3f87eec534b705218502bdc15737957266532ecef95bdb58d00ed"
     }
+  },
+  "scene_reference": {
+    "file": "05_景物_咖啡近景.png",
+    "source": "workspace:doc/画风测试/02_早期画风_衣柜参考随拍/CPA接口测试/咖啡近景/attempt-1.png",
+    "sha256": "a7883f7b5010742b02cc65ce08ff7367ec78157d09b479e8a347e991f66a9a5b",
+    "role": "纯景物画风基准；仅画法、材质和光影层次，不复制物件、布景、构图或实际光照"
   }
 }

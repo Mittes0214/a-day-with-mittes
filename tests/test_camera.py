@@ -42,13 +42,14 @@ class FakeClient:
             return self.checks.pop(0), {}
         self.planning_inputs = data
         return {"feasible": True, "target_kind": "object", "rejection_code": "", "reason": "", "subject": "杯子", "scene_type": "indoor", "include_outfit": False,
-                "style_category": "portrait", "identity_reference": "none",
+                "style_category": "portrait", "identity_reference": "none", "contains_mittes": False,
                 "framing": "俯拍", "visible_details": "杯子", "lighting": "室内灯", "prompt": "手机俯拍杯子",
                 "use_previous_photo": self.use_previous, **(self.plan_overrides or {})}, {}
 
     async def image(self, settings, prompt, images):
         self.image_calls += 1
         self.last_refs = images
+        self.last_prompt = prompt
         return png(), {}
 
     async def close(self):
@@ -62,10 +63,12 @@ def setup(tmp_path, monkeypatch):
     refs.mkdir(parents=True)
     data = png()
     (refs / "style.png").write_bytes(data)
+    (refs / "scene.png").write_bytes(data)
     entries = [{"file": "style.png", "sha256": hashlib.sha256(data).hexdigest(), "category": category}
                for category in ["portrait", "food", "drink", "outdoor", "object"]]
     identity = {key: {"file": "style.png", "sha256": hashlib.sha256(data).hexdigest()} for key in ["body", "head"]}
-    (refs / "references.json").write_text(json.dumps({"version": "v2", "references": entries, "identity": identity}))
+    scene = {"file": "scene.png", "sha256": hashlib.sha256(data).hexdigest()}
+    (refs / "references.json").write_text(json.dumps({"version": "v3", "references": entries, "identity": identity, "scene_reference": scene}))
     character = plugin / "character"
     character.mkdir()
     (character / "outfit.png").write_bytes(data)
@@ -150,10 +153,12 @@ def test_failed_check_repairs_only_once_then_does_not_send(setup):
     asyncio.run(run())
 
 
-def test_reference_corruption_stops_generation(setup):
+@pytest.mark.parametrize("contains", [False, True])
+def test_reference_corruption_stops_generation(setup, contains):
     async def run():
         service, ctx, client, refs = setup
-        (refs / "style.png").write_bytes(b"changed")
+        client.plan_overrides = {"contains_mittes": contains}
+        (refs / ("style.png" if contains else "scene.png")).write_bytes(b"changed")
         record = await service.submit("拍杯子", "source", "private", dict(SNAPSHOT))
         with pytest.raises(ValueError, match="摘要"):
             await service.process(record)
@@ -357,23 +362,44 @@ def test_other_unshootable_requests_return_explicit_decline(setup, code):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("category,identity,outfit,kinds", [
-    ("food", "none", False, ["style", "style"]),
-    ("outdoor", "none", False, ["style", "style"]),
-    ("portrait", "none", True, ["style", "outfit"]),
-    ("portrait", "head", True, ["style", "identity", "outfit"]),
-    ("object", "body", True, ["style", "style", "identity", "outfit"]),
+@pytest.mark.parametrize("category,identity,outfit,contains,kinds", [
+    ("food", "none", False, False, ["style"]),
+    ("drink", "none", False, False, ["style"]),
+    ("outdoor", "none", False, False, ["style"]),
+    ("object", "none", True, False, ["style", "outfit"]),
+    ("portrait", "none", True, True, ["style", "outfit"]),
+    ("portrait", "head", True, True, ["style", "identity", "outfit"]),
+    ("object", "body", True, True, ["style", "style", "identity", "outfit"]),
+    ("food", "none", False, True, ["style", "style"]),
 ])
-def test_reference_roles_are_selected_by_visible_content(setup, category, identity, outfit, kinds):
+def test_reference_roles_are_selected_by_visible_content(setup, category, identity, outfit, contains, kinds):
     async def run():
         service, _, client, _ = setup
-        client.plan_overrides = {"style_category": category, "identity_reference": identity, "include_outfit": outfit}
+        client.plan_overrides = {"style_category": category, "identity_reference": identity, "include_outfit": outfit, "contains_mittes": contains}
         record = await service.submit("看看", "references", "private", SNAPSHOT, preview=True)
         await service.process(record)
         assert [ref["kind"] for ref in record["references"]] == kinds
         assert [ref["index"] for ref in record["references"]] == list(range(1, len(kinds) + 1))
         assert len(client.check_inputs[1]) == len(kinds) + 1
         assert client.check_inputs[0]["reference_roles"] == record["references"]
+        expected_family = "person_v4" if contains else "scene_coffee"
+        assert record["style_family"] == client.check_inputs[0]["style_family"] == expected_family
+        style_sources = {ref["source"] for ref in record["references"] if ref["kind"] == "style"}
+        assert style_sources == {"style.png" if contains else "scene.png"}
+        assert ("本次有人物入镜，采用 v4 人设画风" in client.last_prompt) is contains
+        assert ("本次是无人物的景物照片" in client.last_prompt) is not contains
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("contains,identity", [(None, "none"), ("false", "none"), (False, "head")])
+def test_invalid_presence_decision_never_generates(setup, contains, identity):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"contains_mittes": contains, "identity_reference": identity}
+        record = await service.submit("看看", "presence", "private", SNAPSHOT, preview=True)
+        with pytest.raises(ValueError, match="人物"):
+            await service.process(record)
+        assert client.image_calls == 0
     asyncio.run(run())
 
 

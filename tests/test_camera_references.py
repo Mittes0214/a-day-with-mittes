@@ -19,15 +19,16 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_deployed_reference_manifest_matches_all_files():
     folder = ROOT / "camera/references"
     manifest = json.loads((folder / "references.json").read_text())
-    assert manifest["version"] == "mittes-phone-photo-style-v2"
+    assert manifest["version"] == "mittes-phone-photo-style-v3"
     assert {entry["category"] for entry in manifest["references"]} == {"portrait", "food", "drink", "outdoor", "object"}
-    for entry in [*manifest["references"], *manifest["identity"].values()]:
+    for entry in [*manifest["references"], manifest["scene_reference"], *manifest["identity"].values()]:
         raw = (folder / entry["file"]).read_bytes()
         assert hashlib.sha256(raw).hexdigest() == entry["sha256"]
         with Image.open(BytesIO(raw)) as image:
             assert image.format == "PNG"
             image.verify()
     assert "d9be7298-4cb1-4923-bbc8-4d4e2154c6a2.png" in manifest["identity"]["head"]["source"]
+    assert manifest["scene_reference"]["sha256"] == "a7883f7b5010742b02cc65ce08ff7367ec78157d09b479e8a347e991f66a9a5b"
 
 
 def test_snapshot_contains_appearance_and_actual_place_without_innerwear():
