@@ -1,7 +1,7 @@
 {
   "version": "mittes-phone-photo-style-v3",
   "approved_on": "2026-10-17",
-  "status": "插件 3.10.0：人物使用 v4 画风；无人物景物使用指定咖啡近景原图，按是否有人物入镜选择。",
+  "status": "插件 3.10.1：纯景物只用 01，人物入镜只用 02；03—06 已停用归档，外貌与衣柜款式按需添加。",
   "runtime_integrated": true,
   "origin_style": "用户认可的 v4 人设画风及其跨场景测试",
   "references": [
@@ -11,40 +11,9 @@
       "sha256": "62d31ab117b372b2f3ef98ac8a59bf0b150d4d17d6b024175874d575d9953cb2",
       "role": "已认可的主画风基准；人物局部、头发、皮肤与衣物的画法",
       "category": "portrait"
-    },
-    {
-      "file": "03_人物画风补充_食物.png",
-      "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/01_食物_红茶无花果慕斯.png",
-      "sha256": "91f65f3a53ebfc7b6a36835c0c7b02222c1d2ee1686b91aa8400b0703e08db67",
-      "role": "食物与器皿的画风参考",
-      "category": "food"
-    },
-    {
-      "file": "04_人物画风补充_饮品.png",
-      "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/02_饮品_吧台拿铁.png",
-      "sha256": "5daab7d9bfda24a0e2a62bd12dbbb4d674f053194ea5f10435d17f8477aff973",
-      "role": "饮品与室内物件的画风参考",
-      "category": "drink",
-      "revision_note": "2026-10-18 按用户要求重绘吧台拿铁：完整杯碟及自然吧台环境，取消物品局部构图限制。"
-    },
-    {
-      "file": "05_人物画风补充_室外.png",
-      "source": "workspace:doc/画风测试/01_现用画风_v4人设画风/2026-10-18_室外场景重选-v2/05_三楼露台晾床单.png",
-      "sha256": "ad2ddc5f81e9eeabfc62a2edefbbcca25a5e91949221105d81193fd5225e8a22",
-      "role": "室外生活细节的画风参考",
-      "category": "outdoor",
-      "revision_note": "2026-10-18 按用户要求更换室外场景：晴天三楼小露台晾床单，手持衣夹。仅作 v4 画风补充，不固化家务、场景、道具、服装或机位。"
-    },
-    {
-      "file": "06_人物画风补充_随身物品.png",
-      "source": "workspace:doc/画风测试/01_现用画风_v4人设画风/2026-10-18_角色正式设定_室外与随身物品-v1/06_铃铛猫咪钥匙串.png",
-      "sha256": "9ebc6fff5e23d3aa9ffe1c64724f1911ae490ad67fcf018d6f7443709ed2c655",
-      "role": "随身物品及可见穿搭的画风参考",
-      "category": "object",
-      "revision_note": "2026-10-18 按角色正式设定重新生成；咖啡店住宅后门与铃铛猫咪钥匙串。仅作 v4 画风补充，不固化场景、道具或服装。"
     }
   ],
-  "selection": "有人物或身体局部入镜时使用 v4 主基准及相关 v4 补充；无人物景物只使用 scene_reference，不传 v4 画风图。外貌与衣柜图按需单独加载。",
+  "selection": "先确定自然取景与动作，再按是否有人物入镜选择 01 或 02，画风参考每次仅一张；不再添加分场景画风补充。外貌与衣柜图按需单独加载。",
   "validation": "固定文件来源及 SHA-256 已核验；CPA 实测另记于相机任务。",
   "identity": {
     "body": {

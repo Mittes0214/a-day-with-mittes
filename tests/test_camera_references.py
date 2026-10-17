@@ -20,7 +20,7 @@ def test_deployed_reference_manifest_matches_all_files():
     folder = ROOT / "camera/references"
     manifest = json.loads((folder / "references.json").read_text())
     assert manifest["version"] == "mittes-phone-photo-style-v3"
-    assert {entry["category"] for entry in manifest["references"]} == {"portrait", "food", "drink", "outdoor", "object"}
+    assert {entry["category"] for entry in manifest["references"]} == {"portrait"}
     for entry in [*manifest["references"], manifest["scene_reference"], *manifest["identity"].values()]:
         raw = (folder / entry["file"]).read_bytes()
         assert hashlib.sha256(raw).hexdigest() == entry["sha256"]

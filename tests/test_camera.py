@@ -65,7 +65,7 @@ def setup(tmp_path, monkeypatch):
     (refs / "style.png").write_bytes(data)
     (refs / "scene.png").write_bytes(data)
     entries = [{"file": "style.png", "sha256": hashlib.sha256(data).hexdigest(), "category": category}
-               for category in ["portrait", "food", "drink", "outdoor", "object"]]
+               for category in ["portrait"]]
     identity = {key: {"file": "style.png", "sha256": hashlib.sha256(data).hexdigest()} for key in ["body", "head"]}
     scene = {"file": "scene.png", "sha256": hashlib.sha256(data).hexdigest()}
     (refs / "references.json").write_text(json.dumps({"version": "v3", "references": entries, "identity": identity, "scene_reference": scene}))
@@ -369,8 +369,10 @@ def test_other_unshootable_requests_return_explicit_decline(setup, code):
     ("object", "none", True, False, ["style", "outfit"]),
     ("portrait", "none", True, True, ["style", "outfit"]),
     ("portrait", "head", True, True, ["style", "identity", "outfit"]),
-    ("object", "body", True, True, ["style", "style", "identity", "outfit"]),
-    ("food", "none", False, True, ["style", "style"]),
+    ("object", "body", True, True, ["style", "identity", "outfit"]),
+    ("food", "none", False, True, ["style"]),
+    ("drink", "none", False, True, ["style"]),
+    ("outdoor", "none", False, True, ["style"]),
 ])
 def test_reference_roles_are_selected_by_visible_content(setup, category, identity, outfit, contains, kinds):
     async def run():
@@ -386,7 +388,7 @@ def test_reference_roles_are_selected_by_visible_content(setup, category, identi
         assert record["style_family"] == client.check_inputs[0]["style_family"] == expected_family
         style_sources = {ref["source"] for ref in record["references"] if ref["kind"] == "style"}
         assert style_sources == {"style.png" if contains else "scene.png"}
-        assert ("本次有人物入镜，采用 v4 人设画风" in client.last_prompt) is contains
+        assert ("本次有人物入镜，只采用图1的 v4 人设画风" in client.last_prompt) is contains
         assert ("本次是无人物的景物照片" in client.last_prompt) is not contains
     asyncio.run(run())
 

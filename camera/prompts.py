@@ -13,7 +13,7 @@ STYLE = """生成 Mittes 亲手用手机拍下的一张二次元生活随拍。
 拍食物、鞋、环境时不为证明身份而加入头发。猫耳、尾巴、铃铛是道具，仅在明确实际佩戴时出现。
 衣柜图不引入白底、平铺、正反面排版或标注。无聊天文字、日期水印、说明文字或多格拼图。"""
 
-PERSON_STYLE = """本次有人物入镜，采用 v4 人设画风。画风补充图也只控制画法。
+PERSON_STYLE = """本次有人物入镜，只采用图1的 v4 人设画风，不添加分场景画风补充。
 沿用 v4 的线条轻重、色彩与阴影处理，不改成精修厚涂、写实微纹理或刻意简化的动画平涂。
 上一张照片若存在，仅参考连续拍摄对象，不从中继承其他画风。"""
 
@@ -38,7 +38,8 @@ rejection_code(可拍时为空字符串；否则 other_person_privacy/self_priva
 不可拍时到此为止，不再写生图提示词。目标为 other_person 时始终不可拍。
 可拍时另外返回：subject(string), scene_type(indoor/outdoor), style_category(portrait/food/drink/outdoor/object),
 contains_mittes(boolean), include_outfit(boolean), identity_reference(none/body/head), framing(string), visible_details(string), lighting(string), prompt(string),
-use_previous_photo(boolean)。style_category 选择最相关的画风补充；人物穿搭通常 portrait，食物 food，饮品 drink，室外环境 outdoor，独立随身物件 object。
+use_previous_photo(boolean)。style_category 只标记主体类别，不用于添加画风补充；人物穿搭通常 portrait，食物 food，饮品 drink，室外环境 outdoor，独立随身物件 object。
+先按用户想看的主体和自然拍摄动作确定取景，再标记是否有人物。普通景物可以双手持机，手在镜头后；只有持物展示等实际动作需要时才让手入镜，不为了分享感或证明拍摄者身份而硬加手。
 contains_mittes 仅按计划画面是否实际出现 Mittes 判断，出现手、腿、头发、身体或穿在身上的衣物等局部也为 true；纯食物、物件或环境为 false。
 放在桌上的衣服、脱下的鞋包等独立物品不算人物。不要为选择画风而额外加入人物或身体部位。
 identity_reference 仅在头发或可辨识身形入镜时选 body，头部轮廓/扎发根部入镜时选 head，其余包括仅手部、鞋子、食物或环境选 none。
