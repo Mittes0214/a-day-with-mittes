@@ -42,6 +42,9 @@ def build_references(plugin_dir: Path, camera_root: Path, record: dict[str, Any]
     else:
         record["style_family"] = "scene_coffee"
         fixed(manifest["scene_reference"], "无人物景物画风主基准：沿用咖啡近景原图的画法与材质光影层次，不复制物件、咖啡馆布景、构图或光照", "style")
+        if plan["scene_context"] != "none":
+            supplement = next(entry for entry in manifest["scene_supplements"] if entry["category"] == plan["scene_context"])
+            fixed(supplement, "同一景物画风的场景补充：只参考材质、空间与光影的画法，不复制物件、布局、天气、时段、机位或实际光照；事实以本次快照与取景为准", "style")
     identity = plan["identity_reference"]
     if identity != "none":
         fixed(manifest["identity"][identity],

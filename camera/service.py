@@ -104,7 +104,7 @@ class PhotoService:
         return await asyncio.to_thread(self.store.create, {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v3",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v4",
             "images": [], "references": [],
             "previous_photo": previous_photo,
             "requester": requester,
@@ -188,6 +188,8 @@ class PhotoService:
                 raise ValueError("拍摄方案的参考图用途无效")
             if not isinstance(plan.get("contains_mittes"), bool):
                 raise ValueError("拍摄方案缺少人物入镜标记")
+            if plan.get("scene_context") not in {"none", "street", "terrace", "train", "cafe", "night_desk", "classroom"}:
+                raise ValueError("拍摄方案缺少有效的场景参考类别")
             if not plan["contains_mittes"] and plan["identity_reference"] != "none":
                 raise ValueError("无人物拍摄方案不能使用人物外貌参考")
             if not isinstance(plan.get("use_previous_photo"), bool):

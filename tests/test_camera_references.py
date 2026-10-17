@@ -19,9 +19,12 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_deployed_reference_manifest_matches_all_files():
     folder = ROOT / "camera/references"
     manifest = json.loads((folder / "references.json").read_text())
-    assert manifest["version"] == "mittes-phone-photo-style-v3"
+    assert manifest["version"] == "mittes-phone-photo-style-v4"
     assert {entry["category"] for entry in manifest["references"]} == {"portrait"}
-    for entry in [*manifest["references"], manifest["scene_reference"], *manifest["identity"].values()]:
+    entries = [*manifest["references"], manifest["scene_reference"], *manifest["identity"].values(), *manifest["scene_supplements"]]
+    assert {entry["category"] for entry in manifest["scene_supplements"]} == {"street", "terrace", "train", "cafe", "night_desk", "classroom"}
+    assert {str(path.relative_to(folder)) for path in folder.rglob("*.png")} == {entry["file"] for entry in entries}
+    for entry in entries:
         raw = (folder / entry["file"]).read_bytes()
         assert hashlib.sha256(raw).hexdigest() == entry["sha256"]
         with Image.open(BytesIO(raw)) as image:

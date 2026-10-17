@@ -42,7 +42,7 @@ class FakeClient:
             return self.checks.pop(0), {}
         self.planning_inputs = data
         return {"feasible": True, "target_kind": "object", "rejection_code": "", "reason": "", "subject": "杯子", "scene_type": "indoor", "include_outfit": False,
-                "style_category": "portrait", "identity_reference": "none", "contains_mittes": False,
+                "style_category": "portrait", "identity_reference": "none", "contains_mittes": False, "scene_context": "none",
                 "framing": "俯拍", "visible_details": "杯子", "lighting": "室内灯", "prompt": "手机俯拍杯子",
                 "use_previous_photo": self.use_previous, **(self.plan_overrides or {})}, {}
 
@@ -68,7 +68,13 @@ def setup(tmp_path, monkeypatch):
                for category in ["portrait"]]
     identity = {key: {"file": "style.png", "sha256": hashlib.sha256(data).hexdigest()} for key in ["body", "head"]}
     scene = {"file": "scene.png", "sha256": hashlib.sha256(data).hexdigest()}
-    (refs / "references.json").write_text(json.dumps({"version": "v3", "references": entries, "identity": identity, "scene_reference": scene}))
+    supplements = []
+    for category in ["street", "terrace", "train", "cafe", "night_desk", "classroom"]:
+        filename = f"supplement-{category}.png"
+        (refs / filename).write_bytes(data)
+        supplements.append({"file": filename, "category": category, "sha256": hashlib.sha256(data).hexdigest()})
+    (refs / "references.json").write_text(json.dumps({"version": "v4", "references": entries, "identity": identity,
+                                                     "scene_reference": scene, "scene_supplements": supplements}))
     character = plugin / "character"
     character.mkdir()
     (character / "outfit.png").write_bytes(data)
@@ -400,6 +406,46 @@ def test_invalid_presence_decision_never_generates(setup, contains, identity):
         client.plan_overrides = {"contains_mittes": contains, "identity_reference": identity}
         record = await service.submit("看看", "presence", "private", SNAPSHOT, preview=True)
         with pytest.raises(ValueError, match="人物"):
+            await service.process(record)
+        assert client.image_calls == 0
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("context", ["street", "terrace", "train", "cafe", "night_desk", "classroom"])
+@pytest.mark.parametrize("contains", [False, True])
+def test_scene_supplement_matches_context_and_never_mixes_with_person_style(setup, context, contains):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"scene_context": context, "contains_mittes": contains}
+        record = await service.submit("看看这里", context, "private", SNAPSHOT, preview=True)
+        await service.process(record)
+        sources = [ref["source"] for ref in record["references"]]
+        assert sources == (["style.png"] if contains else ["scene.png", f"supplement-{context}.png"])
+        assert len(client.check_inputs[1]) == len(sources) + 1
+        assert client.check_inputs[0]["reference_roles"] == record["references"]
+    asyncio.run(run())
+
+
+def test_corrupted_scene_supplement_stops_before_image_generation(setup):
+    async def run():
+        service, ctx, client, refs = setup
+        client.plan_overrides = {"scene_context": "train"}
+        (refs / "supplement-train.png").write_bytes(b"changed")
+        record = await service.submit("看看电车", "train", "private", SNAPSHOT, preview=True)
+        with pytest.raises(ValueError, match="摘要"):
+            await service.process(record)
+        assert client.image_calls == 0
+        ctx.send.image.assert_not_awaited()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("context", [None, "unknown"])
+def test_invalid_scene_context_stops_before_image_generation(setup, context):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"scene_context": context}
+        record = await service.submit("看看这里", "context", "private", SNAPSHOT, preview=True)
+        with pytest.raises(ValueError, match="场景参考类别"):
             await service.process(record)
         assert client.image_calls == 0
     asyncio.run(run())

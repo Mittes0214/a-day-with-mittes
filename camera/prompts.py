@@ -19,6 +19,7 @@ PERSON_STYLE = """本次有人物入镜，只采用图1的 v4 人设画风，不
 
 SCENE_STYLE = """本次是无人物的景物照片，采用指定咖啡近景原图的二次元画风。
 沿用图1对物件、材质、光影与环境层次的画法，不套用 v4 人物画风的简化程度。
+如有场景补充参考，仅补充同一画风对空间、材质和光影的处理，不改变图1的主画风；不能把补充图的布景、天气、时段、物件、机位或实际光照当成本次事实。
 不复制咖啡杯、咖啡馆布景、固定暖色或参考的机位，实际主体、环境与光照服从本次事实。
 画面不加入手、腿、头发、穿着衣物的人或其他身体部位。物件和环境自由取景。
 上一张照片若存在，仅参考连续拍摄对象，不从中继承其他画风。"""
@@ -37,8 +38,11 @@ Mittes 还是高中生，需要保护个人隐私，不接受以她的人脸、�
 rejection_code(可拍时为空字符串；否则 other_person_privacy/self_privacy/unsupported_content/not_visible/unclear_request), reason(string)。
 不可拍时到此为止，不再写生图提示词。目标为 other_person 时始终不可拍。
 可拍时另外返回：subject(string), scene_type(indoor/outdoor), style_category(portrait/food/drink/outdoor/object),
+scene_context(none/street/terrace/train/cafe/night_desk/classroom),
 contains_mittes(boolean), include_outfit(boolean), identity_reference(none/body/head), framing(string), visible_details(string), lighting(string), prompt(string),
 use_previous_photo(boolean)。style_category 只标记主体类别，不用于添加画风补充；人物穿搭通常 portrait，食物 food，饮品 drink，室外环境 outdoor，独立随身物件 object。
+无人物时，scene_context 按本次真正取景与快照选择最多一个相关场景：street 普通街道与通学步行；terrace 露台/阳台；train 电车车厢；cafe 咖啡店营业区/吧台空间；night_desk 夜间书桌且局部灯光；classroom 教室/学校窗边课桌。只拍食物或独立物件、无相关空间入镜，或不属于这六类时选 none，不强行匹配。有 Mittes 或身体局部入镜时选 none。
+场景参考只控制同一画风对材质、空间和光影的表现，不能为了使用某张参考改变取景或事实，也不把参考里的晴天、暗隧道、灯光、物件或布置套用到其他时间地点。
 先按用户想看的主体和自然拍摄动作确定取景，再标记是否有人物。普通景物可以双手持机，手在镜头后；只有持物展示等实际动作需要时才让手入镜，不为了分享感或证明拍摄者身份而硬加手。
 contains_mittes 仅按计划画面是否实际出现 Mittes 判断，出现手、腿、头发、身体或穿在身上的衣物等局部也为 true；纯食物、物件或环境为 false。
 放在桌上的衣服、脱下的鞋包等独立物品不算人物。不要为选择画风而额外加入人物或身体部位。
