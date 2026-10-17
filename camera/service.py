@@ -75,6 +75,7 @@ class PhotoService:
             raise ValueError("缺少原会话或真实用户消息 ID")
         context = []
         previous_photo = None
+        requester = None
         source_text = instruction
         if not preview:
             source = await self.ctx.message.get_by_id(source_msg_id, stream_id=stream_id)
@@ -83,6 +84,10 @@ class PhotoService:
             user = source.get("message_info", {}).get("user_info", {})
             if not user.get("user_id") or str(user["user_id"]) == str(source.get("account_id")):
                 raise ValueError("拍照必须由真实用户的消息触发")
+            platform = str(source.get("platform") or "").strip().lower()
+            if not platform:
+                raise ValueError("源消息缺少平台，无法核验拍照额度")
+            requester = {"platform": platform, "user_id": str(user["user_id"])}
             source_text = message_text(source)
             recent = await self.ctx.message.get_recent(stream_id, limit=12)
             if not isinstance(recent, list):
@@ -101,6 +106,7 @@ class PhotoService:
             "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v1",
             "images": [], "references": [],
             "previous_photo": previous_photo,
+            "requester": requester,
         })
 
     async def event(self, record: dict[str, Any], stage: str, text: str, **detail: Any) -> None:

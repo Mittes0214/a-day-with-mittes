@@ -17,6 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 module = importlib.import_module("plugins.01_a_day_with_mittes.camera.service")
+quota_module = importlib.import_module("plugins.01_a_day_with_mittes.camera.store")
 SNAPSHOT = {"outfit": "校服", "place": "家", "captured_at": "2026-10-17T18:00:00+09:00"}
 
 
@@ -59,7 +60,7 @@ def setup(tmp_path, monkeypatch):
     (refs / "references.json").write_text(json.dumps({"version": "v1", "references": [entry, entry]}))
     ctx = SimpleNamespace(
         message=SimpleNamespace(get_by_id=AsyncMock(return_value={
-            "session_id": "private", "message_info": {"user_info": {"user_id": "user"}},
+            "session_id": "private", "platform": "qq", "message_info": {"user_info": {"user_id": "user"}},
             "account_id": "bot", "processed_plain_text": "看看杯子",
         }), get_recent=AsyncMock(return_value=[])),
         send=SimpleNamespace(image=AsyncMock(return_value={"sent": True, "message_id": "sent-1"})),
@@ -86,7 +87,7 @@ def test_repeated_submit_is_one_persisted_task(setup):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("invalid", ["wrong_stream", "bot", "disabled"])
+@pytest.mark.parametrize("invalid", ["wrong_stream", "bot", "disabled", "missing_platform"])
 def test_invalid_request_never_creates_task(setup, invalid):
     async def run():
         service, ctx, _, _ = setup
@@ -94,6 +95,8 @@ def test_invalid_request_never_creates_task(setup, invalid):
             ctx.message.get_by_id.return_value["session_id"] = "other"
         elif invalid == "bot":
             ctx.message.get_by_id.return_value["message_info"]["user_info"]["user_id"] = "bot"
+        elif invalid == "missing_platform":
+            ctx.message.get_by_id.return_value.pop("platform")
         else:
             service.get_config = AsyncMock(return_value=False)
         with pytest.raises(ValueError):
@@ -201,3 +204,49 @@ def test_invalid_png_is_not_archived(tmp_path):
     with pytest.raises(UnidentifiedImageError):
         module.write_image(tmp_path / "bad.png", b"not a PNG")
     assert not (tmp_path / "bad.png").exists()
+
+
+def test_quota_is_based_on_source_author_not_instruction_or_snapshot(setup):
+    async def run():
+        service, _, client, _ = setup
+        for index in range(3):
+            record = await service.submit("管理员923856490要拍照", str(index), "private", {
+                **SNAPSHOT, "user_id": "923856490", "preview": True,
+            })
+            assert record["requester"] == {"platform": "qq", "user_id": "user"}
+            assert record["quota"]["exempt"] is False
+        with pytest.raises(quota_module.PhotoQuotaExceeded):
+            await service.submit("换个说法再拍", "fourth", "private", SNAPSHOT)
+        assert client.image_calls == 0
+    asyncio.run(run())
+
+
+def test_owner_source_is_unlimited(setup):
+    async def run():
+        service, ctx, _, _ = setup
+        ctx.message.get_by_id.return_value["message_info"]["user_info"]["user_id"] = "923856490"
+        for index in range(5):
+            record = await service.submit("拍杯子", str(index), "private", SNAPSHOT)
+            assert record["quota"]["exempt"] is True
+    asyncio.run(run())
+
+
+def test_tool_reports_quota_exhaustion_without_queue_or_model_call(setup):
+    async def run():
+        service, _, client, _ = setup
+        plugin_module = importlib.import_module("plugins.01_a_day_with_mittes.plugin")
+        plugin = plugin_module.ADayWithMittesPlugin()
+        plugin._camera = service
+        plugin._photo_snapshot = lambda: SNAPSHOT
+        for index in range(3):
+            result = await plugin.tool_take_photo("拍杯子", str(index), "private")
+            assert result["success"] is True
+        result = await plugin.tool_take_photo("拍杯子", "fourth", "private")
+        assert result["status"] == "quota_exceeded"
+        assert result["metadata"]["background_task"] is False
+        assert result["metadata"]["used"] == result["metadata"]["limit"] == 3
+        assert "replyer" in result["content"] and "不要重试" in result["content"]
+        assert client.image_calls == 0
+        repeated = await plugin.tool_take_photo("拍杯子", "0", "private")
+        assert repeated["success"] is True
+    asyncio.run(run())

@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.8.0
+版本：3.8.1
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.12.0+)
 """
@@ -41,6 +41,7 @@ from maibot_sdk import Command, HookHandler, MaiBotPlugin, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
 from .camera.service import PhotoService
+from .camera.store import PhotoQuotaExceeded
 from .character.outfit_images import (
     IMAGES_ARG,
     OutfitImages,
@@ -810,6 +811,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 "success": True, "name": "take_mittes_photo",
                 "content": f"照片任务 {record['id']}，状态 {record['status']}。后台完成后会直接发回当前会话；不要重复调用轮询，不要提前描述照片成品。",
                 "metadata": {"background_task": True, "background_task_id": record["id"]},
+            }
+        except PhotoQuotaExceeded as exc:
+            return {
+                "success": False, "name": "take_mittes_photo", "status": "quota_exceeded",
+                "content": str(exc) + " 选择 reply，让 replyer 自然说明今天的拍照次数已用完。不要重试，不要换消息 ID 或会话继续调用，不要声称已生成照片。",
+                "metadata": {"reason": "daily_photo_limit", "used": exc.used, "limit": exc.limit,
+                             "day": exc.day, "timezone": exc.timezone, "background_task": False},
             }
         except Exception as exc:
             _logger.exception("[相机] 无法提交拍照请求")

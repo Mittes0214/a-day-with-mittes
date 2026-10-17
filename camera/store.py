@@ -4,10 +4,27 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import json
 import sqlite3
 import uuid
+
+
+DAILY_LIMIT = 3
+QUOTA_TIMEZONE = ZoneInfo("Asia/Taipei")
+EXEMPT_ACCOUNT = ("qq", "923856490")
+
+
+class PhotoQuotaExceeded(ValueError):
+    """用户当日额度已用完，不能再创建生图任务。"""
+
+    def __init__(self, day: str, used: int) -> None:
+        self.day = day
+        self.used = used
+        self.limit = DAILY_LIMIT
+        self.timezone = QUOTA_TIMEZONE.key
+        super().__init__(f"今天的拍照次数已用完（{used}/{DAILY_LIMIT}），台北时间每天零点重置。")
 
 
 def timestamp() -> str:
@@ -28,19 +45,44 @@ class CameraStore:
                 status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                 record TEXT NOT NULL, UNIQUE(stream_id, source_msg_id))""")
             con.execute("CREATE INDEX IF NOT EXISTS task_status ON tasks(status, created_at)")
+            con.execute("""CREATE TABLE IF NOT EXISTS daily_usage (
+                platform TEXT NOT NULL, user_id TEXT NOT NULL, day TEXT NOT NULL,
+                used INTEGER NOT NULL CHECK (used >= 0),
+                PRIMARY KEY (platform, user_id, day))""")
 
     def create(self, record: dict[str, Any]) -> dict[str, Any]:
         record = {**record, "id": uuid.uuid4().hex, "status": "queued",
                   "created_at": timestamp(), "updated_at": timestamp(), "events": []}
         with closing(sqlite3.connect(self.db)) as con, con:
+            # 去重、额度检查、扣次和入队必须在同一写事务中完成，跨会话及并发不能绕过。
+            con.execute("BEGIN IMMEDIATE")
+            existing = con.execute("SELECT record FROM tasks WHERE stream_id=? AND source_msg_id=?",
+                                   (record["stream_id"], record["source_msg_id"])).fetchone()
+            if existing is not None:
+                return json.loads(existing[0])
+            day = datetime.now(QUOTA_TIMEZONE).date().isoformat()
+            requester = record.get("requester") or {}
+            account = (str(requester.get("platform") or ""), str(requester.get("user_id") or ""))
+            if record.get("preview") is not True and not all(account):
+                raise ValueError("缺少经真实消息验证的拍照用户身份")
+            exempt = record.get("preview") is True or account == EXEMPT_ACCOUNT
+            quota = {"day": day, "timezone": QUOTA_TIMEZONE.key, "limit": DAILY_LIMIT, "exempt": exempt}
+            if not exempt:
+                row = con.execute("SELECT used FROM daily_usage WHERE platform=? AND user_id=? AND day=?",
+                                  (*account, day)).fetchone()
+                used = row[0] if row else 0
+                if used >= DAILY_LIMIT:
+                    raise PhotoQuotaExceeded(day, used)
+                con.execute("""INSERT INTO daily_usage VALUES (?,?,?,1)
+                    ON CONFLICT(platform,user_id,day) DO UPDATE SET used=used+1""", (*account, day))
+                quota.update(used=used + 1, remaining=DAILY_LIMIT - used - 1)
+            record["quota"] = quota
             con.execute(
-                "INSERT OR IGNORE INTO tasks VALUES (?,?,?,?,?,?,?)",
+                "INSERT INTO tasks VALUES (?,?,?,?,?,?,?)",
                 (record["id"], record["stream_id"], record["source_msg_id"], record["status"],
                  record["created_at"], record["updated_at"], json.dumps(record, ensure_ascii=False)),
             )
-            row = con.execute("SELECT record FROM tasks WHERE stream_id=? AND source_msg_id=?",
-                              (record["stream_id"], record["source_msg_id"])).fetchone()
-        return json.loads(row[0])
+        return record
 
     def save(self, record: dict[str, Any]) -> None:
         record["updated_at"] = timestamp()
