@@ -39,13 +39,16 @@ class PrivateTopicWaker:
         self._initial = initial
         self._seen: set[tuple[str, str, str, str]] = set()
 
-    def _claim(self, key: tuple[str, str, str, str]) -> bool:
+    def _claim(self, key: tuple[str, str, str, str], repeat: bool = False) -> bool:
         with sqlite3.connect(self._path) as con:
             con.execute("""CREATE TABLE IF NOT EXISTS wakes (
                 day TEXT, slot TEXT, platform TEXT, user_id TEXT,
                 status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (day, slot, platform, user_id))""")
+            if repeat:
+                # 仅显式手动重测允许覆盖本次结果；之前的任务与日志仍保留。
+                con.execute("DELETE FROM wakes WHERE day=? AND slot=? AND platform=? AND user_id=?", key)
             return con.execute(
                 "INSERT OR IGNORE INTO wakes (day,slot,platform,user_id,status) VALUES (?,?,?,?,'claimed')",
                 key,
@@ -60,16 +63,17 @@ class PrivateTopicWaker:
             )
 
     async def tick(
-        self, day: date, segment: Segment, state: SegmentState, users: list[str], *, include_initial: bool = False,
+        self, day: date, segment: Segment, state: SegmentState, users: list[str], *,
+        include_initial: bool = False, repeat: bool = False,
     ) -> None:
         if ((day, segment.slot) == self._initial and not include_initial) or not state.topic.strip():
             return
         for platform, user_id in parse_users(users):
             key = (day.isoformat(), segment.slot, platform, user_id)
-            if key in self._seen:
+            if key in self._seen and not repeat:
                 continue
             # 先持久化再调用。RPC 超时或进程退出时不能确定是否已接受，因此不自动重试。
-            if not await asyncio.to_thread(self._claim, key):
+            if not await asyncio.to_thread(self._claim, key, repeat):
                 self._seen.add(key)
                 continue
             self._seen.add(key)

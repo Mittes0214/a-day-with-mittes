@@ -150,6 +150,18 @@ def test_manual_wake_can_include_initial_but_never_duplicate(tmp_path):
     asyncio.run(scenario())
 
 
+def test_explicit_manual_repeat_allows_one_more_wake_without_changing_default_dedup(tmp_path):
+    async def scenario():
+        ctx = context()
+        waker = module.PrivateTopicWaker(ctx, tmp_path / "wakes.db", (DAY, segment().slot))
+        await waker.tick(DAY, segment(), state(), ["qq:923856490"], include_initial=True)
+        await waker.tick(DAY, segment(), state(), ["qq:923856490"], include_initial=True, repeat=True)
+        await waker.tick(DAY, segment(), state(), ["qq:923856490"], include_initial=True)
+        assert ctx.maisaka.proactive.trigger.await_count == 2
+        assert len(statuses(tmp_path / "wakes.db")) == 1
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("target,slot,topic", [
     ("2026-10-16", "18:00-19:00", "话题"),
     ("2026-10-17", "19:00-20:00", "话题"),

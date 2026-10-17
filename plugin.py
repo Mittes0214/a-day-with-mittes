@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.7.1
+版本：3.7.2
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.12.0+)
 """
@@ -1990,7 +1990,11 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             if self._private_topic_waker is None:
                 raise RuntimeError("私聊唤醒器尚未就绪")
             users = await self._get_config("proactive_private.users", [])
-            await self._private_topic_waker.tick(day, segment, state, users, include_initial=True)
+            payload = json.loads(str(job.get("payload") or "{}"))
+            repeat = payload.get("repeat", False)
+            if not isinstance(repeat, bool):
+                raise ValueError("手动重测 repeat 必须是布尔值")
+            await self._private_topic_waker.tick(day, segment, state, users, include_initial=True, repeat=repeat)
             return "已检查当前时段的手动唤醒；逐用户结果见 private_topic_wakes.db（queued 不表示已回复）"
 
         if action == "set_expression":
