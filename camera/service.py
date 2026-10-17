@@ -19,10 +19,12 @@ from .store import CameraStore, timestamp
 
 
 _logger = logging.getLogger("a_day_with_mittes.camera")
+PHOTO_DIMENSIONS = (1024, 1536)
+PHOTO_SIZE = "1024x1536"
 DEFAULTS = {
     "enabled": False, "api_provider": "CLIProxyAPI", "director_model": "gpt-6.1-sol",
     "image_model": "gpt-image-2.5-sunburst", "check_model": "gpt-6.1-sol",
-    "size": "1024x1536", "quality": "high", "timeout_seconds": 300,
+    "quality": "high", "timeout_seconds": 300,
 }
 
 
@@ -37,6 +39,8 @@ def write_image(path: Path, data: bytes) -> dict[str, Any]:
         width, height = image.size
         if width < 256 or height < 256 or width * height > 32_000_000 or image.format != "PNG":
             raise ValueError("生图输出格式或尺寸不符合要求")
+        if image.size != PHOTO_DIMENSIONS:
+            raise ValueError(f"生图输出必须为竖版 2:3、{PHOTO_SIZE}，实际为 {width}x{height}")
         image.load()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
@@ -67,6 +71,7 @@ class PhotoService:
     async def submit(self, instruction: str, source_msg_id: str, stream_id: str,
                      snapshot: dict[str, Any], *, preview: bool = False) -> dict[str, Any]:
         settings = {key: await self.get_config(f"photo.{key}", default) for key, default in DEFAULTS.items()}
+        settings["size"] = PHOTO_SIZE
         if not settings["enabled"]:
             raise ValueError("拍照功能尚未开启")
         if not instruction.strip() or len(instruction) > 2000:
@@ -149,6 +154,8 @@ class PhotoService:
 
     async def process(self, record: dict[str, Any]) -> None:
         settings = record["settings"]
+        # 重载后恢复的旧排队任务也使用统一尺寸，参数与归档保持一致。
+        settings["size"] = PHOTO_SIZE
         await self.event(record, "planning", "读取请求快照，设计手机取景")
         base_url, key = await asyncio.to_thread(read_provider, self.plugin_dir.parents[1] / "config/model_config.toml", settings["api_provider"])
         client = self.client_factory(base_url, key, float(settings["timeout_seconds"]))

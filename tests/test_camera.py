@@ -21,9 +21,9 @@ quota_module = importlib.import_module("plugins.01_a_day_with_mittes.camera.stor
 SNAPSHOT = {"outfit": "校服", "place": "家", "captured_at": "2026-10-17T18:00:00+09:00"}
 
 
-def png():
+def png(size=(512, 512)):
     output = BytesIO()
-    Image.new("RGB", (512, 512), "white").save(output, format="PNG")
+    Image.new("RGB", size, "white").save(output, format="PNG")
     return output.getvalue()
 
 
@@ -50,7 +50,8 @@ class FakeClient:
         self.image_calls += 1
         self.last_refs = images
         self.last_prompt = prompt
-        return png(), {}
+        self.last_settings = dict(settings)
+        return png((1024, 1536)), {}
 
     async def close(self):
         pass
@@ -111,6 +112,35 @@ def test_repeated_submit_is_one_persisted_task(setup):
         assert "secret-not-in-record" not in json.dumps(first)
         restarted = module.CameraStore(service.store.root)
         assert restarted.next_queued()["id"] == first["id"]
+    asyncio.run(run())
+
+
+def test_size_is_fixed_even_for_old_configuration_and_queued_tasks(setup):
+    async def run():
+        service, _, client, _ = setup
+        service.get_config = AsyncMock(side_effect=lambda key, default: {
+            "photo.enabled": True, "photo.size": "1536x1024",
+        }.get(key, default))
+        record = await service.submit("拍杯子", "source", "private", dict(SNAPSHOT))
+        assert record["settings"]["size"] == "1024x1536"
+        record["settings"]["size"] = "1536x1024"
+        await service.process(record)
+        assert client.last_settings["size"] == "1024x1536"
+        assert record["settings"]["size"] == "1024x1536"
+        assert (record["images"][0]["width"], record["images"][0]["height"]) == (1024, 1536)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("size", [(1536, 1024), (1024, 1024), (512, 768)])
+def test_wrong_output_dimensions_are_never_sent(setup, size):
+    async def run():
+        service, ctx, client, _ = setup
+        client.image = AsyncMock(return_value=(png(size), {}))
+        record = await service.submit("拍杯子", "source", "private", dict(SNAPSHOT))
+        with pytest.raises(ValueError, match="必须为竖版 2:3"):
+            await service.process(record)
+        ctx.send.image.assert_not_awaited()
+        assert not list((service.store.root / record["id"]).glob("attempt-*.png"))
     asyncio.run(run())
 
 

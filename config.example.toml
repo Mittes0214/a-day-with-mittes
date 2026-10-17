@@ -123,7 +123,7 @@ api_provider = "CLIProxyAPI"
 director_model = "gpt-6.1-sol"
 image_model = "gpt-image-2.5-sunburst"
 check_model = "gpt-6.1-sol"
-size = "1024x1536"
+# 照片尺寸由程序固定为竖版 2:3、1024x1536，不随参考图变化。
 quality = "high"
 timeout_seconds = 300
 
