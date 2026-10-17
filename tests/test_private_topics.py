@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import asyncio
 import importlib
+import json
 import sqlite3
 import sys
 
@@ -51,7 +52,7 @@ def test_only_allowed_private_targets_and_planner_gets_topic(tmp_path):
         args = ctx.maisaka.proactive.trigger.await_args.kwargs
         assert args["stream_id"] == "real-private"
         assert current.topic in args["intent"]
-        assert "不合适可以不回复" in args["intent"] and "reply_reference" in args["intent"]
+        assert "否则可以不回复" in args["intent"] and "reply_reference" in args["intent"]
         assert args["metadata"]["background_tool_result"] is True
         assert current.story == "原故事保持不变"
         assert statuses(tmp_path / "wakes.db")[0][-1] == "queued"
@@ -179,6 +180,36 @@ def test_manual_job_rejects_stale_or_empty_topic(monkeypatch, target, slot, topi
         with pytest.raises(ValueError):
             await plugin._execute_admin_job({"action": "wake_private_topic", "target_date": target, "slot": slot})
         plugin._private_topic_waker.tick.assert_not_awaited()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("source_slot,accepted", [
+    ("18:00-19:00", True), ("20:00-21:00", False), ("12:00-13:00", False),
+])
+def test_manual_comparison_uses_original_event_but_rejects_future_or_missing_source(monkeypatch, source_slot, accepted):
+    plugin_module = importlib.import_module("plugins.01_a_day_with_mittes.plugin")
+
+    async def scenario():
+        plugin = plugin_module.ADayWithMittesPlugin()
+        source, current, future = segment(), segment("19:00", "20:00"), segment("20:00", "21:00")
+        original = state()
+        store = SimpleNamespace(segments_of=lambda _: [source, current, future], state_of=lambda *_: original)
+        monkeypatch.setattr(plugin, "_require_store", lambda: store)
+        monkeypatch.setattr(plugin, "_current", lambda: (None, DAY, current, state("")))
+        monkeypatch.setattr(plugin, "_get_config", AsyncMock(side_effect=[True, ["qq:923856490"]]))
+        waker = SimpleNamespace(tick=AsyncMock())
+        plugin._private_topic_waker = waker
+        job = {
+            "action": "wake_private_topic", "target_date": DAY.isoformat(), "slot": current.slot,
+            "payload": json.dumps({"source_slot": source_slot, "repeat": True}),
+        }
+        if accepted:
+            await plugin._execute_admin_job(job)
+            waker.tick.assert_awaited_once_with(DAY, source, original, ["qq:923856490"], include_initial=True, repeat=True)
+        else:
+            with pytest.raises(ValueError):
+                await plugin._execute_admin_job(job)
+            waker.tick.assert_not_awaited()
     asyncio.run(scenario())
 
 

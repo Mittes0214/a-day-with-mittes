@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.7.2
+版本：3.7.3
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.12.0+)
 """
@@ -1985,12 +1985,22 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             _, day, segment, state = self._current()
             if target != day or str(job.get("slot") or "") != segment.slot:
                 raise ValueError("只能手动唤醒当前日程时段，任务的日期或时段已过期")
+            payload = json.loads(str(job.get("payload") or "{}"))
+            source_slot = payload.get("source_slot", "")
+            if source_slot:
+                # 显式对比测试可重用今天已经发生的事件；自动轮询仍只处理当前时段。
+                source = next((s for s in store.segments_of(day) if s.slot == source_slot), None)
+                if source is None or source.start_minutes > segment.start_minutes:
+                    raise ValueError("测试素材必须是今天已开始的真实日程时段")
+                source_state = store.state_of(day, source)
+                if source_state is None:
+                    raise ValueError("测试素材尚未生成")
+                segment, state = source, source_state
             if not state.topic.strip():
                 raise ValueError("当前时段没有 topic")
             if self._private_topic_waker is None:
                 raise RuntimeError("私聊唤醒器尚未就绪")
             users = await self._get_config("proactive_private.users", [])
-            payload = json.loads(str(job.get("payload") or "{}"))
             repeat = payload.get("repeat", False)
             if not isinstance(repeat, bool):
                 raise ValueError("手动重测 repeat 必须是布尔值")

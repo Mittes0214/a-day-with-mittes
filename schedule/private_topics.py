@@ -88,13 +88,17 @@ class PrivateTopicWaker:
                     raise RuntimeError(f"私聊会话缺少 stream_id：{session!r}")
                 task_id = "schedule-private-topic:" + ":".join(key)
                 intent = (
-                    f"日程到点，提供一次私聊主动聊天的机会。\n"
-                    f"日程：{day.isoformat()} {segment.slot}（日本时间），{segment.title}\n"
-                    f"topic：{state.topic.strip()}\n"
-                    "这是日程事件，不是对方新发来的消息。请作为导演，结合当前私聊上下文、"
-                    "关系和对方最近的反应，自行判断是否选择 reply；不合适可以不回复。"
-                    "若选择 reply，请把选中的话题事实和表达意图写入 reply_reference，"
-                    "从触动你的那一点自然开口，避免复述日程或汇报行程。"
+                    "这是一次由日程触发的私聊主动聊天判断，对方没有因此发来新消息。\n\n"
+                    f"日程：{day.isoformat()} {segment.slot}（日本时间），{segment.title}。\n\n"
+                    f"事件背景：\n{state.topic.strip()}\n\n"
+                    "请结合私聊关系、最近的聊天和对方的反应，判断：这件事是否让 Mittes 此刻有了"
+                    "想找对方说点什么的念头？这个念头可能来自某个具体细节、一点尚未消散的情绪，"
+                    "或这件事与对方的某种联系。\n\n"
+                    "有这样的念头，且此刻适合联系，就选择 reply；否则可以不回复。\n\n"
+                    "选择 reply 时，请先确定她为什么想找这个人，以及最想让对方知道哪一点。"
+                    "事件背景供你判断和取材，经过与结局不需要一并交给 replyer。\n\n"
+                    "reply_reference 遵循工具的参数说明：只同步支撑这次联系动机的必要客观事实、"
+                    "Mittes 此刻的状态，以及核心表达态度。篇幅集中在选中的那一点，具体语言组织交给 replyer。"
                 )
                 result = await self._ctx.maisaka.proactive.trigger(
                     stream_id=stream_id, intent=intent, reason="schedule_private_topic",
