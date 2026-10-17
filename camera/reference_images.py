@@ -39,6 +39,9 @@ def build_references(plugin_dir: Path, camera_root: Path, record: dict[str, Any]
         record["style_family"] = "person_v4"
         primary = next(entry for entry in manifest["references"] if entry["category"] == "portrait")
         fixed(primary, "v4 人物画风主基准：只控制线条、色彩、阴影与细节密度，不复制构图或人物姿势", "style")
+        if plan["clothing_context"] != "none":
+            supplement = next(entry for entry in manifest["clothing_supplements"] if entry["category"] == plan["clothing_context"])
+            fixed(supplement, "v4 衣着分享补充：参考同一画风的衣料与自然局部分享表现；不复制衣服、颜色、袜鞋款式、身体姿势、光照或固定机位，款式仅以当前衣柜图和快照为准", "style")
     else:
         record["style_family"] = "scene_coffee"
         fixed(manifest["scene_reference"], "无人物景物画风主基准：沿用咖啡近景原图的画法与材质光影层次，不复制物件、咖啡馆布景、构图或光照", "style")

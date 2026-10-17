@@ -42,7 +42,7 @@ class FakeClient:
             return self.checks.pop(0), {}
         self.planning_inputs = data
         return {"feasible": True, "target_kind": "object", "rejection_code": "", "reason": "", "subject": "杯子", "scene_type": "indoor", "include_outfit": False,
-                "style_category": "portrait", "identity_reference": "none", "contains_mittes": False, "scene_context": "none",
+                "style_category": "portrait", "identity_reference": "none", "contains_mittes": False, "scene_context": "none", "clothing_context": "none",
                 "framing": "俯拍", "visible_details": "杯子", "lighting": "室内灯", "prompt": "手机俯拍杯子",
                 "use_previous_photo": self.use_previous, **(self.plan_overrides or {})}, {}
 
@@ -73,8 +73,13 @@ def setup(tmp_path, monkeypatch):
         filename = f"supplement-{category}.png"
         (refs / filename).write_bytes(data)
         supplements.append({"file": filename, "category": category, "sha256": hashlib.sha256(data).hexdigest()})
-    (refs / "references.json").write_text(json.dumps({"version": "v4", "references": entries, "identity": identity,
-                                                     "scene_reference": scene, "scene_supplements": supplements}))
+    clothing = []
+    for category in ["maid", "socks", "shoes"]:
+        filename = f"clothing-{category}.png"
+        (refs / filename).write_bytes(data)
+        clothing.append({"file": filename, "category": category, "sha256": hashlib.sha256(data).hexdigest()})
+    (refs / "references.json").write_text(json.dumps({"version": "v5", "references": entries, "identity": identity,
+                                                     "scene_reference": scene, "scene_supplements": supplements, "clothing_supplements": clothing}))
     character = plugin / "character"
     character.mkdir()
     (character / "outfit.png").write_bytes(data)
@@ -394,7 +399,7 @@ def test_reference_roles_are_selected_by_visible_content(setup, category, identi
         assert record["style_family"] == client.check_inputs[0]["style_family"] == expected_family
         style_sources = {ref["source"] for ref in record["references"] if ref["kind"] == "style"}
         assert style_sources == {"style.png" if contains else "scene.png"}
-        assert ("本次有人物入镜，只采用图1的 v4 人设画风" in client.last_prompt) is contains
+        assert ("本次有人物入镜，采用图1的 v4 人设画风" in client.last_prompt) is contains
         assert ("本次是无人物的景物照片" in client.last_prompt) is not contains
     asyncio.run(run())
 
@@ -446,6 +451,60 @@ def test_invalid_scene_context_stops_before_image_generation(setup, context):
         client.plan_overrides = {"scene_context": context}
         record = await service.submit("看看这里", "context", "private", SNAPSHOT, preview=True)
         with pytest.raises(ValueError, match="场景参考类别"):
+            await service.process(record)
+        assert client.image_calls == 0
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("clothing", ["maid", "socks", "shoes"])
+@pytest.mark.parametrize("contains", [False, True])
+def test_clothing_supplements_are_single_selected_and_do_not_mix_style_families(setup, clothing, contains):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"clothing_context": clothing, "contains_mittes": contains, "include_outfit": True,
+                                 "scene_context": "cafe"}
+        record = await service.submit("看看衣服", clothing, "private", SNAPSHOT, preview=True)
+        await service.process(record)
+        sources = [ref["source"] for ref in record["references"] if ref["kind"] == "style"]
+        expected = (["style.png", f"clothing-{clothing}.png"] if contains else ["scene.png", "supplement-cafe.png"])
+        assert sources == expected
+        assert record["references"][-1]["kind"] == "outfit"
+        assert record["references"][-1]["outfit"] == SNAPSHOT["outfit"]
+        assert len(client.check_inputs[1]) == len(record["references"]) + 1
+        assert client.check_inputs[0]["reference_roles"] == record["references"]
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("clothing", [None, "unknown"])
+def test_invalid_clothing_context_stops_before_generation(setup, clothing):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"clothing_context": clothing}
+        record = await service.submit("看看衣服", "clothing", "private", SNAPSHOT, preview=True)
+        with pytest.raises(ValueError, match="衣着参考类别"):
+            await service.process(record)
+        assert client.image_calls == 0
+    asyncio.run(run())
+
+
+def test_clothing_supplement_requires_current_wardrobe_reference(setup):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"clothing_context": "shoes", "contains_mittes": True, "include_outfit": False}
+        record = await service.submit("看看鞋子", "clothing", "private", SNAPSHOT, preview=True)
+        with pytest.raises(ValueError, match="当前衣柜"):
+            await service.process(record)
+        assert client.image_calls == 0
+    asyncio.run(run())
+
+
+def test_corrupted_clothing_supplement_stops_before_generation(setup):
+    async def run():
+        service, _, client, refs = setup
+        client.plan_overrides = {"clothing_context": "maid", "contains_mittes": True, "include_outfit": True}
+        (refs / "clothing-maid.png").write_bytes(b"changed")
+        record = await service.submit("看看女仆装", "clothing", "private", SNAPSHOT, preview=True)
+        with pytest.raises(ValueError, match="摘要"):
             await service.process(record)
         assert client.image_calls == 0
     asyncio.run(run())

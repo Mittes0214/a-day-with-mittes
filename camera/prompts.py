@@ -13,8 +13,9 @@ STYLE = """生成 Mittes 亲手用手机拍下的一张二次元生活随拍。
 拍食物、鞋、环境时不为证明身份而加入头发。猫耳、尾巴、铃铛是道具，仅在明确实际佩戴时出现。
 衣柜图不引入白底、平铺、正反面排版或标注。无聊天文字、日期水印、说明文字或多格拼图。"""
 
-PERSON_STYLE = """本次有人物入镜，只采用图1的 v4 人设画风，不添加分场景画风补充。
+PERSON_STYLE = """本次有人物入镜，采用图1的 v4 人设画风；如有衣着分享补充，仅沿用同一画风的衣料与自然局部表现，不添加景物画风参考。
 沿用 v4 的线条轻重、色彩与阴影处理，不改成精修厚涂、写实微纹理或刻意简化的动画平涂。
+衣着补充不是当前衣服或袜鞋的事实，具体款式以本次衣柜图和快照为准，不照搬参考的颜色、衣服、姿势或固定机位。前方角度可通过镜自拍等自然方式形成，不把本人拍摄统一成俯拍，也不统一成前方拍。
 上一张照片若存在，仅参考连续拍摄对象，不从中继承其他画风。"""
 
 SCENE_STYLE = """本次是无人物的景物照片，采用指定咖啡近景原图的二次元画风。
@@ -38,11 +39,12 @@ Mittes 还是高中生，需要保护个人隐私，不接受以她的人脸、�
 rejection_code(可拍时为空字符串；否则 other_person_privacy/self_privacy/unsupported_content/not_visible/unclear_request), reason(string)。
 不可拍时到此为止，不再写生图提示词。目标为 other_person 时始终不可拍。
 可拍时另外返回：subject(string), scene_type(indoor/outdoor), style_category(portrait/food/drink/outdoor/object),
-scene_context(none/street/terrace/train/cafe/night_desk/classroom),
+scene_context(none/street/terrace/train/cafe/night_desk/classroom), clothing_context(none/maid/socks/shoes),
 contains_mittes(boolean), include_outfit(boolean), identity_reference(none/body/head), framing(string), visible_details(string), lighting(string), prompt(string),
 use_previous_photo(boolean)。style_category 只标记主体类别，不用于添加画风补充；人物穿搭通常 portrait，食物 food，饮品 drink，室外环境 outdoor，独立随身物件 object。
 无人物时，scene_context 按本次真正取景与快照选择最多一个相关场景：street 普通街道与通学步行；terrace 露台/阳台；train 电车车厢；cafe 咖啡店营业区/吧台空间；night_desk 夜间书桌且局部灯光；classroom 教室/学校窗边课桌。只拍食物或独立物件、无相关空间入镜，或不属于这六类时选 none，不强行匹配。有 Mittes 或身体局部入镜时选 none。
 场景参考只控制同一画风对材质、空间和光影的表现，不能为了使用某张参考改变取景或事实，也不把参考里的晴天、暗隧道、灯光、物件或布置套用到其他时间地点。
+clothing_context 只在衣着穿在 Mittes 身上且是本次分享重点时选择：maid 女仆装；socks 袜子；shoes 鞋子，一次最多一种。有此类请求时 contains_mittes=true、include_outfit=true；其他未匹配服装、无人物、独立摆放衣物或不以衣着为重点时选 none。衣着补充仅控制同一画风下的衣料与自然局部表现，不照搬款式与姿势。机位按情境选择；前方角度可用镜自拍，不强制所有衣着都直接俯拍。
 先按用户想看的主体和自然拍摄动作确定取景，再标记是否有人物。普通景物可以双手持机，手在镜头后；只有持物展示等实际动作需要时才让手入镜，不为了分享感或证明拍摄者身份而硬加手。
 contains_mittes 仅按计划画面是否实际出现 Mittes 判断，出现手、腿、头发、身体或穿在身上的衣物等局部也为 true；纯食物、物件或环境为 false。
 放在桌上的衣服、脱下的鞋包等独立物品不算人物。不要为选择画风而额外加入人物或身体部位。

@@ -104,7 +104,7 @@ class PhotoService:
         return await asyncio.to_thread(self.store.create, {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v4",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v5",
             "images": [], "references": [],
             "previous_photo": previous_photo,
             "requester": requester,
@@ -190,6 +190,10 @@ class PhotoService:
                 raise ValueError("拍摄方案缺少人物入镜标记")
             if plan.get("scene_context") not in {"none", "street", "terrace", "train", "cafe", "night_desk", "classroom"}:
                 raise ValueError("拍摄方案缺少有效的场景参考类别")
+            if plan.get("clothing_context") not in {"none", "maid", "socks", "shoes"}:
+                raise ValueError("拍摄方案缺少有效的衣着参考类别")
+            if plan["contains_mittes"] and plan["clothing_context"] != "none" and not plan["include_outfit"]:
+                raise ValueError("衣着分享参考必须同时加载当前衣柜款式")
             if not plan["contains_mittes"] and plan["identity_reference"] != "none":
                 raise ValueError("无人物拍摄方案不能使用人物外貌参考")
             if not isinstance(plan.get("use_previous_photo"), bool):

@@ -19,10 +19,13 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_deployed_reference_manifest_matches_all_files():
     folder = ROOT / "camera/references"
     manifest = json.loads((folder / "references.json").read_text())
-    assert manifest["version"] == "mittes-phone-photo-style-v4"
+    assert manifest["version"] == "mittes-phone-photo-style-v5"
     assert {entry["category"] for entry in manifest["references"]} == {"portrait"}
-    entries = [*manifest["references"], manifest["scene_reference"], *manifest["identity"].values(), *manifest["scene_supplements"]]
+    entries = [*manifest["references"], manifest["scene_reference"], *manifest["identity"].values(), *manifest["scene_supplements"], *manifest["clothing_supplements"]]
     assert {entry["category"] for entry in manifest["scene_supplements"]} == {"street", "terrace", "train", "cafe", "night_desk", "classroom"}
+    assert {entry["category"] for entry in manifest["clothing_supplements"]} == {"maid", "socks", "shoes"}
+    shoes = next(entry for entry in manifest["clothing_supplements"] if entry["category"] == "shoes")
+    assert shoes["sha256"] == "f9b8791d49c4e27f512a25cf2fe26b6f36b82ff848d63c834570da8120f7bc16"
     assert {str(path.relative_to(folder)) for path in folder.rglob("*.png")} == {entry["file"] for entry in entries}
     for entry in entries:
         raw = (folder / entry["file"]).read_bytes()
