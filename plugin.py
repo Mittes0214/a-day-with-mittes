@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.8.1
+版本：3.9.0
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.12.0+)
 """
@@ -786,13 +786,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         visibility="visible",
         brief_description="应用户看图请求，拍一张 Mittes 身边事物、环境或当前穿搭的二次元手机随拍。",
         description=(
-            "应用户的看图请求，生成并发送一张 Mittes 用手机随手拍下的二次元风格照片。"
-            "当用户想看看 Mittes 身边的事物、所处环境或自身穿搭时使用。"
-            "请求可以是明确的拍照要求，也可以是承接前文的‘看看’‘给我看看’，根据对话确定拍摄对象。"
-            "以当前日程、所在地和穿搭为依据，拍摄能够亲手用手机拍到的内容。"
-            "允许身体局部，不出现人脸；不生成游戏画面、屏幕截图或脱离手机视角的场景插画。"
-            "仅在用户表达看图意愿时调用，日常分享与主动聊天以文字为主。"
-            "后台完成后直接发回原会话，不要重复调用来查询进度。"
+            "根据用户看图请求和聊天上下文，结合 Mittes 当前日程，拍摄并分享身边环境、物件或自身穿搭。"
+            "后台完成后发送到原会话；不要重复调用查询进度。"
         ),
         parameters=[
             ToolParameterInfo(name="instruction", param_type=ToolParamType.STRING, required=True,
@@ -807,9 +802,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             if self._camera is None:
                 raise RuntimeError("相机尚未就绪")
             record = await self._camera.submit(instruction, source_msg_id, stream_id, self._photo_snapshot())
+            if record["status"] == "declined":
+                return {"success": False, "name": "take_mittes_photo", "status": "declined",
+                        "content": record["decline"]["reason"] + " " + record["decline"]["planner_guidance"],
+                        "metadata": {"background_task": False, "background_task_id": record["id"]}}
             return {
                 "success": True, "name": "take_mittes_photo",
-                "content": f"照片任务 {record['id']}，状态 {record['status']}。后台完成后会直接发回当前会话；不要重复调用轮询，不要提前描述照片成品。",
+                "content": f"照片任务 {record['id']}，状态 {record['status']}。后台会回填不可拍摄的原因，或在检查通过后发送成品。不要预先承诺一定可拍，不要提前描述照片，不要重复调用轮询。",
                 "metadata": {"background_task": True, "background_task_id": record["id"]},
             }
         except PhotoQuotaExceeded as exc:
@@ -828,9 +827,11 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         outfit = self._wardrobe.get(segment.outfit) if self._wardrobe is not None else None
         return {
             "captured_at": moment.isoformat(), "logical_day": day.isoformat(), "slot": segment.slot,
-            "title": segment.title, "place": segment.place, "places": state.places,
+            "title": segment.title, "place": self._require_store().place_at(moment, segment, state), "places": state.places,
             "outfit": segment.outfit,
             "outfit_details": {key: value for key, value in outfit.parts.items() if key != "underwear"} if outfit else {},
+            "outfit_optional": outfit.optional if outfit else "",
+            "appearance": self._wardrobe.appearance if self._wardrobe is not None else {},
             "story": state.story, "topic": state.topic,
         }
 

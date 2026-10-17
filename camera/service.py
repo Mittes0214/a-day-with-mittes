@@ -9,12 +9,12 @@ import base64
 import hashlib
 import json
 import logging
-import tomllib
 
 from PIL import Image
 
 from .client import CPAClient, GenerationUnknown, read_provider
-from .prompts import CHECK, DIRECTOR, STYLE
+from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, STYLE
+from .reference_images import build_references
 from .store import CameraStore, timestamp
 
 
@@ -99,11 +99,12 @@ class PhotoService:
             previous = await asyncio.to_thread(self.store.latest_sent, stream_id)
             if previous is not None:
                 previous_photo = {"id": previous["id"], "description": previous["description"],
-                                  "instruction": previous["instruction"], "file": previous["final_image"]}
+                                  "instruction": previous["instruction"], "file": previous["final_image"],
+                                  "snapshot": {key: previous["snapshot"].get(key) for key in ("captured_at", "outfit", "place")}}
         return await asyncio.to_thread(self.store.create, {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v1",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v2",
             "images": [], "references": [],
             "previous_photo": previous_photo,
             "requester": requester,
@@ -157,16 +158,35 @@ class PhotoService:
                 "context": record["context"], "snapshot": record["snapshot"],
                 "previous_photo": record.get("previous_photo"),
             })
-            if plan.get("feasible") is not True:
-                raise ValueError("无法拍摄：" + str(plan.get("reason", "模型未确认可拍摄")))
+            record["plan"] = plan
+            record["planning_usage"] = usage
+            if not isinstance(plan.get("feasible"), bool) or plan.get("target_kind") not in {"self", "object", "environment", "other_person", "unclear"}:
+                raise ValueError("取景分析未返回有效的可拍判断与拍摄对象类型")
+            if plan["target_kind"] == "other_person" or plan.get("rejection_code") == "other_person_privacy":
+                await self._decline(record, "other_person_privacy")
+                return
+            if plan["target_kind"] == "unclear":
+                await self._decline(record, "unclear_request")
+                return
+            if not plan["feasible"]:
+                code = plan.get("rejection_code")
+                if code not in DECLINE_REASONS:
+                    raise ValueError("不可拍判断缺少有效原因代码")
+                await self._decline(record, code)
+                return
+            if plan.get("rejection_code") != "":
+                raise ValueError("可拍判断与拒绝原因不一致")
             for field in ("subject", "framing", "visible_details", "lighting", "prompt"):
                 if not isinstance(plan.get(field), str) or not plan[field].strip():
                     raise ValueError(f"拍摄方案缺少 {field}")
             if plan.get("scene_type") not in {"indoor", "outdoor"} or not isinstance(plan.get("include_outfit"), bool):
                 raise ValueError("拍摄方案的场景类型或穿搭标记无效")
-            record["plan"] = plan
-            record["planning_usage"] = usage
+            if plan.get("style_category") not in {"portrait", "food", "drink", "outdoor", "object"} or plan.get("identity_reference") not in {"none", "body", "head"}:
+                raise ValueError("拍摄方案的参考图用途无效")
+            if not isinstance(plan.get("use_previous_photo"), bool):
+                raise ValueError("拍摄方案缺少连续照片标记")
             images = await asyncio.to_thread(self._references, record, plan)
+            check_references = list(images)
             prompt = STYLE + "\n\n本次拍摄：\n" + plan["prompt"] + "\n\n事实依据：\n" + json.dumps(record["snapshot"], ensure_ascii=False)
             prompt += "\n\n参考图用途：\n" + json.dumps(record["references"], ensure_ascii=False)
             record["prompt"] = prompt
@@ -180,8 +200,9 @@ class PhotoService:
                 record["images"].append({"file": filename, "attempt": attempt + 1, **info, **result})
                 await self.event(record, "checking", "检查拍摄对象、人脸、场景和画风", attempt=attempt + 1)
                 check, usage = await client.json(settings["check_model"], CHECK, {
-                    "instruction": record["instruction"], "plan": plan, "snapshot": record["snapshot"],
-                }, images=[raw, images[0]])
+                    "instruction": record["instruction"], "source_text": record["source_text"],
+                    "plan": plan, "snapshot": record["snapshot"], "reference_roles": record["references"],
+                }, images=[raw, *check_references])
                 if not isinstance(check.get("passed"), bool) or not isinstance(check.get("issues"), list) or not isinstance(check.get("repairable"), bool):
                     raise ValueError("图片检查未返回有效判断")
                 record["images"][-1]["check"] = check
@@ -204,49 +225,34 @@ class PhotoService:
         finally:
             await client.close()
 
+    async def _decline(self, record: dict[str, Any], code: str) -> None:
+        guidance = DECLINE_GUIDANCE if code != "unclear_request" else (
+            "选择 reply，让 replyer 简短询问用户具体想看什么。不要擅自选择拍摄对象或自动重试。"
+        )
+        record["decline"] = {"reason_code": code, "reason": DECLINE_REASONS[code], "planner_guidance": guidance}
+        await self.event(record, "declined", DECLINE_REASONS[code])
+        if record["preview"]:
+            return
+        try:
+            result = await self.ctx.maisaka.proactive.trigger(
+                stream_id=record["stream_id"],
+                intent="take_mittes_photo 工具结果：不可拍摄，未调用生图接口。\n"
+                       + DECLINE_REASONS[code] + "\n" + guidance,
+                reason="camera_declined",
+                metadata={"background_tool_result": True, "tool_name": "take_mittes_photo",
+                          "tool_success": False, "task_id": record["id"], "status": "declined", "reason_code": code},
+            )
+            if not isinstance(result, dict) or result.get("success") is not True:
+                raise RuntimeError("planner 未确认接收不可拍摄结果")
+            record["decline"]["feedback_delivered"] = True
+            await asyncio.to_thread(self.store.save, record)
+        except Exception:
+            record["events"].append({"at": timestamp(), "stage": "feedback_warning", "text": "不可拍摄决定已保存，但回复指导回填失败；未自动重试"})
+            await asyncio.to_thread(self.store.save, record)
+            _logger.exception("[相机] 不可拍摄结果回填失败 %s", record["id"])
+
     def _references(self, record: dict[str, Any], plan: dict[str, Any]) -> list[bytes]:
-        folder = self.store.root / record["id"]
-        folder.mkdir(parents=True, exist_ok=True)
-        ref_dir = self.plugin_dir / "camera/references"
-        manifest = json.loads((ref_dir / "references.json").read_text())
-        entry = manifest["references"][1 if plan["scene_type"] == "outdoor" else 0]
-        raw = (ref_dir / entry["file"]).read_bytes()
-        digest = hashlib.sha256(raw).hexdigest()
-        if digest != entry["sha256"]:
-            raise ValueError("固定画风参考图摘要不一致")
-        (folder / "reference-1.png").write_bytes(raw)
-        record["references"] = [{"file": "reference-1.png", "role": "固定画风与手机取景参考", "sha256": digest}]
-        record["style_version"] = manifest["version"]
-        images = [raw]
-        if plan["include_outfit"]:
-            with (self.plugin_dir / "character/outfit_images.toml").open("rb") as handle:
-                mapping = tomllib.load(handle)["images"]
-            name = record["snapshot"]["outfit"]
-            if name not in mapping:
-                raise ValueError(f"当前穿搭「{name}」缺少设定图，无法保证照片穿搭一致")
-            root = (self.plugin_dir / "character").resolve()
-            target = (root / mapping[name]).resolve()
-            if not target.is_relative_to(root):
-                raise ValueError("服饰参考图路径越界")
-            raw = target.read_bytes()
-            (folder / "reference-2.png").write_bytes(raw)
-            images.append(raw)
-            record["references"].append({"file": "reference-2.png", "role": "当前穿搭款式参考，忽略排版",
-                                         "outfit": name, "sha256": hashlib.sha256(raw).hexdigest()})
-        if plan.get("use_previous_photo") is True:
-            previous = record.get("previous_photo")
-            if not previous:
-                raise ValueError("拍摄方案要求沿用旧照片，但当前会话没有已发送的照片")
-            target = (self.store.root / previous["id"] / previous["file"]).resolve()
-            if not target.is_relative_to(self.store.root.resolve()):
-                raise ValueError("旧照片路径越界")
-            raw = target.read_bytes()
-            name = f"reference-{len(images) + 1}.png"
-            (folder / name).write_bytes(raw)
-            images.append(raw)
-            record["references"].append({"file": name, "role": "同一会话上一张照片，用于保持对象一致",
-                                         "sha256": hashlib.sha256(raw).hexdigest()})
-        return images
+        return build_references(self.plugin_dir, self.store.root, record, plan)
 
     async def _deliver(self, record: dict[str, Any], raw: bytes) -> None:
         await self.event(record, "sending", "向原会话发送已检查的成品")

@@ -32,13 +32,19 @@ class FakeClient:
     checks = []
     use_previous = False
     last_refs = []
+    plan_overrides = None
+    planning_inputs = None
+    check_inputs = None
 
     async def json(self, model, system, data, images=None):
         if images:
+            self.check_inputs = (data, images)
             return self.checks.pop(0), {}
-        return {"feasible": True, "reason": "", "subject": "杯子", "scene_type": "indoor", "include_outfit": False,
+        self.planning_inputs = data
+        return {"feasible": True, "target_kind": "object", "rejection_code": "", "reason": "", "subject": "杯子", "scene_type": "indoor", "include_outfit": False,
+                "style_category": "portrait", "identity_reference": "none",
                 "framing": "俯拍", "visible_details": "杯子", "lighting": "室内灯", "prompt": "手机俯拍杯子",
-                "use_previous_photo": self.use_previous}, {}
+                "use_previous_photo": self.use_previous, **(self.plan_overrides or {})}, {}
 
     async def image(self, settings, prompt, images):
         self.image_calls += 1
@@ -56,15 +62,22 @@ def setup(tmp_path, monkeypatch):
     refs.mkdir(parents=True)
     data = png()
     (refs / "style.png").write_bytes(data)
-    entry = {"file": "style.png", "sha256": hashlib.sha256(data).hexdigest()}
-    (refs / "references.json").write_text(json.dumps({"version": "v1", "references": [entry, entry]}))
+    entries = [{"file": "style.png", "sha256": hashlib.sha256(data).hexdigest(), "category": category}
+               for category in ["portrait", "food", "drink", "outdoor", "object"]]
+    identity = {key: {"file": "style.png", "sha256": hashlib.sha256(data).hexdigest()} for key in ["body", "head"]}
+    (refs / "references.json").write_text(json.dumps({"version": "v2", "references": entries, "identity": identity}))
+    character = plugin / "character"
+    character.mkdir()
+    (character / "outfit.png").write_bytes(data)
+    (character / "outfit_images.toml").write_text('[images]\n"校服" = "outfit.png"\n')
     ctx = SimpleNamespace(
         message=SimpleNamespace(get_by_id=AsyncMock(return_value={
             "session_id": "private", "platform": "qq", "message_info": {"user_info": {"user_id": "user"}},
             "account_id": "bot", "processed_plain_text": "看看杯子",
         }), get_recent=AsyncMock(return_value=[])),
         send=SimpleNamespace(image=AsyncMock(return_value={"sent": True, "message_id": "sent-1"})),
-        maisaka=SimpleNamespace(context=SimpleNamespace(append=AsyncMock(return_value={"success": True}))),
+        maisaka=SimpleNamespace(context=SimpleNamespace(append=AsyncMock(return_value={"success": True})),
+                                proactive=SimpleNamespace(trigger=AsyncMock(return_value={"success": True}))),
     )
     monkeypatch.setattr(module, "read_provider", lambda *args: ("http://test/v1", "secret-not-in-record"))
     client = FakeClient()
@@ -157,6 +170,7 @@ def test_followup_uses_only_same_stream_previous_sent_photo(setup):
         assert service.store.latest_sent("another-chat") is None
         followup = await service.submit("再拍近一点", "second", "private", dict(SNAPSHOT))
         assert followup["previous_photo"]["id"] == first["id"]
+        assert followup["previous_photo"]["snapshot"]["outfit"] == SNAPSHOT["outfit"]
         client.use_previous = True
         client.checks = [{"passed": True, "issues": [], "repairable": False, "description": "更近的杯子"}]
         await service.process(followup)
@@ -249,4 +263,122 @@ def test_tool_reports_quota_exhaustion_without_queue_or_model_call(setup):
         assert client.image_calls == 0
         repeated = await plugin.tool_take_photo("拍杯子", "0", "private")
         assert repeated["success"] is True
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("preview", [False, True])
+def test_privacy_decline_is_terminal_and_never_generates_or_sends(setup, preview):
+    async def run():
+        service, ctx, client, _ = setup
+        # 即使模型的 feasible 自相矛盾，其他人物这个目标类型也必须拒绝。
+        client.plan_overrides = {"target_kind": "other_person", "feasible": True}
+        ctx.message.get_by_id.return_value["processed_plain_text"] = "拍店长的背影，不露脸"
+        record = await service.submit("拍一张店内环境", "privacy", "private", SNAPSHOT, preview=preview)
+        await service.process(record)
+        assert record["status"] == "declined"
+        assert record["decline"]["reason_code"] == "other_person_privacy"
+        assert "隐私" in record["decline"]["reason"]
+        assert client.image_calls == 0 and record["images"] == [] and record["references"] == []
+        assert service.store.next_queued() is None
+        ctx.send.image.assert_not_awaited()
+        if preview:
+            ctx.maisaka.proactive.trigger.assert_not_awaited()
+        else:
+            assert client.planning_inputs["source_text"] == "拍店长的背影，不露脸"
+            feedback = ctx.maisaka.proactive.trigger.await_args.kwargs
+            assert feedback["metadata"]["background_tool_result"] is True
+            assert feedback["metadata"]["tool_success"] is False
+            assert feedback["reason"] == "camera_declined"
+            assert "replyer" in feedback["intent"] and "不要重试" in feedback["intent"]
+            assert "失败" not in feedback["intent"]
+    asyncio.run(run())
+
+
+def test_decline_feedback_failure_preserves_decision_without_generation(setup):
+    async def run():
+        service, ctx, client, _ = setup
+        client.plan_overrides = {"feasible": False, "target_kind": "other_person", "rejection_code": "other_person_privacy"}
+        ctx.maisaka.proactive.trigger.side_effect = RuntimeError("unavailable")
+        record = await service.submit("看看店长", "privacy", "private", SNAPSHOT)
+        await service.process(record)
+        assert record["status"] == "declined"
+        assert record["events"][-1]["stage"] == "feedback_warning"
+        assert client.image_calls == 0
+        assert service.store.create(record)["status"] == "declined"
+    asyncio.run(run())
+
+
+def test_tool_repeated_declined_request_returns_guidance_not_pending_photo(setup):
+    async def run():
+        service, ctx, client, _ = setup
+        client.plan_overrides = {"target_kind": "other_person"}
+        record = await service.submit("看看店长", "privacy", "private", SNAPSHOT)
+        await service.process(record)
+        plugin_module = importlib.import_module("plugins.01_a_day_with_mittes.plugin")
+        plugin = plugin_module.ADayWithMittesPlugin()
+        plugin._camera = service
+        plugin._photo_snapshot = lambda: SNAPSHOT
+        result = await plugin.tool_take_photo("看看店长", "privacy", "private")
+        assert result["status"] == "declined" and result["success"] is False
+        assert result["metadata"]["background_task"] is False
+        assert "隐私" in result["content"]
+        ctx.maisaka.proactive.trigger.assert_awaited_once()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("code", ["unsupported_content", "not_visible", "unclear_request"])
+def test_other_unshootable_requests_return_explicit_decline(setup, code):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"feasible": False, "rejection_code": code}
+        record = await service.submit("看看", code, "private", SNAPSHOT, preview=True)
+        await service.process(record)
+        assert record["decline"]["reason_code"] == code
+        assert client.image_calls == 0
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("category,identity,outfit,kinds", [
+    ("food", "none", False, ["style", "style"]),
+    ("outdoor", "none", False, ["style", "style"]),
+    ("portrait", "none", True, ["style", "outfit"]),
+    ("portrait", "head", True, ["style", "identity", "outfit"]),
+    ("object", "body", True, ["style", "style", "identity", "outfit"]),
+])
+def test_reference_roles_are_selected_by_visible_content(setup, category, identity, outfit, kinds):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"style_category": category, "identity_reference": identity, "include_outfit": outfit}
+        record = await service.submit("看看", "references", "private", SNAPSHOT, preview=True)
+        await service.process(record)
+        assert [ref["kind"] for ref in record["references"]] == kinds
+        assert [ref["index"] for ref in record["references"]] == list(range(1, len(kinds) + 1))
+        assert len(client.check_inputs[1]) == len(kinds) + 1
+        assert client.check_inputs[0]["reference_roles"] == record["references"]
+    asyncio.run(run())
+
+
+def test_original_person_mention_does_not_preempt_object_plan(setup):
+    async def run():
+        service, ctx, client, _ = setup
+        ctx.message.get_by_id.return_value["processed_plain_text"] = "看看店长做的蛋糕"
+        client.plan_overrides = {"target_kind": "object", "style_category": "food"}
+        record = await service.submit("看看蛋糕", "cake", "private", SNAPSHOT)
+        await service.process(record)
+        assert record["status"] == "sent" and client.image_calls == 1
+        ctx.maisaka.proactive.trigger.assert_not_awaited()
+    asyncio.run(run())
+
+
+def test_original_context_reaches_director_for_pronoun_resolution(setup):
+    async def run():
+        service, ctx, client, _ = setup
+        ctx.message.get_by_id.return_value["processed_plain_text"] = "看看她"
+        ctx.message.get_recent.return_value = [{"processed_plain_text": "Niya在旁边", "message_info": {"user_info": {"user_id": "user"}}}]
+        client.plan_overrides = {"target_kind": "other_person"}
+        record = await service.submit("看看", "pronoun", "private", SNAPSHOT)
+        await service.process(record)
+        assert client.planning_inputs["source_text"] == "看看她"
+        assert client.planning_inputs["context"][0]["text"] == "Niya在旁边"
+        assert record["status"] == "declined"
     asyncio.run(run())

@@ -1,31 +1,58 @@
 {
-  "version": "mittes-phone-photo-style-v1",
-  "selected_on": "2026-10-17",
-  "status": "用户授权复用既有测试图；室内参考已通过 CPA 真实生成预览",
+  "version": "mittes-phone-photo-style-v2",
+  "approved_on": "2026-10-17",
+  "status": "已接入；用户认可的 v4 人设画风及跨场景补充，按主体选择参考",
+  "runtime_integrated": true,
+  "origin_style": "用户认可的 v4 人设画风及其跨场景测试",
   "references": [
     {
-      "file": "01_室内近景_红茶无花果慕斯.png",
-      "source": "workspace:doc/主动联系设计/2026-10-14_场景分享测试-v6/2320_红茶无花果慕斯.png",
-      "sha256": "898c9210f52e59ac1876901cfb98c2b325cdbe15eae2e8017124ffcf5bb985a4",
-      "role": "室内生活物件近景：线条、上色、柔和阴影和自然裁切"
+      "file": "00_人物局部_画风主基准.png",
+      "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/00_人物局部_画风主基准.png",
+      "sha256": "62d31ab117b372b2f3ef98ac8a59bf0b150d4d17d6b024175874d575d9953cb2",
+      "role": "已认可的主画风基准；人物局部、头发、皮肤与衣物的画法",
+      "category": "portrait"
     },
     {
-      "file": "02_室外随拍_雨棚下的旧书箱.png",
-      "source": "workspace:doc/主动联系设计/2026-10-14_场景分享测试-v6/1410_雨棚下的旧书箱.png",
-      "sha256": "30e0e5e24da8ff4bceaca77e6d857489ffc3c14d54b7de16d226420a53b44117",
-      "role": "室外生活场景：线条、色彩处理、观察角度和局部取景"
+      "file": "01_食物_红茶无花果慕斯.png",
+      "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/01_食物_红茶无花果慕斯.png",
+      "sha256": "91f65f3a53ebfc7b6a36835c0c7b02222c1d2ee1686b91aa8400b0703e08db67",
+      "role": "食物与器皿的画风参考",
+      "category": "food"
+    },
+    {
+      "file": "02_饮品_吧台拿铁.png",
+      "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/02_饮品_吧台拿铁.png",
+      "sha256": "8736e898557a562c1e2b21087116ec7bfd711b97bbb4eddf7c18610de42273e8",
+      "role": "饮品与室内物件的画风参考",
+      "category": "drink"
+    },
+    {
+      "file": "03_室外_雨后银杏叶.png",
+      "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/03_室外_雨后银杏叶.png",
+      "sha256": "c8431723aa357736eaa2fdd89dffa67048fd7561805acf65a6255632bd5473fa",
+      "role": "室外生活细节的画风参考",
+      "category": "outdoor"
+    },
+    {
+      "file": "04_随身物品_斜挎包.png",
+      "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/04_随身物品_斜挎包.png",
+      "sha256": "b013fd78db2055cc732c3059c77cf430008be6b30785dfac9fb217079571a374",
+      "role": "随身物品及可见穿搭的画风参考",
+      "category": "object"
     }
   ],
-  "usage": "画风与随拍取景示例；内容、颜色、光线、地点、穿搭以本次请求及日程为准，不复制参考物品或固定暖色照明。",
-  "constraints": [
-    "二次元画风",
-    "Mittes 亲手用手机能拍到的画面",
-    "无可见人脸，允许身体局部",
-    "生活场景，不包含游戏画面或屏幕截图"
-  ],
-  "notes": [
-    "用户举例不作为固定取景模板。",
-    "每次从本基准选取相关参考，不逐次使用最新生成图替换基准。",
-    "不修改衣柜画风、日程或现有 topic。"
-  ]
+  "selection": "按当次主体选择相关画风图；不全部加载，不复制姿势、物件、光照、构图或服装，不让新生成图自动替换基准。",
+  "validation": "固定文件来源及 SHA-256 已核验；CPA 实测另记于相机任务。",
+  "identity": {
+    "body": {
+      "file": "identity/body.png",
+      "source": "workspace:doc/Mittes人设图/a0370464-7db7-46f9-8555-6c3f46b5a832.png",
+      "sha256": "a4566be97513df832dc345b3645c3b698d10c8ec00d9f7704924e5dcbb1262f0"
+    },
+    "head": {
+      "file": "identity/head.png",
+      "source": "workspace:doc/Mittes人设图/d9be7298-4cb1-4923-bbc8-4d4e2154c6a2.png",
+      "sha256": "4b7a970d58e3f87eec534b705218502bdc15737957266532ecef95bdb58d00ed"
+    }
+  }
 }

@@ -91,6 +91,11 @@ class Wardrobe:
     def names(self) -> set[str]:
         return set(self._outfits)
 
+    @property
+    def appearance(self) -> dict[str, str]:
+        """相机的外貌事实快照，返回副本以免后台任务修改常驻衣柜。"""
+        return dict(self._always)
+
     def get(self, name: str) -> Outfit | None:
         return self._outfits.get(name.strip())
 
