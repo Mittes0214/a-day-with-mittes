@@ -226,6 +226,29 @@ con = sqlite3.connect("file:.../data/schedule.db?mode=ro", uri=True)
 往表里加列时要同步往 `schedule/db.py` 的 `_EXPECTED_COLUMNS` 加一条。
 不能靠删库重建，`CREATE TABLE IF NOT EXISTS` 对已存在的表不做任何改动。
 
+## 私聊主动聊天
+
+```toml
+[proactive_private]
+enabled = true
+users = ["qq:923856490"]
+```
+
+每 15 秒检查当前日程。有非空 topic 的时段到点后，向名单用户的私聊 planner
+递交一次日程事件，包含该时段的 topic。planner 根据聊天上下文和对方最近的反应
+决定是否调用 `reply`；选择回复时，通过 `reply_reference` 把选中的素材交给 replyer。
+不会强制发送消息，也不会自动生成照片。
+
+原有 topic 生成、replyer 注入、群聊关联和分享检测保持原样。
+新开关独立于 `[topic]` 的两条注入通道；原来的谈资工具无需开启。
+需要 SDK 2.12.0，以及 `chat.open_session`、`maisaka.proactive.trigger` 权限。
+
+每个逻辑日、时段、名单用户最多尝试唤醒一次，与是否真正回复分开记录。
+记录保存在插件数据目录的 `private_topic_wakes.db`，不修改 `schedule.db` 的分享状态。
+`queued` 只表示主程序接受了唤醒；`failed` 表示调用失败；`claimed` 表示已开始尝试，
+可能在取消、超时或进程中断时未取得最终结果。为避免重复打扰，这些情况都不自动重试。
+插件启动或重载时不补发已开始的时段；日程按日本时间和原有逻辑日规则运行。
+
 ## 更多
 
 [DESIGN.md](DESIGN.md)：为什么这样设计、写生成类 prompt 的两条原则、常见问题。

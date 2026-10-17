@@ -21,9 +21,9 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.6.3
+版本：3.7.0
 许可：GPL-v3.0-or-later
-兼容：MaiBot-r-dev (SDK 2.0+)
+兼容：MaiBot-r-dev (SDK 2.12.0+)
 """
 
 from datetime import date, datetime, time as dt_time, timedelta
@@ -54,6 +54,7 @@ from .observability.prompt_preview import PromptPreview
 from .reply_style import compose as compose_reply_style
 from .schedule.holidays import ScheduleGenerator
 from .schedule.negative_events import LEVEL_MILD, NegativeEntry, NegativeScheduler
+from .schedule.private_topics import PrivateTopicWaker
 from .schedule.store import (
     JST,
     DayContext,
@@ -112,6 +113,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._holidays: ScheduleGenerator | None = None
         self._batch_task: asyncio.Task[None] | None = None
         self._admin_task: asyncio.Task[None] | None = None
+        self._private_topic_task: asyncio.Task[None] | None = None
+        self._private_topic_waker: PrivateTopicWaker | None = None
         self._batch_lock = asyncio.Lock()
         # 后台任务的强引用；不持有的话事件循环可能把它当垃圾回收掉
         self._background: set[asyncio.Task[None]] = set()
@@ -172,10 +175,23 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
         self._batch_task = asyncio.create_task(self._scheduler_loop())
         self._admin_task = asyncio.create_task(self._admin_job_loop())
+        _, day, segment, _ = self._current()
+        self._private_topic_waker = PrivateTopicWaker(
+            self.ctx, data_dir / "private_topic_wakes.db", (day, segment.slot),
+        )
+        self._private_topic_task = asyncio.create_task(self._private_topic_loop())
+        _logger.info(
+            "[私聊主动] enabled=%s users=%s；从下一个时段开始检查",
+            await self._get_config("proactive_private.enabled", False),
+            await self._get_config("proactive_private.users", []),
+        )
         _logger.info("[加载] 骨架就绪，批量生成与前端管理守护已启动")
 
     async def on_unload(self) -> None:
-        lifecycle = [task for task in (self._batch_task, self._admin_task) if task is not None]
+        lifecycle = [
+            task for task in (self._batch_task, self._admin_task, self._private_topic_task)
+            if task is not None
+        ]
         for task in lifecycle:
             task.cancel()
         for task in list(self._background):
@@ -183,6 +199,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         await asyncio.gather(*lifecycle, *self._background, return_exceptions=True)
         self._batch_task = None
         self._admin_task = None
+        self._private_topic_task = None
+        self._private_topic_waker = None
         self._background.clear()
         self._outfit_queries.clear()
         if self._store is not None:
@@ -191,6 +209,18 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
         del scope, config_data, version
         self._plugin_config_cache = None
+
+    async def _private_topic_loop(self) -> None:
+        while True:
+            try:
+                if await self._get_config("proactive_private.enabled", False):
+                    _, day, segment, state = self._current()
+                    users = await self._get_config("proactive_private.users", [])
+                    assert self._private_topic_waker is not None
+                    await self._private_topic_waker.tick(day, segment, state, users)
+            except Exception:
+                _logger.exception("[私聊主动] 日程检查失败")
+            await asyncio.sleep(15)
 
     def get_components(self) -> list[dict[str, Any]]:
         """按 config.toml 的 [components] 开关过滤已禁用的 Tool。

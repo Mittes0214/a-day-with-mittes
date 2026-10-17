@@ -5,7 +5,7 @@
 
 [plugin]
 enabled = true
-config_version = "3.6.1"
+config_version = "3.7.0"
 
 [components]
 # 关掉的 Tool 完全不会出现在 LLM 的 tool_definitions 里；改动需要重启 MaiBot 才生效
@@ -107,6 +107,13 @@ lookback_minutes = 10
 # 每时段每会话最多被取材几次，达到就摘掉工具。它同时是成本闸：
 # 窗口期内工具每轮可见，模型可能连续调用，每次调用都是一轮额外的 LLM 往返
 max_pitches = 3
+
+[proactive_private]
+# 独立于原有 topic 注入与工具通道。开启后，有 topic 的时段到点唤醒私聊 planner。
+# 只交给 planner 判断，不强制回复，也不生成或发送照片。
+enabled = false
+# 格式：平台:用户 ID；例如 ["qq:923856490"]。只打开私聊会话。
+users = []
 
 [observability]
 # 每次 LLM 调用是否落盘到 WebUI 推理过程页。
