@@ -29,17 +29,19 @@
     },
     {
       "file": "05_人物画风补充_室外.png",
-      "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/03_室外_雨后银杏叶.png",
-      "sha256": "c8431723aa357736eaa2fdd89dffa67048fd7561805acf65a6255632bd5473fa",
+      "source": "workspace:doc/画风测试/01_现用画风_v4人设画风/2026-10-18_角色正式设定_室外与随身物品-v1/05_神保町旧书店雨棚下.png",
+      "sha256": "f9377642cf3295f845656c25a62b63b3d78cbe5f3d3fc6433cc6036c71a0ba7b",
       "role": "室外生活细节的画风参考",
-      "category": "outdoor"
+      "category": "outdoor",
+      "revision_note": "2026-10-18 按角色正式设定重新生成；神保町旧书店街、小雨与白色猫咪图案折叠伞。仅作 v4 画风补充，不固化场景、道具或服装。"
     },
     {
       "file": "06_人物画风补充_随身物品.png",
-      "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/04_随身物品_斜挎包.png",
-      "sha256": "b013fd78db2055cc732c3059c77cf430008be6b30785dfac9fb217079571a374",
+      "source": "workspace:doc/画风测试/01_现用画风_v4人设画风/2026-10-18_角色正式设定_室外与随身物品-v1/06_铃铛猫咪钥匙串.png",
+      "sha256": "9ebc6fff5e23d3aa9ffe1c64724f1911ae490ad67fcf018d6f7443709ed2c655",
       "role": "随身物品及可见穿搭的画风参考",
-      "category": "object"
+      "category": "object",
+      "revision_note": "2026-10-18 按角色正式设定重新生成；咖啡店住宅后门与铃铛猫咪钥匙串。仅作 v4 画风补充，不固化场景、道具或服装。"
     }
   ],
   "selection": "有人物或身体局部入镜时使用 v4 主基准及相关 v4 补充；无人物景物只使用 scene_reference，不传 v4 画风图。外貌与衣柜图按需单独加载。",
