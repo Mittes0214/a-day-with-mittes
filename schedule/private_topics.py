@@ -59,8 +59,10 @@ class PrivateTopicWaker:
                 (status, detail, *key),
             )
 
-    async def tick(self, day: date, segment: Segment, state: SegmentState, users: list[str]) -> None:
-        if (day, segment.slot) == self._initial or not state.topic.strip():
+    async def tick(
+        self, day: date, segment: Segment, state: SegmentState, users: list[str], *, include_initial: bool = False,
+    ) -> None:
+        if ((day, segment.slot) == self._initial and not include_initial) or not state.topic.strip():
             return
         for platform, user_id in parse_users(users):
             key = (day.isoformat(), segment.slot, platform, user_id)

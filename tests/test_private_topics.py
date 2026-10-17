@@ -138,6 +138,38 @@ def test_cancelled_attempt_remains_claimed_after_restart(tmp_path):
     asyncio.run(scenario())
 
 
+def test_manual_wake_can_include_initial_but_never_duplicate(tmp_path):
+    async def scenario():
+        ctx = context()
+        waker = module.PrivateTopicWaker(ctx, tmp_path / "wakes.db", (DAY, segment().slot))
+        await waker.tick(DAY, segment(), state(), ["qq:923856490"])
+        ctx.maisaka.proactive.trigger.assert_not_awaited()
+        for _ in range(2):
+            await waker.tick(DAY, segment(), state(), ["qq:923856490"], include_initial=True)
+        ctx.maisaka.proactive.trigger.assert_awaited_once()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("target,slot,topic", [
+    ("2026-10-16", "18:00-19:00", "话题"),
+    ("2026-10-17", "19:00-20:00", "话题"),
+    ("2026-10-17", "18:00-19:00", ""),
+])
+def test_manual_job_rejects_stale_or_empty_topic(monkeypatch, target, slot, topic):
+    plugin_module = importlib.import_module("plugins.01_a_day_with_mittes.plugin")
+
+    async def scenario():
+        plugin = plugin_module.ADayWithMittesPlugin()
+        monkeypatch.setattr(plugin, "_require_store", lambda: None)
+        monkeypatch.setattr(plugin, "_current", lambda: (None, DAY, segment(), state(topic)))
+        monkeypatch.setattr(plugin, "_get_config", AsyncMock(return_value=True))
+        plugin._private_topic_waker = SimpleNamespace(tick=AsyncMock())
+        with pytest.raises(ValueError):
+            await plugin._execute_admin_job({"action": "wake_private_topic", "target_date": target, "slot": slot})
+        plugin._private_topic_waker.tick.assert_not_awaited()
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("enabled", [False, True])
 def test_plugin_loop_respects_switch_and_passes_current_schedule(monkeypatch, enabled):
     plugin_module = importlib.import_module("plugins.01_a_day_with_mittes.plugin")

@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.7.0
+版本：3.7.1
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.12.0+)
 """
@@ -1978,6 +1978,20 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         action = str(job.get("action") or "")
         target = date.fromisoformat(str(job.get("target_date") or ""))
         store = self._require_store()
+
+        if action == "wake_private_topic":
+            if not await self._get_config("proactive_private.enabled", False):
+                raise ValueError("私聊主动聊天未启用")
+            _, day, segment, state = self._current()
+            if target != day or str(job.get("slot") or "") != segment.slot:
+                raise ValueError("只能手动唤醒当前日程时段，任务的日期或时段已过期")
+            if not state.topic.strip():
+                raise ValueError("当前时段没有 topic")
+            if self._private_topic_waker is None:
+                raise RuntimeError("私聊唤醒器尚未就绪")
+            users = await self._get_config("proactive_private.users", [])
+            await self._private_topic_waker.tick(day, segment, state, users, include_initial=True)
+            return "已检查当前时段的手动唤醒；逐用户结果见 private_topic_wakes.db（queued 不表示已回复）"
 
         if action == "set_expression":
             payload = json.loads(str(job.get("payload") or "{}"))
