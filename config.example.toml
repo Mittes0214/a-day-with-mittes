@@ -5,7 +5,7 @@
 
 [plugin]
 enabled = true
-config_version = "3.7.0"
+config_version = "3.8.0"
 
 [components]
 # 关掉的 Tool 完全不会出现在 LLM 的 tool_definitions 里；改动需要重启 MaiBot 才生效
@@ -13,6 +13,7 @@ enable_get_mittes_schedule = true
 enable_get_mittes_outfit = true
 enable_get_mittes_topic = true
 enable_get_weather = true
+enable_take_mittes_photo = false
 
 [generation]
 # 每天几点跑批次（JST）。生成的是**次日**全天——12:00 才生成当天的话，
@@ -114,6 +115,17 @@ max_pitches = 3
 enabled = false
 # 格式：平台:用户 ID；例如 ["qq:923856490"]。只打开私聊会话。
 users = []
+
+[photo]
+enabled = false
+# 复用主程序 model_config.toml 的供应商地址与密钥；密钥不复制到插件和任务记录。
+api_provider = "CLIProxyAPI"
+director_model = "gpt-6.1-sol"
+image_model = "gpt-image-2.5-sunburst"
+check_model = "gpt-6.1-sol"
+size = "1024x1536"
+quality = "high"
+timeout_seconds = 300
 
 [observability]
 # 每次 LLM 调用是否落盘到 WebUI 推理过程页。

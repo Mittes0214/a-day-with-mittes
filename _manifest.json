@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
-  "version": "3.7.3",
+  "version": "3.8.0",
   "name": "Mittes 的一天 (A Day With Mittes)",
-  "description": "为 Mittes 提供会自己长出来的日程：每天批量生成变长时段的故事化状态，事实层走 Tool 按需提供，心情与时段表达方式分别注入 planner 和 replyer。另含可编辑管理页、实时天气查询与节假日识别。",
+  "description": "为 Mittes 提供每日生成的日程、状态与话题，支持按日程唤醒私聊 planner，以及用户按需请求的二次元手机随拍；拍照通过 CPA 后台生成并检查，完整过程与图片归档。另含日程管理页、穿搭查询、天气与节假日识别。",
   "author": {
     "name": "Mittes",
     "url": "https://github.com/Mittes0214"
@@ -22,7 +22,10 @@
     "min_version": "2.12.0",
     "max_version": "2.99.99"
   },
-  "dependencies": [],
+  "dependencies": [
+    {"type": "python_package", "name": "httpx", "version_spec": ">=0.28.1"},
+    {"type": "python_package", "name": "Pillow", "version_spec": ">=11.0.0"}
+  ],
   "capabilities": [
     "config.get",
     "config.get_plugin",
@@ -31,6 +34,10 @@
     "chat.get_stream_by_group_id",
     "chat.open_session",
     "maisaka.proactive.trigger",
+    "maisaka.context.append",
+    "message.get_by_id",
+    "message.get_recent",
+    "send.image",
     "send.text",
     "http.request"
   ],

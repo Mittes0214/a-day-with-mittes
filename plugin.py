@@ -21,7 +21,7 @@
 - Command ``/status *``：调试命令，仅 operator
 
 作者：Mittes
-版本：3.7.3
+版本：3.8.0
 许可：GPL-v3.0-or-later
 兼容：MaiBot-r-dev (SDK 2.12.0+)
 """
@@ -40,6 +40,7 @@ import uuid
 from maibot_sdk import Command, HookHandler, MaiBotPlugin, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
+from .camera.service import PhotoService
 from .character.outfit_images import (
     IMAGES_ARG,
     OutfitImages,
@@ -115,6 +116,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._admin_task: asyncio.Task[None] | None = None
         self._private_topic_task: asyncio.Task[None] | None = None
         self._private_topic_waker: PrivateTopicWaker | None = None
+        self._camera: PhotoService | None = None
         self._batch_lock = asyncio.Lock()
         # 后台任务的强引用；不持有的话事件循环可能把它当垃圾回收掉
         self._background: set[asyncio.Task[None]] = set()
@@ -180,6 +182,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             self.ctx, data_dir / "private_topic_wakes.db", (day, segment.slot),
         )
         self._private_topic_task = asyncio.create_task(self._private_topic_loop())
+        self._camera = PhotoService(self.ctx, self._plugin_dir, data_dir, self._get_config)
+        await self._camera.start()
         _logger.info(
             "[私聊主动] enabled=%s users=%s；从下一个时段开始检查",
             await self._get_config("proactive_private.enabled", False),
@@ -188,6 +192,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         _logger.info("[加载] 骨架就绪，批量生成与前端管理守护已启动")
 
     async def on_unload(self) -> None:
+        if self._camera is not None:
+            await self._camera.close()
+            self._camera = None
         lifecycle = [
             task for task in (self._batch_task, self._admin_task, self._private_topic_task)
             if task is not None
@@ -773,6 +780,52 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
 
     # ── Tool ──
+    @Tool(
+        "take_mittes_photo",
+        visibility="visible",
+        brief_description="应用户看图请求，拍一张 Mittes 身边事物、环境或当前穿搭的二次元手机随拍。",
+        description=(
+            "应用户的看图请求，生成并发送一张 Mittes 用手机随手拍下的二次元风格照片。"
+            "当用户想看看 Mittes 身边的事物、所处环境或自身穿搭时使用。"
+            "请求可以是明确的拍照要求，也可以是承接前文的‘看看’‘给我看看’，根据对话确定拍摄对象。"
+            "以当前日程、所在地和穿搭为依据，拍摄能够亲手用手机拍到的内容。"
+            "允许身体局部，不出现人脸；不生成游戏画面、屏幕截图或脱离手机视角的场景插画。"
+            "仅在用户表达看图意愿时调用，日常分享与主动聊天以文字为主。"
+            "后台完成后直接发回原会话，不要重复调用来查询进度。"
+        ),
+        parameters=[
+            ToolParameterInfo(name="instruction", param_type=ToolParamType.STRING, required=True,
+                              description="用一两句话说明用户想看什么，把‘看看’的指代展开，保留用户的明确要求；不编写完整生图提示词，不补造日程事实。"),
+            ToolParameterInfo(name="source_msg_id", param_type=ToolParamType.STRING, required=True,
+                              description="触发本次看图请求的真实用户消息 ID，用于关联原会话与避免重复生成。"),
+        ],
+    )
+    async def tool_take_photo(self, instruction: str = "", source_msg_id: str = "", stream_id: str = "", **kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        try:
+            if self._camera is None:
+                raise RuntimeError("相机尚未就绪")
+            record = await self._camera.submit(instruction, source_msg_id, stream_id, self._photo_snapshot())
+            return {
+                "success": True, "name": "take_mittes_photo",
+                "content": f"照片任务 {record['id']}，状态 {record['status']}。后台完成后会直接发回当前会话；不要重复调用轮询，不要提前描述照片成品。",
+                "metadata": {"background_task": True, "background_task_id": record["id"]},
+            }
+        except Exception as exc:
+            _logger.exception("[相机] 无法提交拍照请求")
+            return {"success": False, "name": "take_mittes_photo", "content": str(exc)}
+
+    def _photo_snapshot(self) -> dict[str, Any]:
+        moment, day, segment, state = self._current()
+        outfit = self._wardrobe.get(segment.outfit) if self._wardrobe is not None else None
+        return {
+            "captured_at": moment.isoformat(), "logical_day": day.isoformat(), "slot": segment.slot,
+            "title": segment.title, "place": segment.place, "places": state.places,
+            "outfit": segment.outfit,
+            "outfit_details": {key: value for key, value in outfit.parts.items() if key != "underwear"} if outfit else {},
+            "story": state.story, "topic": state.topic,
+        }
+
     @Tool(
         "get_mittes_schedule",
         visibility="visible",
@@ -1978,6 +2031,16 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         action = str(job.get("action") or "")
         target = date.fromisoformat(str(job.get("target_date") or ""))
         store = self._require_store()
+
+        if action == "camera_preview":
+            if self._camera is None:
+                raise RuntimeError("相机尚未就绪")
+            payload = json.loads(str(job.get("payload") or "{}"))
+            record = await self._camera.submit(
+                str(payload.get("instruction") or ""), f"preview-job-{job['id']}", "",
+                self._photo_snapshot(), preview=True,
+            )
+            return record["id"]
 
         if action == "wake_private_topic":
             if not await self._get_config("proactive_private.enabled", False):
