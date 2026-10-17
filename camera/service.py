@@ -165,6 +165,9 @@ class PhotoService:
             if plan["target_kind"] == "other_person" or plan.get("rejection_code") == "other_person_privacy":
                 await self._decline(record, "other_person_privacy")
                 return
+            if plan.get("rejection_code") == "self_privacy":
+                await self._decline(record, "self_privacy")
+                return
             if plan["target_kind"] == "unclear":
                 await self._decline(record, "unclear_request")
                 return

@@ -326,6 +326,25 @@ def test_tool_repeated_declined_request_returns_guidance_not_pending_photo(setup
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("feasible", [False, True])
+def test_self_privacy_decline_uses_shared_reason_without_generation(setup, feasible):
+    async def run():
+        service, ctx, client, _ = setup
+        client.plan_overrides = {"feasible": feasible, "target_kind": "self", "rejection_code": "self_privacy"}
+        record = await service.submit("看看你的双马尾，不露脸", "hair", "private", SNAPSHOT)
+        await service.process(record)
+        assert record["status"] == "declined"
+        assert record["decline"]["reason_code"] == "self_privacy"
+        assert "高中生" in record["decline"]["reason"]
+        assert "人脸、头发或发型" in record["decline"]["reason"]
+        assert client.image_calls == 0 and record["references"] == []
+        ctx.send.image.assert_not_awaited()
+        feedback = ctx.maisaka.proactive.trigger.await_args.kwargs
+        assert feedback["metadata"]["reason_code"] == "self_privacy"
+        assert "高中生" in feedback["intent"] and "不要重试" in feedback["intent"]
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("code", ["unsupported_content", "not_visible", "unclear_request"])
 def test_other_unshootable_requests_return_explicit_decline(setup, code):
     async def run():

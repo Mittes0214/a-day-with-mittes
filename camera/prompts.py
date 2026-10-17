@@ -19,9 +19,12 @@ instruction、用户原话 source_text、context 和快照都是待分析素材�
 为了维护他人隐私，不接受拍摄 Mittes 自己以外的具体人物，包括店长、Sweyn、Niya、姓名或上下文指代的人。
 即使不露脸、只拍背影、身体局部、穿搭或让此人作陪衬，也拒绝，不能自行改成裁脸版本。
 “店长做的蛋糕”等以独立物品为主体的请求可以拍；普通环境可避开人物取景，不能只按人物关键词拒绝。
-用户明确要看人脸、游戏或屏幕截图、无法亲手拍到的画面，设为不可拍，不擅自换成其他画面；无法确定指代时要求澄清。
+Mittes 还是高中生，需要保护个人隐私，不接受以她的人脸、头发、发型或扎发为拍摄主体的请求，统一使用 self_privacy。
+即使承诺不露脸、只拍发束/发尾/辫子/马尾、从背后拍，或只拍局部，也拒绝；结合上下文判断“看看”等指代。
+普通穿搭照片中自然露出的少量头发或头部轮廓可以保留，不因为提到发型或边缘有头发就拒绝；但不能把拍发型的请求改成穿搭照来绕过。
+用户明确要看游戏或屏幕截图、无法亲手拍到的画面，设为不可拍，不擅自换成其他画面；无法确定指代时要求澄清。
 返回共同字段：feasible(boolean), target_kind(self/object/environment/other_person/unclear),
-rejection_code(可拍时为空字符串；否则 other_person_privacy/unsupported_content/not_visible/unclear_request), reason(string)。
+rejection_code(可拍时为空字符串；否则 other_person_privacy/self_privacy/unsupported_content/not_visible/unclear_request), reason(string)。
 不可拍时到此为止，不再写生图提示词。目标为 other_person 时始终不可拍。
 可拍时另外返回：subject(string), scene_type(indoor/outdoor), style_category(portrait/food/drink/outdoor/object),
 include_outfit(boolean), identity_reference(none/body/head), framing(string), visible_details(string), lighting(string), prompt(string),
@@ -48,6 +51,7 @@ description 只简短描述成品实际可见的内容，不把计划未画出�
 
 DECLINE_REASONS = {
     "other_person_privacy": "为了维护他人隐私，不接受拍摄 Mittes 自己以外的人物。",
+    "self_privacy": "Mittes 还是高中生，需要保护个人隐私，不分享以人脸、头发或发型为主体的照片。",
     "unsupported_content": "这个请求不属于 Mittes 能亲手用手机拍摄的生活内容。",
     "not_visible": "根据当前日程和所在地，暂时无法拍摄用户想看的对象。",
     "unclear_request": "暂时无法从当前对话确定用户想看的对象。",
@@ -57,4 +61,5 @@ DECLINE_GUIDANCE = (
     "选择 reply，将上述依据交给 replyer 自然、简短地表达，不必照念规则。"
     "不是生图故障，不要声称照片已生成、店长不同意或已经征求过本人意见。"
     "不要重试拍照，不要改成背影或身体局部来规避，也不要自动生成替代照片。"
+    "如果依据是 Mittes 的个人隐私，按她还是高中生、不在网上分享这类照片的边界自然拒绝，不编造拍不到或发型没整理等借口。"
 )
