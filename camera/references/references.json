@@ -22,9 +22,10 @@
     {
       "file": "02_饮品_吧台拿铁.png",
       "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/02_饮品_吧台拿铁.png",
-      "sha256": "8736e898557a562c1e2b21087116ec7bfd711b97bbb4eddf7c18610de42273e8",
+      "sha256": "5daab7d9bfda24a0e2a62bd12dbbb4d674f053194ea5f10435d17f8477aff973",
       "role": "饮品与室内物件的画风参考",
-      "category": "drink"
+      "category": "drink",
+      "revision_note": "2026-10-18 按用户要求重绘吧台拿铁：完整杯碟及自然吧台环境，取消物品局部构图限制。"
     },
     {
       "file": "03_室外_雨后银杏叶.png",
