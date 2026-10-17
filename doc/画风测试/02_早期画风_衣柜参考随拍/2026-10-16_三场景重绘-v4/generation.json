@@ -1,0 +1,51 @@
+{
+  "generator": "built-in image_gen.imagegen",
+  "created_on": "2026-10-16",
+  "schedule_source_date": "2026-10-15",
+  "references": [
+    {
+      "path": "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/art-direction/reference-outer.png",
+      "sha256": "6168d21522f0c397e5e3a487e203439bca033d0b534e96809decc05919255a83",
+      "role": "固定画风参考"
+    },
+    {
+      "path": "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-15_图文样例-v1/缝Cos服_主动分享.png",
+      "sha256": "b871c238f142a27ba4d3626e8fb4667ab6588ae5569e7083a1814d3f8c07efb3",
+      "role": "同系列画风辅助参考；缝衣服场景另沿用衣物外观"
+    }
+  ],
+  "scope": "三个场景重新生成的预览样例；取景要求只记录为本轮创作说明，未写成 skill 或项目永久规则。",
+  "illustrative_details": "车站和列车外观为视觉补全；ED 人物、片尾曲及署名、播放时间均为虚构样例，并非真实番剧截图。",
+  "outputs": [
+    {
+      "scene": "sewing",
+      "file": "缝Cos服_随拍.png",
+      "source_image": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-39916895-846f-4c33-9cab-f331b9643bc4.png",
+      "prompt": "sewing-prompt.txt",
+      "caption": "蕾丝还没缝完，已经想穿了……",
+      "composition": "手拎蕾丝的紧凑局部取景。",
+      "review": "已目视检查：无可见人脸；构图、媒介形式与本轮方案一致。",
+      "edits": []
+    },
+    {
+      "scene": "station",
+      "file": "错过电车_随拍.png",
+      "source_image": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-14e98889-b4e3-411c-8ce8-af1d9a471dfe.png",
+      "prompt": "station-prompt.txt",
+      "caption": "那班车一定是看见我了才关门的。",
+      "composition": "将刚离站的列车作为分享目标，采用偏斜、遮挡式随拍构图。",
+      "review": "已目视检查：无可见人脸；构图、媒介形式与本轮方案一致。",
+      "edits": []
+    },
+    {
+      "scene": "ed",
+      "file": "番剧ED_截图.png",
+      "source_image": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-ed3a79cc-220b-4fb6-8f00-4ba646f8b81d.png",
+      "prompt": "ed-prompt.txt",
+      "caption": "片尾曲能不能晚十秒再进来啊……偏偏停在这里。",
+      "composition": "直接截取虚构番剧 ED，人物取景在腰部以下，保留片尾字幕与播放进度。",
+      "review": "已目视检查：无可见人脸；构图、媒介形式与本轮方案一致。",
+      "edits": []
+    }
+  ]
+}

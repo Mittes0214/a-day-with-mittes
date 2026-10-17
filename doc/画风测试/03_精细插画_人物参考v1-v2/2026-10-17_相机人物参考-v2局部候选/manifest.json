@@ -1,0 +1,25 @@
+{
+  "status": "candidate_not_integrated",
+  "created_at": "2026-10-17",
+  "generator": "built-in image_gen",
+  "images": [
+    {
+      "file": "01_女仆装肩侧近拍.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-766b7a49-a1ba-4ca4-8fe2-8d5eea3e5b29.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/Mittes人设图/16e3affa-d50d-4306-9ecc-1cb3811fe5da.png",
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/camera/references/01_室内近景_红茶无花果慕斯.png",
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/maid-split-v2/01_黑白女仆装_外装.png"
+      ]
+    },
+    {
+      "file": "02_水手服袖口与发尾.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-f7247786-e7f2-4c39-8355-ce765ae406ff.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/Mittes人设图/16e3affa-d50d-4306-9ecc-1cb3811fe5da.png",
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/camera/references/01_室内近景_红茶无花果慕斯.png",
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-10-12/outerwear-v6/02_白色长袖水手服配藏青百褶裙_外搭.png"
+      ]
+    }
+  ]
+}

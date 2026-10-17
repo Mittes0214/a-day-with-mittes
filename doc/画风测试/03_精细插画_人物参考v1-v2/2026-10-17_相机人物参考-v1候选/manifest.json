@@ -1,0 +1,21 @@
+{
+  "status": "candidate_not_integrated",
+  "created_at": "2026-10-17",
+  "generator": "built-in image_gen",
+  "identity_references": [
+    "/home/mittes/Mittes-1.0.0-dev/doc/Mittes人设图/Mittes头像.JPG",
+    "/home/mittes/Mittes-1.0.0-dev/doc/Mittes人设图/a0370464-7db7-46f9-8555-6c3f46b5a832.png"
+  ],
+  "style_reference": "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/camera/references/01_室内近景_红茶无花果慕斯.png",
+  "outputs": [
+    {
+      "file": "01_镜自拍.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-f7900384-deba-4cca-8b86-93a0b2f36f1d.png"
+    },
+    {
+      "file": "02_向下自拍.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-8392f934-6b93-4b7c-9e73-9a25dc27a495.png",
+      "additional_reference": "01_镜自拍.png"
+    }
+  ]
+}

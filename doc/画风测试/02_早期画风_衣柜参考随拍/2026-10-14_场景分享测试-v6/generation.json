@@ -1,0 +1,58 @@
+{
+  "created_on": "2026-10-16",
+  "schedule_date": "2026-10-14",
+  "generator": "built-in image_gen.imagegen",
+  "source": "schedule-source.json",
+  "references": [
+    {
+      "path": "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/art-direction/reference-outer.png",
+      "role": "固定画风基准",
+      "sha256": "6168d21522f0c397e5e3a487e203439bca033d0b534e96809decc05919255a83"
+    },
+    {
+      "path": "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_三场景重绘-v4/缝Cos服_随拍.png",
+      "role": "同系列画风辅助参考，仅参考表现",
+      "sha256": "6de229e89f0c0030dac7382a3ad089c537077d82dce92ac2ee1e3298453a4134"
+    }
+  ],
+  "scope": "按用户最新方向，仅测试身边生活场景分享；旧截图样例保留为历史，不作为本轮方向。没有发送消息，也未改插件。",
+  "visual_completion": "纸页排版与草图、书封和木箱陈列、餐具及慕斯造型是视觉补全；照片并非真实拍摄或历史记录。",
+  "outputs": [
+    {
+      "scene": "sketch",
+      "file": "1225_笔记边上的发髻.png",
+      "source_image": "/home/mittes/.codex/generated_images/01a14347-b4a0-7e61-b95b-636c68ead0e4/exec-d7a458e8-9351-44a9-a10e-3e4aaae282d6.png",
+      "test_time": "2026-10-14 12:25",
+      "time_is_inferred": true,
+      "caption": "这个发髻，好想试着盘一次。",
+      "reason": "取自上午历史课的笔记草图，放到午休短暂空档分享；想盘一次是依据兴趣作出的表达推断。",
+      "prompt_file": "sketch-prompt.txt",
+      "edits": [],
+      "review": "已目视检查：生活场景随拍形式，无可见人脸，无游戏或屏幕截图；主体与选材对应。"
+    },
+    {
+      "scene": "books",
+      "file": "1410_雨棚下的旧书箱.png",
+      "source_image": "/home/mittes/.codex/generated_images/01a14347-b4a0-7e61-b95b-636c68ead0e4/exec-3597e19a-cc63-4246-9b7f-88a3b459051c.png",
+      "test_time": "2026-10-14 14:10",
+      "time_is_inferred": true,
+      "caption": "这几箱书，好想一本本翻过去。",
+      "reason": "取自神保町雨棚下看旧刊的片段；拍吸引她停步的木箱，而非整条街的景观。",
+      "prompt_file": "books-prompt.txt",
+      "edits": [],
+      "review": "已目视检查：生活场景随拍形式，无可见人脸，无游戏或屏幕截图；主体与选材对应。"
+    },
+    {
+      "scene": "mousse",
+      "file": "2320_红茶无花果慕斯.png",
+      "source_image": "/home/mittes/.codex/generated_images/01a14347-b4a0-7e61-b95b-636c68ead0e4/exec-1aec1981-9723-4509-9a7b-ac73b72592cc.png",
+      "test_time": "2026-10-14 23:20",
+      "time_is_inferred": true,
+      "caption": "这次不改了，就这个味道。",
+      "reason": "取自让 Sweyn 试吃并得到肯定后的满足；用切过的小样承接文字，不复述制作和试吃全过程。",
+      "prompt_file": "mousse-prompt.txt",
+      "edits": [],
+      "review": "已目视检查：生活场景随拍形式，无可见人脸，无游戏或屏幕截图；主体与选材对应。"
+    }
+  ]
+}

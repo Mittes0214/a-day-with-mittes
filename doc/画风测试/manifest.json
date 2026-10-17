@@ -1,0 +1,439 @@
+{
+  "organized_on": "2026-10-17",
+  "source_root": "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计",
+  "scope": "已有图文/相机画风测试、记录中能恢复的初稿、两次 CPA 预览；不含人设原图和衣柜单品设定图。",
+  "copy_policy": "保留原文件；按 SHA-256 去重；只增加文档归档，不修改相机生产参考、配置、日程或衣柜。",
+  "source_image_paths": 41,
+  "unique_source_images": 33,
+  "recovered_initial_variants": 5,
+  "cpa_preview_images": 3,
+  "unique_archived_images": 41,
+  "groups": {
+    "02_早期画风_衣柜参考随拍": 21,
+    "05_碧蓝档案画风尝试": 2,
+    "06_游戏画面风格_历史尝试": 2,
+    "01_现用画风_v4人设画风": 11,
+    "03_精细插画_人物参考v1-v2": 4,
+    "04_简化平涂_人物参考v3": 1
+  },
+  "images": [
+    {
+      "file": "01_现用画风_v4人设画风/2026-10-17_v4画风_跨场景测试-v1/01_红茶无花果慕斯_画风迁移.png",
+      "group": "01_现用画风_v4人设画风",
+      "sha256": "91f65f3a53ebfc7b6a36835c0c7b02222c1d2ee1686b91aa8400b0703e08db67",
+      "bytes": 1839632,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_v4画风_跨场景测试-v1/01_红茶无花果慕斯_画风迁移.png",
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/take_mittes_photo-画风参考-v2/01_食物_红茶无花果慕斯.png"
+      ]
+    },
+    {
+      "file": "01_现用画风_v4人设画风/2026-10-17_v4画风_跨场景测试-v1/02_吧台拿铁.png",
+      "group": "01_现用画风_v4人设画风",
+      "sha256": "8736e898557a562c1e2b21087116ec7bfd711b97bbb4eddf7c18610de42273e8",
+      "bytes": 1709165,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_v4画风_跨场景测试-v1/02_吧台拿铁.png",
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/take_mittes_photo-画风参考-v2/02_饮品_吧台拿铁.png"
+      ]
+    },
+    {
+      "file": "01_现用画风_v4人设画风/2026-10-17_v4画风_跨场景测试-v1/03_雨后银杏叶.png",
+      "group": "01_现用画风_v4人设画风",
+      "sha256": "c8431723aa357736eaa2fdd89dffa67048fd7561805acf65a6255632bd5473fa",
+      "bytes": 2014792,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_v4画风_跨场景测试-v1/03_雨后银杏叶.png",
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/take_mittes_photo-画风参考-v2/03_室外_雨后银杏叶.png"
+      ]
+    },
+    {
+      "file": "01_现用画风_v4人设画风/2026-10-17_v4画风_跨场景测试-v1/04_出门的斜挎包.png",
+      "group": "01_现用画风_v4人设画风",
+      "sha256": "b013fd78db2055cc732c3059c77cf430008be6b30785dfac9fb217079571a374",
+      "bytes": 1892119,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_v4画风_跨场景测试-v1/04_出门的斜挎包.png",
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/take_mittes_photo-画风参考-v2/04_随身物品_斜挎包.png"
+      ]
+    },
+    {
+      "file": "01_现用画风_v4人设画风/2026-10-17_相机人物参考-v4人设画风候选/01_袖口与马尾_人设画风.png",
+      "group": "01_现用画风_v4人设画风",
+      "sha256": "62d31ab117b372b2f3ef98ac8a59bf0b150d4d17d6b024175874d575d9953cb2",
+      "bytes": 1763826,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v4人设画风候选/01_袖口与马尾_人设画风.png",
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v5扩展候选/00_已认可画风基准_袖口与马尾.png",
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/take_mittes_photo-画风参考-v2/00_人物局部_画风主基准.png"
+      ]
+    },
+    {
+      "file": "01_现用画风_v4人设画风/2026-10-17_相机人物参考-v5扩展候选/01_女仆装_向下拍围裙口袋.png",
+      "group": "01_现用画风_v4人设画风",
+      "sha256": "d3764f1f127fe3dbd14380d0b5df3e21e418c2c1d6d605cd586eebb1156dba73",
+      "bytes": 1721242,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v5扩展候选/01_女仆装_向下拍围裙口袋.png"
+      ]
+    },
+    {
+      "file": "01_现用画风_v4人设画风/2026-10-17_相机人物参考-v5扩展候选/02_日常穿搭_开衫袖口与发尾.png",
+      "group": "01_现用画风_v4人设画风",
+      "sha256": "238b5f0fccecf3abc2900dad3e76ed6467ccccd9590401b93f455e8ea866f67b",
+      "bytes": 1864081,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v5扩展候选/02_日常穿搭_开衫袖口与发尾.png"
+      ]
+    },
+    {
+      "file": "01_现用画风_v4人设画风/2026-10-17_相机人物参考-v5扩展候选/03_浴后_从上方拍干发毛巾.png",
+      "group": "01_现用画风_v4人设画风",
+      "sha256": "97acb5028c841b1ef22da1ec170dbc0fe9773a1be4e3c1a1ace109c0136d380e",
+      "bytes": 1676955,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v5扩展候选/03_浴后_从上方拍干发毛巾.png"
+      ]
+    },
+    {
+      "file": "01_现用画风_v4人设画风/2026-10-17_相机人物参考-v5扩展候选/不采用/01_女仆装_头颈结构异常.png",
+      "group": "01_现用画风_v4人设画风",
+      "sha256": "c391d358cb7d103e6668c20f56f8ce97625c6673dbbd10fd051d3afbc87d490c",
+      "bytes": 1811047,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v5扩展候选/不采用/01_女仆装_头颈结构异常.png"
+      ]
+    },
+    {
+      "file": "01_现用画风_v4人设画风/2026-10-17_相机人物参考-v5扩展候选/不采用/03_浴后_侧脸轮廓可见.png",
+      "group": "01_现用画风_v4人设画风",
+      "sha256": "5014ca3055270b863816f5f3efa565419b71984af4c269854e165b2985c2bd5d",
+      "bytes": 1784773,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v5扩展候选/不采用/03_浴后_侧脸轮廓可见.png"
+      ]
+    },
+    {
+      "file": "01_现用画风_v4人设画风/2026-10-17_看看你的鞋子_模拟/01_看看你的鞋子.png",
+      "group": "01_现用画风_v4人设画风",
+      "sha256": "6943b347d8941aff7c199467e64c4e84a7b930afea26f2568fde615bb325e5c3",
+      "bytes": 1792673,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_看看你的鞋子_模拟/01_看看你的鞋子.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-14_场景分享测试-v6/1225_笔记边上的发髻.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "c94267658ed2dbc4cf4db1a060b0846423d17a3cd0f9fc954e98a4ff9348ba7a",
+      "bytes": 1920350,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-14_场景分享测试-v6/1225_笔记边上的发髻.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-14_场景分享测试-v6/1410_雨棚下的旧书箱.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "30e0e5e24da8ff4bceaca77e6d857489ffc3c14d54b7de16d226420a53b44117",
+      "bytes": 2741816,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-14_场景分享测试-v6/1410_雨棚下的旧书箱.png",
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/take_mittes_photo-画风参考-v1/02_室外随拍_雨棚下的旧书箱.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-14_场景分享测试-v6/2320_红茶无花果慕斯.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "898c9210f52e59ac1876901cfb98c2b325cdbe15eae2e8017124ffcf5bb985a4",
+      "bytes": 1983124,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-14_场景分享测试-v6/2320_红茶无花果慕斯.png",
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/take_mittes_photo-画风参考-v1/01_室内近景_红茶无花果慕斯.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-15_图文样例-v1/缝Cos服_主动分享.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "b871c238f142a27ba4d3626e8fb4667ab6588ae5569e7083a1814d3f8c07efb3",
+      "bytes": 2233469,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-15_图文样例-v1/缝Cos服_主动分享.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-16_ED截图样例-v3/番剧ED_截图样例.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "f3b3cfe03a9510c88ac8906f13208fe46e5f228bd10bdb31cd5d243053870f31",
+      "bytes": 2059745,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_ED截图样例-v3/番剧ED_截图样例.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-16_三场景重绘-v4/番剧ED_截图.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "0e405bfeb281c50f720a6038ee9d0fcff3044db62c34ef5cacdfb21fcd3cd3d0",
+      "bytes": 2188239,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_三场景重绘-v4/番剧ED_截图.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-16_三场景重绘-v4/缝Cos服_随拍.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "6de229e89f0c0030dac7382a3ad089c537077d82dce92ac2ee1e3298453a4134",
+      "bytes": 2264477,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_三场景重绘-v4/缝Cos服_随拍.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-16_三场景重绘-v4/错过电车_随拍.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "b423b10737fbe2dd1f9b49a75bad32f01c2bf446ca6664ff5ab116c689353708",
+      "bytes": 2251716,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_三场景重绘-v4/错过电车_随拍.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-16_图文样例-v2/追番断在关键处_主动分享.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "0b2b9f269862974ccc79d3a2b4e8b8a2988e22b2f87c887b68a5a3d414b884e4",
+      "bytes": 1699161,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_图文样例-v2/追番断在关键处_主动分享.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-16_图文样例-v2/错过电车_主动分享.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "18ee6d2d5e290397ef084e443ab84a66e9c7e667211fcfcb4538209ecd357c76",
+      "bytes": 2504741,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_图文样例-v2/错过电车_主动分享.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-16_当日日程测试-v5/1240_最后一个炒面面包.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "78ec6d685353dc0f696eea62f83b32c6c87e6c4f9e8488efcef5dc1642f649b3",
+      "bytes": 2175694,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_当日日程测试-v5/1240_最后一个炒面面包.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-16_当日日程测试-v5/1630_漫画新卷到手.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "849b99820fe16d0d536eab5d14bce971a3d8ecce79b03708e31f3d7ca3ef7f74",
+      "bytes": 1983176,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_当日日程测试-v5/1630_漫画新卷到手.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-16_当日日程测试-v5/初稿/1240_最后一个炒面面包_初稿.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "2bd8bd4fa5075a2ac27141e1a2946403874ad7b330b995381c299bb2c29acb9c",
+      "bytes": 2206495,
+      "kind": "initial_variant",
+      "sources": [
+        "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-bfcb8625-8c15-4083-95d7-f096ad73dbcc.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-16_当日日程测试-v5/初稿/1630_漫画新卷到手_初稿.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "6c13a06ced2857853b8c5d4a63037bc2a37d65ea0f976318782c70f75045466b",
+      "bytes": 2089973,
+      "kind": "initial_variant",
+      "sources": [
+        "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-54a4c61e-3110-4da2-a241-ae5985a9b517.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-17_次日日程测试-v8/1250_刚出炉的南瓜磅蛋糕.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "8d5ef1175fb67fc23b8c00c8f60b86d993b42862cd4c8b3e7fe466b6ed4efedb",
+      "bytes": 1759774,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_次日日程测试-v8/1250_刚出炉的南瓜磅蛋糕.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-17_次日日程测试-v8/2120_南瓜蛋糕卖完了.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "baf2028560609e35ac00dd28f738389f7321f4ec9526d7250fd50c7170525d61",
+      "bytes": 1649713,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_次日日程测试-v8/2120_南瓜蛋糕卖完了.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-17_次日日程测试-v8/初稿/1250_刚出炉的南瓜磅蛋糕_初稿.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "0f9a152d24c8fbb306e04b9fbc548f10d2b399530319eaa01a24c8998bd8ef20",
+      "bytes": 2195152,
+      "kind": "initial_variant",
+      "sources": [
+        "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-1f9f0c0d-5587-4671-ab02-914a999d4071.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/2026-10-17_次日日程测试-v8/初稿/2120_南瓜蛋糕卖完了_初稿.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "1c76d9b65f45c862d46bd13381b1224fd7bde467606fbedeb17087f689e62954",
+      "bytes": 1630698,
+      "kind": "initial_variant",
+      "sources": [
+        "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-5695232a-eb51-40b2-b68f-5b82c4c5c6b2.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/CPA接口测试/咖啡近景/attempt-1.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "a7883f7b5010742b02cc65ce08ff7367ec78157d09b479e8a347e991f66a9a5b",
+      "bytes": 2026550,
+      "kind": "cpa_preview",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/data/plugins/khiqwq.a-day-with-mittes/camera/2cb3eb4028644e58a9d73c2db5629ff0/attempt-1.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/CPA接口测试/女仆装局部/attempt-1.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "a08464166f370ecb0ee4330987ee85ac09c999aeef0cd4fe6f3573fc38389cbe",
+      "bytes": 1750370,
+      "kind": "cpa_preview",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/data/plugins/khiqwq.a-day-with-mittes/camera/cbb7a84e173a4b27965e27bd95959743/attempt-1.png"
+      ]
+    },
+    {
+      "file": "02_早期画风_衣柜参考随拍/CPA接口测试/女仆装局部/attempt-2.png",
+      "group": "02_早期画风_衣柜参考随拍",
+      "sha256": "ad7381d0e4db925392ca81dc0598c91edeec702a1c3b4c0cf3624f8ecd8821a6",
+      "bytes": 1744035,
+      "kind": "cpa_preview",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/data/plugins/khiqwq.a-day-with-mittes/camera/cbb7a84e173a4b27965e27bd95959743/attempt-2.png"
+      ]
+    },
+    {
+      "file": "03_精细插画_人物参考v1-v2/2026-10-17_相机人物参考-v1候选/01_镜自拍.png",
+      "group": "03_精细插画_人物参考v1-v2",
+      "sha256": "f80e54a026df8f129e9bf0b2da67036efd0e40d562bdfb2f08a002341a49b77d",
+      "bytes": 1802100,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v1候选/01_镜自拍.png"
+      ]
+    },
+    {
+      "file": "03_精细插画_人物参考v1-v2/2026-10-17_相机人物参考-v1候选/02_向下自拍.png",
+      "group": "03_精细插画_人物参考v1-v2",
+      "sha256": "238fecbe649cd147c46452aeb4ee96ec8c37b0a58d9431158338b5741c045f97",
+      "bytes": 1975901,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v1候选/02_向下自拍.png"
+      ]
+    },
+    {
+      "file": "03_精细插画_人物参考v1-v2/2026-10-17_相机人物参考-v2局部候选/01_女仆装肩侧近拍.png",
+      "group": "03_精细插画_人物参考v1-v2",
+      "sha256": "49b644a4607f7e400731069d452a596a396a11f74434d509b25f07d138274996",
+      "bytes": 2046479,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v2局部候选/01_女仆装肩侧近拍.png"
+      ]
+    },
+    {
+      "file": "03_精细插画_人物参考v1-v2/2026-10-17_相机人物参考-v2局部候选/02_水手服袖口与发尾.png",
+      "group": "03_精细插画_人物参考v1-v2",
+      "sha256": "44a319374d19b898c4c66c14493d1f58984d0c4c2ac8687cf6cd1669051993fc",
+      "bytes": 1999609,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v2局部候选/02_水手服袖口与发尾.png"
+      ]
+    },
+    {
+      "file": "04_简化平涂_人物参考v3/2026-10-17_相机人物参考-v3简化画风候选/01_水手服袖口与发尾_简化.png",
+      "group": "04_简化平涂_人物参考v3",
+      "sha256": "5b273a192ec7d21fd7794a3888f1ad8a387f8f76c4a27d6920f899ff7ec93857",
+      "bytes": 1576637,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v3简化画风候选/01_水手服袖口与发尾_简化.png"
+      ]
+    },
+    {
+      "file": "05_碧蓝档案画风尝试/2026-10-16_买书画风测试-v7/漫画新卷_碧蓝档案画风尝试.png",
+      "group": "05_碧蓝档案画风尝试",
+      "sha256": "e91da682b7ef0e80e02c23f3b3efd30393cfaf1a374da23dc1588b044c7942d1",
+      "bytes": 1746877,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_买书画风测试-v7/漫画新卷_碧蓝档案画风尝试.png"
+      ]
+    },
+    {
+      "file": "05_碧蓝档案画风尝试/2026-10-16_面包画风测试-v6/炒面面包_碧蓝档案画风尝试.png",
+      "group": "05_碧蓝档案画风尝试",
+      "sha256": "a1d65a0a8497daa431835d82e204e202bf2056fd469a66a5a79387cc1ec55fac",
+      "bytes": 1804397,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_面包画风测试-v6/炒面面包_碧蓝档案画风尝试.png"
+      ]
+    },
+    {
+      "file": "06_游戏画面风格_历史尝试/2026-10-16_当日日程测试-v5/0040_动森西岸改路.png",
+      "group": "06_游戏画面风格_历史尝试",
+      "sha256": "bb84f3769b9de306e928e82317fbcca36aea89ab4eb145a2bde4bc49bab810b7",
+      "bytes": 1753797,
+      "kind": "test_output",
+      "sources": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_当日日程测试-v5/0040_动森西岸改路.png"
+      ]
+    },
+    {
+      "file": "06_游戏画面风格_历史尝试/2026-10-16_当日日程测试-v5/初稿/0040_动森西岸改路_初稿.png",
+      "group": "06_游戏画面风格_历史尝试",
+      "sha256": "c7476db66a7332e1ba3875dfb63c4a5ad595b164b36d4f8cb75f92b97db50881",
+      "bytes": 2122761,
+      "kind": "initial_variant",
+      "sources": [
+        "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-3d71bd3f-9016-4ecc-a122-9a875733b37e.png"
+      ]
+    }
+  ]
+}

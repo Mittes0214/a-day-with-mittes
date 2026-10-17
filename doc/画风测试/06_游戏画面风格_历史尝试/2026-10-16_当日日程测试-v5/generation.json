@@ -1,0 +1,61 @@
+{
+  "generator": "built-in image_gen.imagegen",
+  "schedule_date": "2026-10-16",
+  "source": "schedule-source.json",
+  "references": [
+    {
+      "path": "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/art-direction/reference-outer.png",
+      "sha256": "6168d21522f0c397e5e3a487e203439bca033d0b534e96809decc05919255a83",
+      "role": "固定画风参考"
+    },
+    {
+      "path": "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_三场景重绘-v4/缝Cos服_随拍.png",
+      "sha256": "6de229e89f0c0030dac7382a3ad089c537077d82dce92ac2ee1e3298453a4134",
+      "role": "随拍构图与同系列表现辅助参考"
+    }
+  ],
+  "scope": "日程选材与图文测试，未发送或接入自动联系。时点是故事段内的设计推定，午夜条目属于次日自然日。",
+  "outputs": [
+    {
+      "key": "lunch",
+      "file": "1240_最后一个炒面面包.png",
+      "test_time": "2026-10-16 12:40",
+      "time_is_inferred": true,
+      "caption": "最后一个，被我抢到了。",
+      "initial_source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-bfcb8625-8c15-4083-95d7-f096ad73dbcc.png",
+      "final_source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-d1f311b5-6b18-4d2d-a639-3f1e369ef2b9.png",
+      "prompt_file": "lunch-prompt.txt",
+      "edit_prompt_file": "lunch-edit-prompt.txt",
+      "review": "已检查：一个面包分成两半；无可见人脸；袖口已校正为藏青两道白线的校服袖口。"
+    },
+    {
+      "key": "manga",
+      "file": "1630_漫画新卷到手.png",
+      "test_time": "2026-10-16 16:30",
+      "time_is_inferred": true,
+      "caption": "到手。已经等不及回家了。",
+      "initial_source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-54a4c61e-3110-4da2-a241-ae5985a9b517.png",
+      "final_source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-d3370ff9-bc47-4c95-a708-96bcab28b935.png",
+      "prompt_file": "manga-prompt.txt",
+      "edit_prompt_file": "manga-edit-prompt.txt",
+      "review": "已检查：新书是画面主体，无封面人脸；袖口已校正。因原日程缺书名，封面是虚构道具，不能视为真实单行本。"
+    },
+    {
+      "key": "island",
+      "file": "0040_动森西岸改路.png",
+      "test_time": "2026-10-17 00:40",
+      "time_is_inferred": true,
+      "caption": "这里拐一下，好像顺眼多了。",
+      "initial_source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-3d71bd3f-9016-4ecc-a122-9a875733b37e.png",
+      "final_source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-11c56226-8fea-4036-aa39-1cd1e89b0c68.png",
+      "prompt_file": "island-prompt.txt",
+      "edit_prompt_file": "island-edit-prompt.txt",
+      "review": "已检查：修改为较简洁的游戏视角，展示石板路转弯和花坛；游戏人物背向镜头，无可见人脸。为生成的模拟截图，不是实际存档截屏。"
+    }
+  ],
+  "text_only_control": {
+    "test_time": "2026-10-16 23:50（第二把结束后，推定）",
+    "caption": "侧面那队到底什么时候过来的……",
+    "reason": "原文有决赛圈侧面混战失利，没有具体名次、伤害和队伍画面，不制造结算截图。"
+  }
+}

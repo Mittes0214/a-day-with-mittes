@@ -1,0 +1,18 @@
+Use case: illustration-story.
+Make a new image for the same anime-character private-chat sharing series.
+Reference 1 is the authoritative art-style reference ONLY: delicate warm-brown thin outlines, airy flat colors, one or two simple soft cel-shadow planes, clean hand-drawn Japanese anime illustration. Do not copy its maid outfit, sheet arrangement, labels, color dots or white studio background.
+Reference 2 is the previous sewing scene, used to keep the same artist's line weight, muted palette, softness and cel-shaded surface treatment. Keep everything clearly illustrated, not photographic, not 3D, not oil painting, no heavy cinematic rendering or dense photorealistic texture.
+For this batch, no human face should be visible anywhere: no front faces, profiles, facial features, faces in reflections, posters, screens, background crowds or printed pictures. It is fine to include naturally framed hands, sleeves or lower-body details where they help the scene. Do not depict a full person with an artificially blank face; frame naturally so faces are simply outside the view.
+No chat bubbles, external captions, collage, watermark or design-sheet decorations.
+Image type: edge-to-edge LANDSCAPE 16:9 SCREENSHOT of the actual content of a fictional Japanese anime ED. No physical device, no bezel, no photographed monitor, no bed or room. This is the screen content she would directly share after an abrupt cliffhanger.
+The original fictional episode has just cut from a rain-night confrontation to its ending. Choose a natural anime cinematic crop that never includes heads: a low angle cropped at hip level, with the lower edge of an ordinary pale gray coat and one relaxed hand at the left foreground, trouser legs and dark shoes visible. A second character's lower legs and shoes are facing them several steps away near the middle-right. Both heads and upper bodies are entirely outside the top crop. Rain falls into a puddle BETWEEN their shoes in an urban alley; water reflections show only legs, shoes and a small muted amber light, never a face. The framing conveys a confrontation suspended mid-scene. Do not add weapons, injury or violence. Nothing else human visible.
+Art direction: fine delicate warm-gray/brown lines, simple anime cel shadows, broad muted blue-gray and dusty-lavender color shapes, restrained pale amber puddle reflection. Rain as sparse clean strokes and stylized ripple circles. No dense realistic wet microtextures, no photographic bokeh or heavy dramatic lighting. Match the understated illustration quality of the supplied references, adapted to an anime video frame.
+Make it recognizable as an ED screenshot: small crisp white Japanese closing credits on the quieter right upper quadrant, with the following exact text:
+エンディングテーマ
+「雨のあと」
+歌　月野 灯
+作詞・作曲　水瀬 奏
+These are invented sample credits. They must be ordinary typeset on-video credits, not handwritten annotations or a large title.
+Along the bottom only, a subtle translucent video-player strip with a slim muted-red progress line about 92 percent complete, small white controls and the exact time "21:48 / 23:40". No browser chrome, service logo, status bar or chat interface.
+Do not include anime character portraits, faces, face reflections, title-card character heads, or any head at all. This is a fictional illustrative screenshot, not from an identified real show.
+Separate message, not in image: 片尾曲能不能晚十秒再进来啊……偏偏停在这里。

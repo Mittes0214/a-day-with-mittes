@@ -1,0 +1,41 @@
+{
+  "created_on": "2026-10-17",
+  "generator": "built-in image_gen",
+  "status": "review_examples_not_integrated",
+  "style_anchor": "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v4人设画风候选/01_袖口与马尾_人设画风.png",
+  "images": [
+    {
+      "file": "01_红茶无花果慕斯_画风迁移.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-4c0758c2-9746-4fd9-b27f-e507d858365b.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v4人设画风候选/01_袖口与马尾_人设画风.png",
+        "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/camera/references/01_室内近景_红茶无花果慕斯.png"
+      ],
+      "mode": "restyle_existing_image"
+    },
+    {
+      "file": "02_吧台拿铁.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-96251e92-c180-4fbd-9332-f2173da8ab65.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v4人设画风候选/01_袖口与马尾_人设画风.png"
+      ],
+      "mode": "hypothetical_scenario"
+    },
+    {
+      "file": "03_雨后银杏叶.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-8afe91a8-a701-4ccc-9703-c474cfa0845b.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v4人设画风候选/01_袖口与马尾_人设画风.png"
+      ],
+      "mode": "hypothetical_scenario"
+    },
+    {
+      "file": "04_出门的斜挎包.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-e35c0ca6-701c-4823-a3f1-645793c457e8.png",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v4人设画风候选/01_袖口与马尾_人设画风.png"
+      ],
+      "mode": "hypothetical_scenario"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "file": "1250_刚出炉的南瓜磅蛋糕.png",
+    "source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-5c07837b-01e6-4f7c-be1a-082e20d6dd85.png",
+    "initial_source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-1f9f0c0d-5587-4671-ab02-914a999d4071.png",
+    "tool": "built-in imagegen",
+    "edits": "edit-prompts.json",
+    "review": "已目视检查：无人脸、无屏幕、画面内容符合选定片段；蛋糕改为简洁色块，售罄图保留两块坚果挞。画风是否满意待用户评价。"
+  },
+  {
+    "file": "2120_南瓜蛋糕卖完了.png",
+    "source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-c4072fe3-d0e1-4b1e-a44b-fc9961f6d284.png",
+    "initial_source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-5695232a-eb51-40b2-b68f-5b82c4c5c6b2.png",
+    "tool": "built-in imagegen",
+    "edits": "edit-prompts.json",
+    "review": "已目视检查：无人脸、无屏幕、画面内容符合选定片段；蛋糕改为简洁色块，售罄图保留两块坚果挞。画风是否满意待用户评价。"
+  }
+]

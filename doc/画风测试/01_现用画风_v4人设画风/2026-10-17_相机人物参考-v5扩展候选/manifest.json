@@ -1,0 +1,58 @@
+{
+  "generated_on": "2026-10-17",
+  "generator": "built-in image_gen",
+  "status": "not_integrated",
+  "images": [
+    {
+      "file": "00_已认可画风基准_袖口与马尾.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-2d97e0b8-2a5a-4bfd-9aa8-53a456781b21.png",
+      "status": "user_approved_style_anchor",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/Mittes人设图/a0370464-7db7-46f9-8555-6c3f46b5a832.png"
+      ]
+    },
+    {
+      "file": "01_女仆装_向下拍围裙口袋.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-b96a2fc1-f97a-4dc7-b816-8e0ad4605b9d.png",
+      "status": "candidate",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/Mittes人设图/a0370464-7db7-46f9-8555-6c3f46b5a832.png"
+      ]
+    },
+    {
+      "file": "02_日常穿搭_开衫袖口与发尾.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-03790e12-49ab-4096-8123-345f03d7f84e.png",
+      "status": "candidate",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v4人设画风候选/01_袖口与马尾_人设画风.png",
+        "/home/mittes/Mittes-1.0.0-dev/doc/Mittes人设图/a0370464-7db7-46f9-8555-6c3f46b5a832.png"
+      ]
+    },
+    {
+      "file": "03_浴后_从上方拍干发毛巾.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-31367b56-80d7-490a-89e8-b929c3657fed.png",
+      "status": "candidate",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/Mittes人设图/a0370464-7db7-46f9-8555-6c3f46b5a832.png"
+      ]
+    },
+    {
+      "file": "不采用/01_女仆装_头颈结构异常.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-5077b1ed-e72b-4b6e-b854-60f05e0c6410.png",
+      "status": "rejected",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v4人设画风候选/01_袖口与马尾_人设画风.png",
+        "/home/mittes/Mittes-1.0.0-dev/doc/Mittes人设图/a0370464-7db7-46f9-8555-6c3f46b5a832.png"
+      ]
+    },
+    {
+      "file": "不采用/03_浴后_侧脸轮廓可见.png",
+      "source": "/home/mittes/.codex/generated_images/01a14941-fecc-7ad3-975f-c3509b42e291/exec-ebcdb737-ccdc-4735-9e6f-95cba4ec2b72.png",
+      "status": "rejected",
+      "references": [
+        "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-17_相机人物参考-v4人设画风候选/01_袖口与马尾_人设画风.png",
+        "/home/mittes/Mittes-1.0.0-dev/doc/Mittes人设图/a0370464-7db7-46f9-8555-6c3f46b5a832.png"
+      ]
+    }
+  ]
+}

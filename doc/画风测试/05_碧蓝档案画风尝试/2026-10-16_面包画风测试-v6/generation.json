@@ -1,0 +1,12 @@
+{
+  "generator": "built-in image_gen.imagegen",
+  "source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-4112da6c-13ad-4707-9a40-5a8fa27dbf9e.png",
+  "input_image": "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-16_当日日程测试-v5/1240_最后一个炒面面包.png",
+  "input_role": "构图与内容参考，本轮明确改画风",
+  "style_request": "碧蓝档案画风；减少食物细节，以清爽色块、细线和柔和赛璐璐阴影为主",
+  "prompt": "prompt.txt",
+  "caption": "最后一个，被我抢到了。",
+  "review": "已查看：面包孔洞与面条微纹理明显减少，整体转为更明亮的冷暖色块；保留半个面包随拍、另一半托盘、校服袖口；无可见人脸。",
+  "scope": "画风测试版本，尚未替换固定画风基准或衣柜映射。",
+  "latest_user_direction": "后续主动分享选材先局限于生活场景，不再选游戏或屏幕截图。"
+}

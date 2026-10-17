@@ -1,0 +1,22 @@
+Use case: illustration-story.
+Create ONE landscape 16:9 image that looks exactly like a fullscreen screenshot from a FICTIONAL Japanese TV anime ending sequence, captured just as the episode abruptly switches to the ED after a cliffhanger. It will be shared in a chat with a frustrated remark about the episode ending at the critical moment.
+
+Reference image is ART STYLE ONLY: inherit fine warm-brown hand-drawn contours, clean light color shapes, restrained soft cel shading and delicate Japanese anime linework. Adapt to a rainy nighttime anime scene while retaining that illustration language. Do not copy the maid clothes, labels, white design sheet layout, accessories, palette dots or typography from the reference.
+
+Important medium distinction: this is the video content itself, edge to edge, digitally screen-captured. No physical phone/tablet, no bezel, no bedroom, no bed, no photographed display, no perspective distortion or screen reflection.
+
+Actual ED frame: an original suspense anime. A young adult protagonist with short dark hair in an ordinary light-gray coat, shown from chest up on the left, looking upward into rain with an unsettled, unresolved expression. A quiet rainy Tokyo back alley recedes behind them, with a distant anonymous coat-wearing silhouette near the alley bend. The scene is part of a stylized ending montage, not a poster. Suggest unresolved confrontation without violence. Muted blue-gray and dusty lavender nighttime palette, pale amber reflections in puddles, subtle soft highlights on rain. Fine line art and simple cel-shaded character, airy and readable, not heavy painterly realism. Keep the right half relatively quiet for official-looking ED credits. Modest depth and detail; feels like a frame paused from an animated episode rather than a spectacular key visual.
+
+On the right, small crisp white Japanese sans-serif ending credits arranged as actual anime credits, understated, with modest line spacing. Use this exact text:
+エンディングテーマ
+「雨のあと」
+
+歌　月野 灯
+作詞・作曲　水瀬 奏
+
+These are fictional example song/artist credits. Typeset them like genuine on-video credits, not hand-lettered annotations. Do NOT add a huge title, episode summary, TO BE CONTINUED card, comic speech bubble or the chat caption.
+
+Include a very subtle transient video-player overlay along the bottom edge to anchor the screenshot: thin translucent dark bottom strip, a slim muted red progress line about 92 percent complete, small white play/pause control, and small exact timestamp "21:48 / 23:40". The overlay is a minor detail; the anime and ending credits dominate. No app logo, browser chrome, notification bar, chat interface or watermark.
+
+This is an illustrative mock screenshot of an invented show because the schedule specifies no real anime title. Do not reproduce recognizable existing characters or imply a screenshot of a named real franchise.
+Separate chat caption (not in image): 片尾曲能不能晚十秒再进来啊……偏偏停在这里。

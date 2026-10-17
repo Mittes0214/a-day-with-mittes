@@ -1,0 +1,39 @@
+{
+  "generator": "built-in image_gen.imagegen",
+  "created_on": "2026-10-16",
+  "schedule_source_date": "2026-10-15",
+  "references": [
+    {
+      "path": "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/art-direction/reference-outer.png",
+      "role": "固定画风基准",
+      "sha256": "6168d21522f0c397e5e3a487e203439bca033d0b534e96809decc05919255a83"
+    },
+    {
+      "path": "/home/mittes/Mittes-1.0.0-dev/doc/主动联系设计/2026-10-15_图文样例-v1/缝Cos服_主动分享.png",
+      "role": "同系列场景表现辅助参考，未升级为基准",
+      "sha256": "b871c238f142a27ba4d3626e8fb4667ab6588ae5569e7083a1814d3f8c07efb3"
+    }
+  ],
+  "scope": "主动联系图文设计样例，未接入衣柜、插件或消息发送。",
+  "review": "已逐图目视检查：两图均为二次元细线与柔和阴影；站台冷灰日光，卧室暖光；取景与日程一致，无人物和设定图标注。车站建筑细节较密，室内布料处理更接近缝衣服样例。",
+  "outputs": [
+    {
+      "scene": "station",
+      "file": "错过电车_主动分享.png",
+      "source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-bf9ff6a3-1a71-43d9-aad0-ce0bf29e5325.png",
+      "prompt_file": "station-prompt.txt",
+      "caption": "那班车一定是看见我了才关门的。",
+      "illustrative_choices": "站台布局与建筑是场景补全，不指认真实车站。",
+      "edits": []
+    },
+    {
+      "scene": "anime",
+      "file": "追番断在关键处_主动分享.png",
+      "source": "/home/mittes/.codex/generated_images/01a13ebd-7992-7eb0-aa2a-7a295f342acf/exec-37600141-0389-4984-89fd-c657767f224e.png",
+      "prompt_file": "anime-prompt.txt",
+      "caption": "片尾曲能不能晚十秒再进来啊……偏偏停在这里。",
+      "illustrative_choices": "卧室配色与家具是场景补全；平板扣在被子上来自原日程。",
+      "edits": []
+    }
+  ]
+}
