@@ -115,6 +115,25 @@ def test_repeated_submit_is_one_persisted_task(setup):
     asyncio.run(run())
 
 
+def test_repeated_tool_call_after_delivery_reports_sent_without_new_photo(setup):
+    async def run():
+        service, ctx, client, _ = setup
+        record = await service.submit("拍杯子", "source", "private", dict(SNAPSHOT))
+        await service.process(record)
+        plugin_module = importlib.import_module("plugins.01_a_day_with_mittes.plugin")
+        plugin = plugin_module.ADayWithMittesPlugin()
+        plugin._camera = service
+        plugin._photo_snapshot = lambda: SNAPSHOT
+        result = await plugin.tool_take_photo("拍杯子", "source", "private")
+        assert result["status"] == "sent"
+        assert result["metadata"]["background_task"] is False
+        assert result["metadata"]["background_task_id"] == record["id"]
+        assert record["description"] in result["content"]
+        assert client.image_calls == 1
+        ctx.send.image.assert_awaited_once()
+    asyncio.run(run())
+
+
 def test_size_is_fixed_even_for_old_configuration_and_queued_tasks(setup):
     async def run():
         service, _, client, _ = setup

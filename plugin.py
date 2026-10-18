@@ -40,6 +40,7 @@ import uuid
 from maibot_sdk import Command, HookHandler, MaiBotPlugin, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
+from .camera.prompts import PENDING_GUIDANCE
 from .camera.service import PhotoService
 from .camera.store import PhotoQuotaExceeded
 from .character.outfit_images import (
@@ -787,7 +788,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         brief_description="应用户看图请求，拍一张 Mittes 身边事物、环境或当前穿搭的二次元手机随拍。",
         description=(
             "根据用户看图请求和聊天上下文，结合 Mittes 当前日程，拍摄并分享身边环境、物件或自身穿搭。"
-            "后台完成后发送到原会话；不要重复调用查询进度。"
+            "照片另行发送到原会话；不要重复调用查询进度。"
         ),
         parameters=[
             ToolParameterInfo(name="instruction", param_type=ToolParamType.STRING, required=True,
@@ -806,21 +807,26 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 return {"success": False, "name": "take_mittes_photo", "status": "declined",
                         "content": record["decline"]["reason"] + " " + record["decline"]["planner_guidance"],
                         "metadata": {"background_task": False, "background_task_id": record["id"]}}
+            if record["status"] == "sent":
+                return {"success": True, "name": "take_mittes_photo", "status": "sent",
+                        "content": "照片已经发送到当前会话，按 Mittes 刚用手机拍的照片来理解，自然谈照片里的内容，不讲工具或技术流程。不要重复拍摄或发送。照片实际可见内容：" + record["description"],
+                        "metadata": {"background_task": False, "background_task_id": record["id"]}}
             return {
                 "success": True, "name": "take_mittes_photo",
-                "content": f"照片任务 {record['id']}，状态 {record['status']}。后台会回填不可拍摄的原因，或在检查通过后发送成品。不要预先承诺一定可拍，不要提前描述照片，不要重复调用轮询。",
+                "content": PENDING_GUIDANCE,
                 "metadata": {"background_task": True, "background_task_id": record["id"]},
             }
         except PhotoQuotaExceeded as exc:
             return {
                 "success": False, "name": "take_mittes_photo", "status": "quota_exceeded",
-                "content": str(exc) + " 选择 reply，让 replyer 自然说明今天的拍照次数已用完。不要重试，不要换消息 ID 或会话继续调用，不要声称已生成照片。",
+                "content": str(exc) + " 选择 reply，让 replyer 按 Mittes 日常聊天的口吻自然说明今天的拍照次数已用完，不讲工具或技术流程。不要重试，不要换消息 ID 或会话继续调用，不要声称已拍好或已发送照片。",
                 "metadata": {"reason": "daily_photo_limit", "used": exc.used, "limit": exc.limit,
                              "day": exc.day, "timezone": exc.timezone, "background_task": False},
             }
-        except Exception as exc:
+        except Exception:
             _logger.exception("[相机] 无法提交拍照请求")
-            return {"success": False, "name": "take_mittes_photo", "content": str(exc)}
+            return {"success": False, "name": "take_mittes_photo",
+                    "content": "这次暂时无法拍照。选择 reply 时，让 replyer 按 Mittes 日常聊天的口吻简短说明这次拍不了，不讲工具或技术流程，不编造具体借口，不声称照片已拍好或已发送，不自动重试。"}
 
     def _photo_snapshot(self) -> dict[str, Any]:
         moment, day, segment, state = self._current()

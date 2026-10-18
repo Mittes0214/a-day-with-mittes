@@ -145,7 +145,7 @@ class PhotoService:
                     try:
                         await self.ctx.maisaka.proactive.trigger(
                             stream_id=record["stream_id"],
-                            intent="用户要求的照片这次没有成功发送，可以简短说明没拍好。不要声称已有照片，不要自动重新调用拍照工具。",
+                            intent="这次未能向用户分享照片。选择 reply 时，让 replyer 按 Mittes 本人拿手机拍照的语境简短说明这次没拍好，不讲工具或技术流程，不编造具体故障、姿势或意外经过。不要声称已有照片或已发送，不要自动重新调用拍照工具。",
                             reason="camera_failed", metadata={"background_tool_result": True, "tool_name": "take_mittes_photo",
                                                                "tool_success": False, "task_id": record["id"]},
                         )
@@ -258,7 +258,7 @@ class PhotoService:
         try:
             result = await self.ctx.maisaka.proactive.trigger(
                 stream_id=record["stream_id"],
-                intent="take_mittes_photo 工具结果：不可拍摄，未调用生图接口。\n"
+                intent="这次不拍摄照片。\n"
                        + DECLINE_REASONS[code] + "\n" + guidance,
                 reason="camera_declined",
                 metadata={"background_tool_result": True, "tool_name": "take_mittes_photo",
@@ -293,7 +293,7 @@ class PhotoService:
         await self.event(record, "sent", "照片已成功发送到原会话")
         try:
             result = await self.ctx.maisaka.context.append(
-                stream_id=record["stream_id"], segments=[{"type": "text", "text": "已按用户请求发送照片，画面内容：" + record["description"]}],
+                stream_id=record["stream_id"], segments=[{"type": "text", "text": "Mittes 刚用手机拍下并已向当前会话发送用户想看的照片。后续聊天按她刚拍的照片来理解，自然谈照片中的内容，不讲工具或技术流程。照片实际可见内容：" + record["description"]}],
                 source_kind="plugin_camera_description", message_id="camera-description:" + record["id"],
             )
             if not isinstance(result, dict) or result.get("success") is not True:
