@@ -12,7 +12,7 @@ import uuid
 
 
 DAILY_LIMIT = 3
-QUOTA_TIMEZONE = ZoneInfo("Asia/Taipei")
+QUOTA_TIMEZONE = ZoneInfo("Asia/Tokyo")
 EXEMPT_ACCOUNT = ("qq", "923856490")
 
 
@@ -24,7 +24,7 @@ class PhotoQuotaExceeded(ValueError):
         self.used = used
         self.limit = DAILY_LIMIT
         self.timezone = QUOTA_TIMEZONE.key
-        super().__init__(f"今天的拍照次数已用完（{used}/{DAILY_LIMIT}），台北时间每天零点重置。")
+        super().__init__(f"今天的拍照次数已用完（{used}/{DAILY_LIMIT}），东京时间每天零点重置。")
 
 
 def timestamp() -> str:

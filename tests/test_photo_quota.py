@@ -85,18 +85,24 @@ def test_preview_without_chat_identity_does_not_charge_users(store):
         assert con.execute("SELECT count(*) FROM daily_usage").fetchone()[0] == 0
 
 
-def test_natural_day_resets_at_taipei_midnight_not_schedule_day(store, monkeypatch):
-    moment = datetime.fromisoformat("2026-10-17T15:59:59+00:00")
+def test_natural_day_resets_at_tokyo_midnight_not_schedule_day(store, monkeypatch):
+    moment = datetime.fromisoformat("2026-10-17T14:59:59+00:00")
     monkeypatch.setattr(module, "datetime", SimpleNamespace(now=lambda tz: moment.astimezone(tz)))
     for index in range(3):
         assert store.create(request(index))["quota"]["day"] == "2026-10-17"
-    with pytest.raises(module.PhotoQuotaExceeded):
+    with pytest.raises(module.PhotoQuotaExceeded) as error:
         store.create(request(3))
-    moment = datetime.fromisoformat("2026-10-17T16:00:00+00:00")
+    assert error.value.timezone == "Asia/Tokyo"
+    assert "东京时间每天零点重置" in str(error.value)
+    moment = datetime.fromisoformat("2026-10-17T15:00:00+00:00")
     result = store.create(request(3))
     assert result["quota"]["day"] == "2026-10-18"
+    assert result["quota"]["timezone"] == "Asia/Tokyo"
     assert result["quota"]["remaining"] == 2
     assert store.create(request(0))["quota"]["day"] == "2026-10-17"
+    # 台北零点已经是东京凌晨一点，不能再次重置。
+    moment = datetime.fromisoformat("2026-10-17T16:00:00+00:00")
+    assert store.create(request(4))["quota"]["remaining"] == 1
 
 
 def test_restart_and_failed_task_do_not_reset_or_refund_quota(store):
