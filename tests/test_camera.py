@@ -396,12 +396,12 @@ def test_self_privacy_decline_uses_shared_reason_without_generation(setup, feasi
     async def run():
         service, ctx, client, _ = setup
         client.plan_overrides = {"feasible": feasible, "target_kind": "self", "rejection_code": "self_privacy"}
-        record = await service.submit("看看你的双马尾，不露脸", "hair", "private", SNAPSHOT)
+        record = await service.submit("看看你的完整正脸和眼睛", "face", "private", SNAPSHOT)
         await service.process(record)
         assert record["status"] == "declined"
         assert record["decline"]["reason_code"] == "self_privacy"
         assert "高中生" in record["decline"]["reason"]
-        assert "人脸、头发或发型" in record["decline"]["reason"]
+        assert "鼻子及以上面部或完整正脸" in record["decline"]["reason"]
         assert client.image_calls == 0 and record["references"] == []
         ctx.send.image.assert_not_awaited()
         feedback = ctx.maisaka.proactive.trigger.await_args.kwargs

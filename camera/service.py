@@ -109,7 +109,7 @@ class PhotoService:
         return await asyncio.to_thread(self.store.create, {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v5",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v6",
             "images": [], "references": [],
             "previous_photo": previous_photo,
             "requester": requester,
@@ -219,7 +219,7 @@ class PhotoService:
                 filename = f"attempt-{attempt + 1}.png"
                 info = await asyncio.to_thread(write_image, folder / filename, raw)
                 record["images"].append({"file": filename, "attempt": attempt + 1, **info, **result})
-                await self.event(record, "checking", "检查拍摄对象、人脸、场景和画风", attempt=attempt + 1)
+                await self.event(record, "checking", "检查拍摄对象、面部遮挡、场景和画风", attempt=attempt + 1)
                 check, usage = await client.json(settings["check_model"], CHECK, {
                     "instruction": record["instruction"], "source_text": record["source_text"],
                     "plan": plan, "snapshot": record["snapshot"], "reference_roles": record["references"],
