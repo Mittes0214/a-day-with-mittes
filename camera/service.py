@@ -109,7 +109,7 @@ class PhotoService:
         return await asyncio.to_thread(self.store.create, {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v9",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v10",
             "images": [], "references": [],
             "previous_photo": previous_photo,
             "requester": requester,
