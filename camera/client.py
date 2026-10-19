@@ -15,6 +15,10 @@ class GenerationUnknown(RuntimeError):
     """请求可能已执行，但没有取得结果，不能盲目再次生成。"""
 
 
+class GenerationRejected(RuntimeError):
+    """生图接口明确因内容安全拒绝，未生成图片。"""
+
+
 def read_provider(config_path: Path, name: str) -> tuple[str, str]:
     config = tomllib.loads(config_path.read_text())
     provider = next((p for p in config["api_providers"] if p["name"] == name), None)
@@ -60,6 +64,12 @@ class CPAClient:
                 except (ValueError, AttributeError):
                     message = "非 JSON 错误响应"
                 message = str(message).replace(self._key, "[redacted]") if self._key else str(message)
+                if endpoint == "images/edits" and response.status_code == 400 and (
+                    error.get("code") in {"content_policy_violation", "moderation_blocked", "safety_violation"}
+                    or "rejected by the safety system" in message.lower()
+                    or "safety_violations=" in message.lower()
+                ):
+                    raise GenerationRejected(f"CPA HTTP 400: {message[:600]}")
                 raise RuntimeError(f"CPA HTTP {response.status_code}: {message[:600]}")
             return response.json()
         raise RuntimeError("CPA 请求未完成")

@@ -35,8 +35,14 @@ class FakeClient:
     plan_overrides = None
     planning_inputs = None
     check_inputs = None
+    rewrite_calls = 0
+    rewrite_result = {"retry_allowed": True, "reason": "普通生活照，整理场景表述", "prompt": "手机拍摄桌上的杯子，室内自然光。"}
 
     async def json(self, model, system, data, images=None):
+        if system == module.SAFE_REWRITE:
+            self.rewrite_calls += 1
+            self.rewrite_inputs = (data, images)
+            return dict(self.rewrite_result), {}
         if images:
             self.check_inputs = (data, images)
             return self.checks.pop(0), {}
@@ -209,6 +215,100 @@ def test_failed_check_repairs_only_once_then_does_not_send(setup):
             await service.process(record)
         assert client.image_calls == 2
         assert len(record["images"]) == 2
+        ctx.send.image.assert_not_awaited()
+    asyncio.run(run())
+
+
+def test_safety_rejection_rewrites_once_then_checks_before_sending(setup):
+    async def run():
+        service, ctx, client, _ = setup
+        client.image = AsyncMock(side_effect=[module.GenerationRejected("safety blocked"), (png((1024, 1536)), {})])
+        record = await service.submit("拍杯子", "rewrite", "private", dict(SNAPSHOT))
+        await service.process(record)
+        assert record["status"] == "sent" and client.image.await_count == 2
+        assert client.rewrite_calls == 1
+        first, second = client.image.await_args_list
+        assert first.args[2] == second.args[2] == client.rewrite_inputs[1]
+        assert client.rewrite_result["prompt"] in second.args[1]
+        assert record["generation_rejections"][0]["prompt"] == first.args[1]
+        assert record["prompt_optimization"]["original_scene_prompt"] == "手机俯拍杯子"
+        assert record["prompt_optimization"]["status"] == "generated"
+        assert record["images"][0]["check"]["passed"] is True
+        assert record["snapshot"] == SNAPSHOT and record["quota"]["used"] == 1
+        ctx.send.image.assert_awaited_once()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("later_repair", [False, True])
+def test_safety_rewrite_budget_is_shared_with_later_image_repair(setup, later_repair):
+    async def run():
+        service, ctx, client, _ = setup
+        replies = [module.GenerationRejected("blocked")]
+        if later_repair:
+            replies.append((png((1024, 1536)), {}))
+            client.checks = [{"passed": False, "issues": ["主体错误"], "repairable": True, "description": "杯子"}]
+        replies.append(module.GenerationRejected("blocked again"))
+        client.image = AsyncMock(side_effect=replies)
+        record = await service.submit("拍杯子", "bounded-rewrite", "private", dict(SNAPSHOT))
+        with pytest.raises(module.GenerationRejected):
+            await service.process(record)
+        assert client.image.await_count == (3 if later_repair else 2)
+        assert client.rewrite_calls == 1 and len(record["generation_rejections"]) == 2
+        ctx.send.image.assert_not_awaited()
+    asyncio.run(run())
+
+
+def test_first_safety_rejection_during_image_repair_keeps_repair_issues(setup):
+    async def run():
+        service, ctx, client, _ = setup
+        image = png((1024, 1536))
+        client.image = AsyncMock(side_effect=[(image, {}), module.GenerationRejected("blocked repair"), (image, {})])
+        client.checks = [
+            {"passed": False, "issues": ["背景反射中有鼻子及以上面部"], "repairable": True, "description": "杯子"},
+            {"passed": True, "issues": [], "repairable": False, "description": "修正背景后的杯子"},
+        ]
+        record = await service.submit("拍杯子", "repair-rewrite", "private", dict(SNAPSHOT))
+        await service.process(record)
+        assert record["status"] == "sent" and client.image.await_count == 3 and client.rewrite_calls == 1
+        retry = client.image.await_args_list[-1]
+        assert "背景反射中有鼻子及以上面部" in retry.args[1]
+        assert "最后一张参考图是待修正的上一版照片" in retry.args[1]
+        assert retry.args[2][-1] == image
+        assert len(record["images"]) == 2 and record["final_image"] == "attempt-2.png"
+        ctx.send.image.assert_awaited_once()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("rewrite,error", [
+    ({"retry_allowed": False, "reason": "原始请求不适宜生成", "prompt": "不得使用"}, module.GenerationRejected),
+    ({"retry_allowed": "true", "reason": "无效类型", "prompt": "不得使用"}, ValueError),
+    ({"retry_allowed": True, "reason": "", "prompt": "不得使用"}, ValueError),
+    ({"retry_allowed": True, "reason": "普通生活照", "prompt": ""}, ValueError),
+])
+def test_declined_or_invalid_rewrite_never_generates_again(setup, rewrite, error):
+    async def run():
+        service, ctx, client, _ = setup
+        client.image = AsyncMock(side_effect=module.GenerationRejected("blocked"))
+        client.rewrite_result = rewrite
+        record = await service.submit("拍杯子", "declined-rewrite", "private", dict(SNAPSHOT))
+        with pytest.raises(error):
+            await service.process(record)
+        client.image.assert_awaited_once()
+        assert client.rewrite_calls == 1 and record["plan"]["prompt"] == "手机俯拍杯子"
+        ctx.send.image.assert_not_awaited()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("error", [module.GenerationUnknown("timeout"), RuntimeError("invalid key")])
+def test_uncertain_generation_and_non_safety_errors_never_rewrite(setup, error):
+    async def run():
+        service, ctx, client, _ = setup
+        client.image = AsyncMock(side_effect=error)
+        record = await service.submit("拍杯子", "no-rewrite", "private", dict(SNAPSHOT))
+        with pytest.raises(type(error)):
+            await service.process(record)
+        client.image.assert_awaited_once()
+        assert client.rewrite_calls == 0 and "prompt_optimization" not in record
         ctx.send.image.assert_not_awaited()
     asyncio.run(run())
 

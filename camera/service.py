@@ -12,8 +12,8 @@ import logging
 
 from PIL import Image
 
-from .client import CPAClient, GenerationUnknown, read_provider
-from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, PERSON_STYLE, SCENE_STYLE, STYLE
+from .client import CPAClient, GenerationRejected, GenerationUnknown, read_provider
+from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, PERSON_STYLE, SAFE_REWRITE, SCENE_STYLE, STYLE
 from .reference_images import build_references
 from .store import CameraStore, timestamp
 
@@ -109,7 +109,7 @@ class PhotoService:
         return await asyncio.to_thread(self.store.create, {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v7",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v8",
             "images": [], "references": [],
             "previous_photo": previous_photo,
             "requester": requester,
@@ -207,15 +207,13 @@ class PhotoService:
                 raise ValueError("拍摄方案缺少连续照片标记")
             images = await asyncio.to_thread(self._references, record, plan)
             check_references = list(images)
-            style = PERSON_STYLE if plan["contains_mittes"] else SCENE_STYLE
-            prompt = STYLE + "\n" + style + "\n\n本次拍摄：\n" + plan["prompt"] + "\n\n事实依据：\n" + json.dumps(record["snapshot"], ensure_ascii=False)
-            prompt += "\n\n参考图用途：\n" + json.dumps(record["references"], ensure_ascii=False)
+            prompt = self._prompt(record)
             record["prompt"] = prompt
             folder = self.store.root / record["id"]
             for attempt in range(2):
                 await self.event(record, "generating" if attempt == 0 else "repairing",
                                  "按固定画风参考生成照片" if attempt == 0 else "根据检查结果修正一次", attempt=attempt + 1)
-                raw, result = await client.image(settings, prompt, images)
+                raw, result = await self._generate(client, record, prompt, images, attempt)
                 filename = f"attempt-{attempt + 1}.png"
                 info = await asyncio.to_thread(write_image, folder / filename, raw)
                 record["images"].append({"file": filename, "attempt": attempt + 1, **info, **result})
@@ -246,6 +244,62 @@ class PhotoService:
                 images = images + [raw]
         finally:
             await client.close()
+
+    @staticmethod
+    def _prompt(record: dict[str, Any]) -> str:
+        style = PERSON_STYLE if record["plan"]["contains_mittes"] else SCENE_STYLE
+        return (STYLE + "\n" + style + "\n\n本次拍摄：\n" + record["plan"]["prompt"]
+                + "\n\n事实依据：\n" + json.dumps(record["snapshot"], ensure_ascii=False)
+                + "\n\n参考图用途：\n" + json.dumps(record["references"], ensure_ascii=False))
+
+    async def _generate(self, client: CPAClient, record: dict[str, Any], prompt: str,
+                        images: list[bytes], attempt: int) -> tuple[bytes, dict[str, Any]]:
+        try:
+            return await client.image(record["settings"], prompt, images)
+        except GenerationRejected as exc:
+            record.setdefault("generation_rejections", []).append({"at": timestamp(), "reason": str(exc), "prompt": prompt})
+            # 每任务只允许一次复核改写；即使在后续成品修正时被拒绝也不能循环重试。
+            if "prompt_optimization" in record:
+                await asyncio.to_thread(self.store.save, record)
+                raise
+            optimization: dict[str, Any] = {"status": "reviewing", "original_scene_prompt": record["plan"]["prompt"]}
+            record["prompt_optimization"] = optimization
+            await self.event(record, "planning", "生图请求被明确拒绝，复核原始意图并优化生活照表述")
+            rewrite, usage = await client.json(record["settings"]["director_model"], SAFE_REWRITE, {
+                "instruction": record["instruction"], "source_text": record["source_text"],
+                "context": record["context"], "snapshot": record["snapshot"], "plan": record["plan"],
+                "rejected_prompt": prompt, "rejection": str(exc), "reference_roles": record["references"],
+                "repair_issues": record.get("repair_prompt"),
+            }, images=images)
+            optimization.update(result=rewrite, usage=usage)
+            if not isinstance(rewrite.get("retry_allowed"), bool) or not isinstance(rewrite.get("reason"), str) or not rewrite["reason"].strip():
+                optimization["status"] = "invalid"
+                await asyncio.to_thread(self.store.save, record)
+                raise ValueError("提示词复核未返回有效判断与原因")
+            if not rewrite["retry_allowed"]:
+                optimization["status"] = "declined"
+                await asyncio.to_thread(self.store.save, record)
+                raise GenerationRejected("提示词复核未允许重试：" + rewrite["reason"]) from exc
+            if not isinstance(rewrite.get("prompt"), str) or not rewrite["prompt"].strip():
+                optimization["status"] = "invalid"
+                await asyncio.to_thread(self.store.save, record)
+                raise ValueError("提示词复核缺少有效的拍摄描述")
+            record["plan"]["prompt"] = rewrite["prompt"]
+            record["prompt"] = self._prompt(record)
+            prompt = record["prompt"]
+            if attempt:
+                prompt += record["repair_prompt"] + "\n最后一张参考图是待修正的上一版照片。"
+            optimization["status"] = "retrying"
+            await self.event(record, "generating" if attempt == 0 else "repairing", "按复核后的生活照提示词重试一次", attempt=attempt + 1)
+            try:
+                result = await client.image(record["settings"], prompt, images)
+            except GenerationRejected as retry_exc:
+                optimization["status"] = "rejected"
+                record["generation_rejections"].append({"at": timestamp(), "reason": str(retry_exc), "prompt": prompt})
+                await asyncio.to_thread(self.store.save, record)
+                raise
+            optimization["status"] = "generated"
+            return result
 
     async def _decline(self, record: dict[str, Any], code: str) -> None:
         guidance = DECLINE_GUIDANCE if code != "unclear_request" else (
