@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "version": "3.12.4",
+  "version": "3.12.5",
   "name": "Mittes 的一天 (A Day With Mittes)",
   "description": "为 Mittes 提供每日生成的日程、状态与话题，支持按日程唤醒私聊 planner，以及用户按需请求的二次元手机随拍；拍照通过 CPA 后台生成并检查，完整过程与图片归档。另含日程管理页、穿搭查询、天气与节假日识别。",
   "author": {
