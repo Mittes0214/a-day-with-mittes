@@ -13,7 +13,7 @@ import logging
 from PIL import Image
 
 from .client import CPAClient, GenerationRejected, GenerationUnknown, read_provider
-from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, HAIR_REFINEMENT, PERSON_STYLE, SAFE_REWRITE, SCENE_STYLE, STYLE
+from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, PERSON_STYLE, SAFE_REWRITE, SCENE_STYLE, STYLE
 from .reference_images import build_references
 from .store import CameraStore, timestamp
 
@@ -109,7 +109,7 @@ class PhotoService:
         return await asyncio.to_thread(self.store.create, {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v10",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v11",
             "images": [], "references": [],
             "previous_photo": previous_photo,
             "requester": requester,
@@ -212,8 +212,7 @@ class PhotoService:
             folder = self.store.root / record["id"]
             for attempt in range(2):
                 await self.event(record, "generating" if attempt == 0 else "repairing",
-                                 "按固定画风参考生成照片" if attempt == 0 else
-                                 ("精修可见头发并合并其他修正" if record.get("hair_refinement") else "根据检查结果修正一次"), attempt=attempt + 1)
+                                 "按固定画风参考生成照片" if attempt == 0 else "根据检查结果修正一次", attempt=attempt + 1)
                 raw, result = await self._generate(client, record, prompt, images, attempt)
                 filename = f"attempt-{attempt + 1}.png"
                 info = await asyncio.to_thread(write_image, folder / filename, raw)
@@ -226,20 +225,10 @@ class PhotoService:
                 }, images=[raw, *check_references])
                 if not isinstance(check.get("passed"), bool) or not isinstance(check.get("issues"), list) or not isinstance(check.get("repairable"), bool):
                     raise ValueError("图片检查未返回有效判断")
-                if not isinstance(check.get("hair_visible"), bool) or not isinstance(check.get("hair_refinement"), str):
-                    raise ValueError("图片检查未返回有效的头发可见性与精修指令")
-                if check["hair_visible"] and not check["hair_refinement"].strip():
-                    raise ValueError("可见头发缺少局部精修指令")
-                # 修正版不得新增未经精修的头发后直接交付；仍维持最多一轮局部修正。
-                if attempt and check["hair_visible"] and not record.get("hair_refinement"):
-                    check["passed"] = False
-                    check["issues"].append("修正版新增了未经精修的可见头发")
                 record["images"][-1]["check"] = check
                 record["images"][-1]["check_usage"] = usage
                 passed = check["passed"] and not check["issues"] and isinstance(check.get("description"), str) and bool(check["description"].strip())
-                # 头发精修独立于合格/可修复判断：合格初稿也必须先经过这一轮。
-                refine_hair = attempt == 0 and check["hair_visible"]
-                if passed and not refine_hair:
+                if passed:
                     record["final_image"] = filename
                     record["description"] = check["description"]
                     await self.event(record, "ready", "检查通过，成品已保存")
@@ -248,13 +237,10 @@ class PhotoService:
                     else:
                         await self._deliver(record, raw)
                     return
-                if attempt == 1 or (not passed and not check["repairable"]):
+                if attempt == 1 or not check["repairable"]:
                     await self.event(record, "failed", "图片检查未通过，未发送", check=check)
                     raise ValueError("图片检查未通过：" + "；".join(map(str, check["issues"])))
                 record["repair_prompt"] = "\n仅修正以下问题，其余拍摄对象与事实保持一致：" + json.dumps(check["issues"], ensure_ascii=False)
-                if refine_hair:
-                    record["hair_refinement"] = {"source_image": filename, "instruction": check["hair_refinement"]}
-                    record["repair_prompt"] += "\n" + HAIR_REFINEMENT + "\n本图精修要点：" + check["hair_refinement"]
                 prompt = record["prompt"] + record["repair_prompt"] + "\n最后一张参考图是待修正的上一版照片。"
                 images = images + [raw]
         finally:

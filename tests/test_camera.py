@@ -45,7 +45,7 @@ class FakeClient:
             return dict(self.rewrite_result), {}
         if images:
             self.check_inputs = (data, images)
-            return {"hair_visible": False, "hair_refinement": "", **self.checks.pop(0)}, {}
+            return self.checks.pop(0), {}
         self.planning_inputs = data
         return {"feasible": True, "target_kind": "object", "rejection_code": "", "reason": "", "subject": "杯子", "scene_type": "indoor", "include_outfit": False,
                 "style_category": "portrait", "identity_reference": "none", "contains_mittes": False, "scene_context": "none", "clothing_context": "none",
@@ -219,127 +219,41 @@ def test_failed_check_repairs_only_once_then_does_not_send(setup):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("initial_passed", [True, False])
-@pytest.mark.parametrize("preview", [True, False])
-def test_visible_hair_always_refined_once_and_merged_with_other_repairs(setup, initial_passed, preview):
+@pytest.mark.parametrize("preview", [False, True])
+def test_passed_person_photo_with_hair_uses_first_image(setup, preview):
     async def run():
         service, ctx, client, _ = setup
         client.plan_overrides = {"contains_mittes": True, "target_kind": "self"}
-        client.checks = [
-            {"passed": initial_passed, "issues": [] if initial_passed else ["书架细节过于清晰"],
-             "repairable": not initial_passed, "description": "头发垂在肩前", "hair_visible": True,
-             "hair_refinement": "整理右肩发束与衣服的接触阴影"},
-            {"passed": True, "issues": [], "repairable": False, "description": "头发自然搭在肩上，背景柔和",
-             "hair_visible": True, "hair_refinement": "右肩发梢可细致润整"},
-        ]
-        record = await service.submit("拍居家穿搭", "hair", "private", dict(SNAPSHOT), preview=preview)
+        # Legacy/extra checker metadata must not trigger the removed fixed hair pass.
+        client.checks = [{"passed": True, "issues": [], "repairable": False,
+                          "description": "双马尾自然垂在肩侧", "hair_visible": True,
+                          "hair_refinement": "整理发尾"}]
+        record = await service.submit("拍一张穿搭", "hair-first", "private", SNAPSHOT, preview=preview)
         await service.process(record)
-        assert client.image_calls == 2 and len(record["images"]) == 2
-        assert record["final_image"] == "attempt-2.png"
-        assert record["hair_refinement"]["source_image"] == "attempt-1.png"
-        assert "整理右肩发束与衣服的接触阴影" in client.last_prompt
-        if not initial_passed:
-            assert "书架细节过于清晰" in client.last_prompt
-        assert len(client.last_refs) == len(record["references"]) + 1
-        assert client.last_refs[-1] == (service.store.root / record["id"] / "attempt-1.png").read_bytes()
-        assert len(client.check_inputs[1]) == len(record["references"]) + 1
+        assert client.image_calls == 1 and len(record["images"]) == 1
+        assert record["final_image"] == "attempt-1.png" and "hair_refinement" not in record
         assert record["status"] == ("preview" if preview else "sent")
         if preview:
             ctx.send.image.assert_not_awaited()
         else:
             ctx.send.image.assert_awaited_once()
-            assert record["quota"]["used"] == 1
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("contains", [False, True])
-def test_no_visible_hair_never_adds_a_refinement_pass(setup, contains):
-    async def run():
-        service, _, client, _ = setup
-        client.plan_overrides = {"contains_mittes": contains}
-        record = await service.submit("看看", "no-hair", "private", SNAPSHOT, preview=True)
-        await service.process(record)
-        assert client.image_calls == 1 and "hair_refinement" not in record
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("hair_fields", [
-    {"hair_visible": None}, {"hair_visible": "true"},
-    {"hair_visible": True, "hair_refinement": ""}, {"hair_refinement": None},
-])
-def test_invalid_hair_review_cannot_silently_skip_refinement(setup, hair_fields):
+def test_hair_structure_error_still_uses_regular_single_repair(setup):
     async def run():
         service, ctx, client, _ = setup
-        client.checks[0].update(hair_fields)
-        record = await service.submit("看看", "bad-review", "private", SNAPSHOT)
-        with pytest.raises(ValueError, match="头发"):
-            await service.process(record)
-        assert client.image_calls == 1
-        ctx.send.image.assert_not_awaited()
-    asyncio.run(run())
-
-
-def test_failed_hair_refinement_does_not_send_unrefined_original_or_loop(setup):
-    async def run():
-        service, ctx, client, _ = setup
+        client.plan_overrides = {"contains_mittes": True, "target_kind": "self"}
         client.checks = [
-            {"passed": True, "issues": [], "repairable": False, "description": "初稿", "hair_visible": True,
-             "hair_refinement": "整理肩后发束"},
-            {"passed": False, "issues": ["发束穿过衣服"], "repairable": True, "description": "修正版",
-             "hair_visible": True, "hair_refinement": "修正肩部穿透"},
+            {"passed": False, "issues": ["右侧发束穿过衣袖"], "repairable": True, "description": "初稿"},
+            {"passed": True, "issues": [], "repairable": False, "description": "发束自然垂落"},
         ]
-        record = await service.submit("看看", "hair-failed", "private", SNAPSHOT)
-        with pytest.raises(ValueError, match="检查未通过"):
-            await service.process(record)
-        assert client.image_calls == 2 and "final_image" not in record
-        ctx.send.image.assert_not_awaited()
-    asyncio.run(run())
-
-
-def test_unrepairable_image_is_not_rescued_by_hair_refinement(setup):
-    async def run():
-        service, ctx, client, _ = setup
-        client.checks = [{"passed": False, "issues": ["主体错误"], "repairable": False, "description": "",
-                          "hair_visible": True, "hair_refinement": "整理肩侧头发"}]
-        record = await service.submit("看看", "unrepairable-hair", "private", SNAPSHOT)
-        with pytest.raises(ValueError, match="检查未通过"):
-            await service.process(record)
-        assert client.image_calls == 1
-        ctx.send.image.assert_not_awaited()
-    asyncio.run(run())
-
-
-def test_hair_refinement_survives_safety_review_and_still_runs_only_once(setup):
-    async def run():
-        service, ctx, client, _ = setup
-        raw = png((1024, 1536))
-        client.image = AsyncMock(side_effect=[(raw, {}), module.GenerationRejected("blocked"), (raw, {})])
-        client.checks = [{"passed": True, "issues": [], "repairable": False, "description": "肩侧发束",
-                          "hair_visible": True, "hair_refinement": "整理左肩发尾的重力方向"}] * 2
-        record = await service.submit("看看", "hair-rewrite", "private", SNAPSHOT)
+        record = await service.submit("拍一张穿搭", "hair-error", "private", SNAPSHOT)
         await service.process(record)
-        assert client.image.await_count == 3 and client.rewrite_calls == 1
-        assert "整理左肩发尾的重力方向" in client.image.await_args_list[-1].args[1]
-        assert "整理左肩发尾的重力方向" in client.rewrite_inputs[0]["repair_issues"]
-        assert client.image.await_args_list[-1].args[2][-1] == raw
-        assert len(record["images"]) == 2 and record["final_image"] == "attempt-2.png"
+        assert client.image_calls == 2 and record["final_image"] == "attempt-2.png"
+        assert "右侧发束穿过衣袖" in client.last_prompt
+        assert len(client.last_refs) == len(record["references"]) + 1
         ctx.send.image.assert_awaited_once()
-    asyncio.run(run())
-
-
-def test_other_repairs_cannot_introduce_unrefined_hair_and_send_it(setup):
-    async def run():
-        service, ctx, client, _ = setup
-        client.checks = [
-            {"passed": False, "issues": ["背景错误"], "repairable": True, "description": "手部特写"},
-            {"passed": True, "issues": [], "repairable": False, "description": "手部与发束",
-             "hair_visible": True, "hair_refinement": "整理发束"},
-        ]
-        record = await service.submit("看看", "new-hair", "private", SNAPSHOT)
-        with pytest.raises(ValueError, match="未经精修"):
-            await service.process(record)
-        assert client.image_calls == 2
-        ctx.send.image.assert_not_awaited()
     asyncio.run(run())
 
 
