@@ -257,6 +257,34 @@ def test_hair_structure_error_still_uses_regular_single_repair(setup):
     asyncio.run(run())
 
 
+def test_image_prompt_is_readable_but_planning_and_check_keep_full_snapshot(setup):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"contains_mittes": True, "target_kind": "self", "include_outfit": True}
+        snapshot = {
+            **SNAPSHOT, "logical_day": "2026-10-17", "slot": "18:00-20:00", "title": "休息",
+            "places": [{"from": "19:00", "to": "20:00", "place": "之后才到的地点"}],
+            "outfit_details": {"hair": "松束双马尾", "top": "浅蓝睡衣"},
+            "appearance": {"hair_base": "银白浅樱粉", "props": "仅归档的道具设定"},
+            "story": "整个时段的日程内容",
+        }
+        record = await service.submit("拍一张自拍", "text-prompt", "private", snapshot, preview=True)
+        await service.process(record)
+        assert client.planning_inputs["snapshot"] == snapshot
+        assert client.check_inputs[0]["snapshot"] == snapshot
+        assert "拍摄时间：2026年10月17日 18:00:00，日本时间。" in client.last_prompt
+        assert "当前发型：松束双马尾。" in client.last_prompt
+        assert "整个时段的日程内容" in client.last_prompt
+        assert "图2（当前穿搭：校服）" in client.last_prompt
+        assert "所属日程日期" not in client.last_prompt
+        assert "之后才到的地点" not in client.last_prompt
+        assert "仅归档的道具设定" not in client.last_prompt
+        assert '"captured_at"' not in client.last_prompt
+        assert "sha256" not in client.last_prompt and "reference-1.png" not in client.last_prompt
+        assert record["references"][0]["sha256"]
+    asyncio.run(run())
+
+
 def test_safety_rejection_rewrites_once_then_checks_before_sending(setup):
     async def run():
         service, ctx, client, _ = setup

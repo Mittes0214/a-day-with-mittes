@@ -13,6 +13,7 @@ import logging
 from PIL import Image
 
 from .client import CPAClient, GenerationRejected, GenerationUnknown, read_provider
+from .prompt_context import reference_roles_text, snapshot_text
 from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, PERSON_STYLE, SAFE_REWRITE, SCENE_STYLE, STYLE
 from .reference_images import build_references
 from .store import CameraStore, timestamp
@@ -109,7 +110,7 @@ class PhotoService:
         return await asyncio.to_thread(self.store.create, {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v11",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v12",
             "images": [], "references": [],
             "previous_photo": previous_photo,
             "requester": requester,
@@ -250,8 +251,8 @@ class PhotoService:
     def _prompt(record: dict[str, Any]) -> str:
         style = PERSON_STYLE if record["plan"]["contains_mittes"] else SCENE_STYLE
         return (STYLE + "\n" + style + "\n\n本次拍摄：\n" + record["plan"]["prompt"]
-                + "\n\n事实依据：\n" + json.dumps(record["snapshot"], ensure_ascii=False)
-                + "\n\n参考图用途：\n" + json.dumps(record["references"], ensure_ascii=False))
+                + "\n\n事实依据（拍摄时快照）：\n" + snapshot_text(record["snapshot"])
+                + "\n\n参考图用途：\n" + reference_roles_text(record["references"]))
 
     async def _generate(self, client: CPAClient, record: dict[str, Any], prompt: str,
                         images: list[bytes], attempt: int) -> tuple[bytes, dict[str, Any]]:
