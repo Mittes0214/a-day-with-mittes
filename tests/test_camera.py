@@ -198,6 +198,16 @@ def test_passed_image_saved_then_sent_only_to_original_stream(setup, preview):
         assert client.image_calls == 1
         assert record["snapshot"] == SNAPSHOT
         assert record["references"][0]["sha256"]
+        calls = record["model_calls"]
+        assert [call["stage"] for call in calls] == ["planning", "generating", "checking"]
+        assert all(call["status"] == "completed" for call in calls)
+        assert calls[0]["input"]["system"] == module.DIRECTOR
+        assert calls[0]["input"]["data"]["snapshot"] == SNAPSHOT
+        assert calls[1]["input"]["text"] == client.last_prompt
+        assert calls[1]["output"]["image"]["file"] == "attempt-1.png"
+        assert [item["file"] for item in calls[2]["input"]["images"]] == ["attempt-1.png", *[ref["file"] for ref in record["references"]]]
+        assert calls[2]["output"]["result"] == record["images"][0]["check"]
+        assert "secret-not-in-record" not in json.dumps(calls)
         if preview:
             ctx.send.image.assert_not_awaited()
         else:
@@ -301,6 +311,12 @@ def test_safety_rejection_rewrites_once_then_checks_before_sending(setup):
         assert record["prompt_optimization"]["status"] == "generated"
         assert record["images"][0]["check"]["passed"] is True
         assert record["snapshot"] == SNAPSHOT and record["quota"]["used"] == 1
+        calls = record["model_calls"]
+        assert [call["stage"] for call in calls] == ["planning", "generating", "optimization", "generating", "checking"]
+        assert calls[1]["status"] == "failed" and calls[1]["error"]["type"] == "GenerationRejected"
+        assert calls[0]["output"]["result"]["prompt"] == "手机俯拍杯子"
+        assert calls[2]["input"]["data"]["plan"]["prompt"] == "手机俯拍杯子"
+        assert calls[3]["input"]["text"] == second.args[1]
         ctx.send.image.assert_awaited_once()
     asyncio.run(run())
 

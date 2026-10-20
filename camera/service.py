@@ -17,6 +17,7 @@ from .prompt_context import reference_roles_text, snapshot_text
 from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, PERSON_STYLE, SAFE_REWRITE, SCENE_STYLE, STYLE
 from .reference_images import build_references
 from .store import CameraStore, timestamp
+from .trace import CameraTraceClient
 
 
 _logger = logging.getLogger("a_day_with_mittes.camera")
@@ -159,7 +160,7 @@ class PhotoService:
         settings["size"] = PHOTO_SIZE
         await self.event(record, "planning", "读取请求快照，设计手机取景")
         base_url, key = await asyncio.to_thread(read_provider, self.plugin_dir.parents[1] / "config/model_config.toml", settings["api_provider"])
-        client = self.client_factory(base_url, key, float(settings["timeout_seconds"]))
+        client = CameraTraceClient(self.client_factory(base_url, key, float(settings["timeout_seconds"])), record, self.store)
         try:
             plan, usage = await client.json(settings["director_model"], DIRECTOR, {
                 "instruction": record["instruction"], "source_text": record["source_text"],
