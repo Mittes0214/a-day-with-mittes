@@ -5,6 +5,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 import importlib
+import json
 import sqlite3
 
 import pytest
@@ -105,16 +106,55 @@ def test_natural_day_resets_at_tokyo_midnight_not_schedule_day(store, monkeypatc
     assert store.create(request(4))["quota"]["remaining"] == 1
 
 
-def test_restart_and_failed_task_do_not_reset_or_refund_quota(store):
+@pytest.mark.parametrize("status", ["failed", "declined", "send_failed", "generation_unknown", "delivery_unknown", "interrupted"])
+def test_unsent_task_releases_slot_once(store, status):
     for index in range(3):
         record = store.create(request(index))
-        record["status"] = "failed"
+        if index == 0:
+            record["status"] = status
+            store.save(record)
+            store.save(record)
+    assert store.create(request(3))["quota"]["remaining"] == 0
+    with pytest.raises(module.PhotoQuotaExceeded):
+        store.create(request(4))
+
+
+def test_sent_task_keeps_slot_after_restart(store):
+    for index in range(3):
+        record = store.create(request(index))
+        record["status"] = "sent"
         store.save(record)
     restarted = module.CameraStore(store.root)
     restarted.initialize()
     restarted.recover()
     with pytest.raises(module.PhotoQuotaExceeded):
         restarted.create(request(3))
+
+
+def test_restart_reconciles_old_failed_charges(store):
+    records = [store.create(request(index)) for index in range(3)]
+    with sqlite3.connect(store.db) as con:
+        for record in records:
+            record["status"] = "failed"
+            con.execute("UPDATE tasks SET status=?, record=? WHERE id=?",
+                        ("failed", json.dumps(record), record["id"]))
+    restarted = module.CameraStore(store.root)
+    restarted.initialize()
+    for index in range(3, 6):
+        assert restarted.create(request(index))["quota"]["used"] == index - 2
+    with pytest.raises(module.PhotoQuotaExceeded):
+        restarted.create(request(6))
+
+
+def test_recovery_releases_incomplete_tasks(store):
+    for index, status in enumerate(["generating", "sending"]):
+        record = store.create(request(index))
+        record["status"] = status
+        store.save(record)
+    restarted = module.CameraStore(store.root)
+    restarted.initialize()
+    restarted.recover()
+    assert restarted.create(request(2))["quota"]["remaining"] == 2
 
 
 def test_unverified_identity_cannot_create_a_real_task(store):

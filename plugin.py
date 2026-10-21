@@ -819,7 +819,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         except PhotoQuotaExceeded as exc:
             return {
                 "success": False, "name": "take_mittes_photo", "status": "quota_exceeded",
-                "content": str(exc) + " 选择 reply，让 replyer 按 Mittes 日常聊天的口吻自然说明今天的拍照次数已用完，不讲工具或技术流程。不要重试，不要换消息 ID 或会话继续调用，不要声称已拍好或已发送照片。",
+                "content": str(exc) + " 选择 reply，让 replyer 按 Mittes 日常聊天的口吻自然说明现在暂时不能再拍，不讲工具或技术流程。当前请求不要重试，不要换消息 ID 或会话继续调用，不要声称已拍好或已发送照片。",
                 "metadata": {"reason": "daily_photo_limit", "used": exc.used, "limit": exc.limit,
                              "day": exc.day, "timezone": exc.timezone, "background_task": False},
             }

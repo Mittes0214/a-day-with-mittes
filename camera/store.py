@@ -14,6 +14,10 @@ import uuid
 DAILY_LIMIT = 3
 QUOTA_TIMEZONE = ZoneInfo("Asia/Tokyo")
 EXEMPT_ACCOUNT = ("qq", "923856490")
+# 入队时暂占名额以限制并发；只有确认发送成功后才永久计入额度。
+RESERVED_STATUSES = frozenset({
+    "queued", "planning", "generating", "checking", "repairing", "ready", "sending", "sent",
+})
 
 
 class PhotoQuotaExceeded(ValueError):
@@ -24,7 +28,7 @@ class PhotoQuotaExceeded(ValueError):
         self.used = used
         self.limit = DAILY_LIMIT
         self.timezone = QUOTA_TIMEZONE.key
-        super().__init__(f"今天的拍照次数已用完（{used}/{DAILY_LIMIT}），东京时间每天零点重置。")
+        super().__init__(f"当前拍照名额已占满（{used}/{DAILY_LIMIT}，含正在拍摄的请求）；失败会释放名额，东京时间每天零点重置。")
 
 
 def timestamp() -> str:
@@ -49,6 +53,23 @@ class CameraStore:
                 platform TEXT NOT NULL, user_id TEXT NOT NULL, day TEXT NOT NULL,
                 used INTEGER NOT NULL CHECK (used >= 0),
                 PRIMARY KEY (platform, user_id, day))""")
+            # 旧版本在失败后仍保留扣次。启动时按实际任务状态重建账本，
+            # 同时修复上次进程在状态落盘与额度更新之间中断的情况。
+            counts: dict[tuple[str, str, str], int] = {}
+            for status, raw in con.execute("SELECT status, record FROM tasks"):
+                if status not in RESERVED_STATUSES:
+                    continue
+                record = json.loads(raw)
+                quota = record.get("quota") or {}
+                requester = record.get("requester") or {}
+                if quota.get("exempt") or not quota.get("day"):
+                    continue
+                key = (str(requester.get("platform") or ""), str(requester.get("user_id") or ""), quota["day"])
+                if all(key):
+                    counts[key] = counts.get(key, 0) + 1
+            con.execute("DELETE FROM daily_usage")
+            con.executemany("INSERT INTO daily_usage VALUES (?,?,?,?)",
+                            ((platform, user_id, day, used) for (platform, user_id, day), used in counts.items()))
 
     def create(self, record: dict[str, Any]) -> dict[str, Any]:
         record = {**record, "id": uuid.uuid4().hex, "status": "queued",
@@ -87,6 +108,21 @@ class CameraStore:
     def save(self, record: dict[str, Any]) -> None:
         record["updated_at"] = timestamp()
         with closing(sqlite3.connect(self.db)) as con, con:
+            con.execute("BEGIN IMMEDIATE")
+            row = con.execute("SELECT status, record FROM tasks WHERE id=?", (record["id"],)).fetchone()
+            if row is None:
+                raise ValueError("拍照任务不存在")
+            previous_status, previous_raw = row
+            if previous_status in RESERVED_STATUSES and record["status"] not in RESERVED_STATUSES:
+                previous = json.loads(previous_raw)
+                quota = previous.get("quota") or {}
+                requester = previous.get("requester") or {}
+                if not quota.get("exempt") and quota.get("day"):
+                    con.execute("""UPDATE daily_usage SET used=used-1
+                        WHERE platform=? AND user_id=? AND day=? AND used>0""",
+                        (requester.get("platform"), requester.get("user_id"), quota["day"]))
+            elif previous_status not in RESERVED_STATUSES and record["status"] in RESERVED_STATUSES:
+                raise ValueError("已结束的拍照任务不能重新占用额度")
             con.execute("UPDATE tasks SET status=?,updated_at=?,record=? WHERE id=?",
                         (record["status"], record["updated_at"], json.dumps(record, ensure_ascii=False), record["id"]))
 
