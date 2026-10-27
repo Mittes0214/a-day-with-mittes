@@ -328,6 +328,15 @@ def _enqueue_job(conn: sqlite3.Connection, payload: dict[str, Any]) -> int:
     return int(cursor.lastrowid)
 
 
+def _active_jobs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """排队/执行中的任务，加上 90 秒内刚结束的，供页面刷新后接着显示进度（面板顶栏也读它）。"""
+    rows = conn.execute(
+        "SELECT * FROM admin_jobs WHERE status IN ('pending', 'running') "
+        "OR (finished_at != '' AND finished_at >= datetime('now', '-90 seconds')) ORDER BY id"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def _load_job(conn: sqlite3.Connection, job_id: int) -> dict[str, Any] | None:
     row = conn.execute("SELECT * FROM admin_jobs WHERE id=?", (job_id,)).fetchone()
     return dict(row) if row is not None else None
@@ -385,6 +394,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "没有这一天的记录"}, status=404)
                 return
             self._send_json(data)
+            return
+        if path == "/api/jobs/active":
+            with _connect(self.db_path) as conn:
+                self._send_json({"jobs": _active_jobs(conn)})
             return
         if path.startswith("/api/job/"):
             try:
@@ -729,6 +742,15 @@ button.action:disabled { opacity: .55; cursor: wait; }
 .create-day button { width: 100%; }
 .job-status { color: var(--muted); font-size: 12px; margin-top: 6px; min-height: 1.4em; }
 .job-status.error { color: var(--accent); }
+/* 排队/执行中：状态文字前一个转圈；刷新页面后会从 /api/jobs/active 接着显示 */
+.job-status.busy::before, button.action.busy::before {
+  content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px;
+  border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%;
+  animation: job-spin .8s linear infinite;
+}
+.job-status.done { color: #3a9a6a; }
+@keyframes job-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .job-status.busy::before, button.action.busy::before { animation-duration: 2.4s; } }
 .day-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .day-actions .action {
   color: var(--accent); background: transparent; border-color: var(--accent);
@@ -1184,6 +1206,7 @@ async function boot() {
   await loadDays();
   window.addEventListener('hashchange', route);
   await route();
+  await resumeJobs();
 }
 
 async function route() {
@@ -1298,6 +1321,7 @@ function render(day, data, w) {
         <span id="day-job-status" class="job-status"></span>
       </div>
     </div>${dayOutfits(data.segments, nowSlot, w)}${styleGrid(current)}${segs}`;
+  paintJobs();
 }
 
 // 九宫格本体。current 只决定「现在」标记和默认选中格；点别的格子只换预览。
@@ -1392,37 +1416,102 @@ async function api(path, options = {}) {
   return data;
 }
 
+// 任务进度按任务编号记在这里，不挂在某个 DOM 节点上：
+// 日程区每次切换日期都会整块重画，刷新页面后也要能接着显示，所以每次轮询后重新找节点上色。
+const jobs = new Map();
+const JOB_TEXT = {pending: '已排队，等待 bot 处理…', running: 'bot 正在处理…'};
+
+function jobTargets(job) {
+  if (job.action === 'generate_day') {
+    return {status: document.getElementById('generate-status'), button: document.getElementById('generate-day')};
+  }
+  if (job.action === 'set_expression') {
+    const button = [...document.querySelectorAll('.save-expression')]
+      .find(node => node.dataset.day === job.target_date && node.dataset.slot === job.slot);
+    return {status: button?.closest('.expression')?.querySelector('.job-status'), button};
+  }
+  const ids = {regenerate_day: 'regen-day', regenerate_topics: 'regen-topics', regenerate_expressions: 'regen-expressions'};
+  const button = document.getElementById(ids[job.action]);
+  if (!button || button.dataset.day !== job.target_date) return {};
+  return {status: document.getElementById('day-job-status'), button};
+}
+
+function paintJobs() {
+  for (const job of jobs.values()) {
+    const {status, button} = jobTargets(job);
+    const busy = job.status === 'pending' || job.status === 'running';
+    if (status) {
+      status.classList.toggle('busy', busy);
+      status.classList.toggle('error', job.status === 'failed');
+      status.classList.toggle('done', job.status === 'completed');
+      status.textContent = busy ? JOB_TEXT[job.status] : job.status === 'failed' ? (job.error || '任务执行失败') : (job.result || '已完成');
+    }
+    if (button) {
+      button.disabled = busy;
+      button.classList.toggle('busy', busy);
+    }
+  }
+}
+
+function follow(job) {
+  return new Promise((resolve, reject) => {
+    jobs.set(job.id, job);
+    paintJobs();
+    const tick = async () => {
+      try {
+        const next = await api('/api/job/' + job.id);
+        jobs.set(job.id, next);
+        paintJobs();
+        if (next.status === 'completed') { finish(next); resolve(next); return; }
+        if (next.status === 'failed') { finish(next); reject(new Error(next.error || '任务执行失败')); return; }
+      } catch (error) { /* 临时读不到就下一秒再试 */ }
+      setTimeout(tick, 1000);
+    };
+    setTimeout(tick, 1000);
+  });
+}
+
+function finish(job) {
+  // 结果留一会儿让人看到，然后清掉，免得以后切到这一天还显示旧消息
+  setTimeout(() => { if (jobs.get(job.id) === job) jobs.delete(job.id); }, 15000);
+}
+
 async function enqueue(payload, statusNode, button) {
-  statusNode.classList.remove('error');
-  statusNode.textContent = '已排队，等待 bot 处理…';
+  statusNode.classList.remove('error', 'done');
+  statusNode.classList.add('busy');
+  statusNode.textContent = JOB_TEXT.pending;
   button.disabled = true;
+  let created;
   try {
-    const created = await api('/api/jobs', {
+    created = await api('/api/jobs', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload),
     });
-    while (true) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      const job = await api('/api/job/' + created.id);
-      if (job.status === 'pending') {
-        statusNode.textContent = '已排队，等待 bot 处理…';
-      } else if (job.status === 'running') {
-        statusNode.textContent = 'bot 正在处理…';
-      } else if (job.status === 'completed') {
-        statusNode.textContent = job.result || '已完成';
-        return job;
-      } else if (job.status === 'failed') {
-        throw new Error(job.error || '任务执行失败');
-      }
-    }
   } catch (error) {
+    statusNode.classList.remove('busy');
     statusNode.classList.add('error');
     statusNode.textContent = error.message;
-    throw error;
-  } finally {
     button.disabled = false;
+    throw error;
   }
+  return follow({id: created.id, action: payload.action, target_date: payload.date, slot: payload.slot || '', status: 'pending'});
+}
+
+/** 打开或刷新页面时接上还没结束的任务；结束后同样刷新对应日期 */
+async function resumeJobs() {
+  try {
+    const {jobs: active} = await api('/api/jobs/active');
+    for (const job of active) {
+      if (job.status === 'pending' || job.status === 'running') {
+        follow(job).then(() => job.action !== 'set_expression' && refreshDay(job.target_date)).catch(() => {});
+      } else if (!jobs.has(job.id)) {
+        jobs.set(job.id, job);
+        finish(job);
+      }
+    }
+    paintJobs();
+  } catch (error) { /* 旧版插件没有这个接口时不影响其他功能 */ }
 }
 
 async function refreshDay(day) {
