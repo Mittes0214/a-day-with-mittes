@@ -38,10 +38,10 @@ def build_references(plugin_dir: Path, camera_root: Path, record: dict[str, Any]
     if plan["contains_mittes"]:
         record["style_family"] = "person_v4"
         primary = next(entry for entry in manifest["references"] if entry["category"] == "portrait")
-        fixed(primary, "v4 人物画风主基准：只控制线条、色彩、阴影与细节密度，不复制构图或人物姿势", "style")
+        fixed(primary, "v4 人物画风主基准：只控制线条、色彩、阴影与细节密度，不复制构图、人物姿势或表情", "style")
         if plan["clothing_context"] != "none":
             supplement = next(entry for entry in manifest["clothing_supplements"] if entry["category"] == plan["clothing_context"])
-            fixed(supplement, "v4 衣着分享补充：参考同一画风的衣料与自然局部分享表现；不复制衣服、颜色、袜鞋款式、身体姿势、光照或固定机位，款式仅以当前衣柜图和快照为准", "style")
+            fixed(supplement, "v4 衣着分享补充：参考同一画风的衣料与自然局部分享表现；不复制衣服、颜色、袜鞋款式、身体姿势、表情、光照或固定机位，款式仅以当前衣柜图和快照为准", "style")
     else:
         record["style_family"] = "scene_coffee"
         fixed(manifest["scene_reference"], "无人物景物画风主基准：沿用咖啡近景原图的画法与材质光影层次，不复制物件、咖啡馆布景、构图或光照", "style")
@@ -51,7 +51,7 @@ def build_references(plugin_dir: Path, camera_root: Path, record: dict[str, Any]
     identity = plan["identity_reference"]
     if identity != "none":
         fixed(manifest["identity"][identity],
-              "人物外貌参考：只控制银白浅樱粉发色与可见外貌；发型随当前活动，不复制衣服、配饰或姿势", "identity")
+              "人物外貌参考：只控制银白浅樱粉发色与可见外貌；发型随当前活动，不继承画风、表情、笑容、嘴部开合、露齿或脸红，不复制衣服、配饰或姿势", "identity")
     if plan["include_outfit"]:
         with (plugin_dir / "character/outfit_images.toml").open("rb") as handle:
             mapping = tomllib.load(handle)["images"]

@@ -3,7 +3,8 @@
 STYLE = """生成 Mittes 亲手用手机拍下的一张二次元生活随拍。
 成品固定为竖版 2:3、1024×1536 像素，按此画布自然取景，不加边框或留白来凑比例。
 图1是本次选定的画风主基准，沿用其线条、上色、光影和细节密度。只使用本次分配的画风，不混用其他分支。
-每张参考的用途在后文列明：画风图不控制内容和构图；人设图只控制可见外貌；衣柜图只控制当下衣物款式。
+每张参考的用途在后文列明：画风图不控制内容、构图或表情；人设图只控制可见外貌，不提供本次表情；衣柜图只控制当下衣物款式。
+表情服从本次拍摄方案，不继承参考人物的笑容、嘴部开合、露齿或脸红。
 手机站位与镜头关系合理。取景范围服从本次主体和拍摄动作，不机械交代整身。
 物品、食物、饮品和环境按主体自然取景，可完整展示主体及周围环境，不套用穿搭的局部构图要求。
 角度依主体选择，不强制俯拍、镜拍、手或手机入镜。可以对镜自拍，不能变成第三方拍摄。
@@ -43,7 +44,7 @@ rejection_code(可拍时为空字符串；否则 other_person_privacy/self_priva
 不可拍时到此为止，不再写生图提示词。目标为 other_person 时始终不可拍。
 可拍时另外返回：subject(string), scene_type(indoor/outdoor), style_category(portrait/food/drink/outdoor/object),
 scene_context(none/street/terrace/train/cafe/night_desk/classroom), clothing_context(none/maid/socks/shoes),
-contains_mittes(boolean), include_outfit(boolean), identity_reference(none/body/head), framing(string), visible_details(string), lighting(string), prompt(string),
+contains_mittes(boolean), include_outfit(boolean), identity_reference(none/body/head), framing(string), visible_details(string), lighting(string), expression(object), prompt(string),
 use_previous_photo(boolean)。style_category 只标记主体类别，不用于添加画风补充；人物穿搭通常 portrait，食物 food，饮品 drink，室外环境 outdoor，独立随身物件 object。
 无人物时，scene_context 按本次真正取景与快照选择最多一个相关场景：street 普通街道与通学步行；terrace 露台/阳台；train 电车车厢；cafe 咖啡店营业区/吧台空间；night_desk 夜间书桌且局部灯光；classroom 教室/学校窗边课桌。只拍食物或独立物件、无相关空间入镜，或不属于这六类时选 none，不强行匹配。有 Mittes 或身体局部入镜时选 none。
 场景参考只控制同一画风对材质、空间和光影的表现，不能为了使用某张参考改变取景或事实，也不把参考里的晴天、暗隧道、灯光、物件或布置套用到其他时间地点。
@@ -53,6 +54,10 @@ contains_mittes 仅按计划画面是否实际出现 Mittes 判断，出现手�
 放在桌上的衣服、脱下的鞋包等独立物品不算人物。不要为选择画风而额外加入人物或身体部位。
 identity_reference 在头发或可辨识身形入镜时选 body，头部/扎发根部/下半张脸为重点时选 head，其余包括仅手部、鞋子、食物或环境选 none。
 根据 snapshot 日程、精确所在地、拍摄时间、衣柜及 appearance 确定事实。时段故事不代表所有事情已在拍摄时刻发生。
+expression 固定返回 visible(boolean), intent(string), mouth(string), basis(string)。先依用户请求、相关对话、拍摄时刻已经发生的事情和当前动作设计自然表情，再明确实际可见的嘴部表现，不从参考图复制表情。
+仅在取景原本包含嘴部时 visible=true；intent 写情绪意图，mouth 写可画出的嘴部开合、嘴角方向和表现程度，basis 写依据。不能只写抽象情绪。嘴部不入镜、仅身体局部或无人物时 visible=false，其他三项为空字符串；不能为表现表情扩大取景或露出鼻子及以上面部。
+不要把时段故事中尚未发生的事件提前作为表情依据。没有明显情绪线索时采用符合当前动作的自然神态，不默认微笑、张嘴、露齿或脸红，也不随机挑选夸张表情。嘴部开合须符合喝水等当前动作。
+prompt 中若描述表情，必须与 expression.mouth 一致。程序会将 mouth 另行写入本次拍摄；intent 和 basis 只供归档与检查，不当作已经发生的事实注入生图。
 不得为了照片换装或虚构经历。发型以日程活动及衣柜为准，日常双马尾，女仆装扎牢；洗浴时可以包起，睡前合理束起，不默认披发。
 拍穿搭和身体局部时根据用户关注的内容与自然机位取景，不为避开面部一律紧裁，也不机械交代全身。拍物品、食物、饮品和环境时自由选择适合主体的范围，可完整展示主体及周围环境，不要求局部、紧裁或特写。不强制同一角度。
 参考图姿势不控制取景，手机几何关系须符合本人持机；镜自拍允许。
@@ -70,6 +75,7 @@ SAFE_REWRITE = """你是手机生活照的内容复核与提示词编辑器。�
 照片中的鼻子及以上面部须实际遮住或裁出，包括反射、背景和画中画；嘴、下巴及头发可以入镜，具体范围服从原取景。不得改变主体或扩大原取景范围。
 无人物景物取景在改写后仍不得出现任何人物，包括路人、人群、远处小人、背影、剪影、倒影或身体局部，不因对话或快照中提到人而将其补入。
 返回 retry_allowed(boolean), reason(string)。允许时再返回 prompt(string)，只写新的中文拍摄场景描述，不重写程序固定的画风、事实依据或参考图用途。
+保留 plan.expression 中原定的可见表情及其与当前动作的关系，不因参考图里的笑容而改成张嘴、露齿或脸红，不为展示表情扩大取景。
 若请求正在修正成品，改写也必须符合传入的 repair_issues。"""
 
 CHECK = """检查一张二次元手机随拍。只返回 JSON。
@@ -85,6 +91,7 @@ CHECK = """检查一张二次元手机随拍。只返回 JSON。
 局部穿搭不应被扩展为整身展示。镜自拍与自然遮挡可以成立，不因正面衣物就一律判为第三方视角。
 物品、食物、饮品和环境没有局部构图要求，主体完整、取景较宽或带有合理周围环境均可通过。
 机位应符合 Mittes 亲手持机，不强制出现手或手机；微小美感差异与合理视觉补全不拒绝。
+如 plan.expression.visible=true，按 mouth 核对实际可见的嘴部表现，不拿参考图的表情当标准，也不判断画外的眼睛或眉毛。闭口被画成明显张嘴大笑、情绪明显相反等实质偏离可写入 issues 并按既有流程修正；嘴角弧度等细微差异不拒绝。没有 expression 的历史方案按原有检查规则处理。
 若有 Mittes 以外的人物，即使是匿名路人、远处人群或未露脸的背影也不能通过。
 检查可见发束与头颈肩的空间关系：发束起点和延伸方向是否符合当前头部姿态，肩前、肩后与枕头之间的遮挡是否连贯，有无穿透、悬空或明显错位。扎点在画外时依据可见走向判断，不因无法确认画外结构而判失败。
 返回 passed(boolean), issues(array of strings), repairable(boolean), description(string)。头发结构有明确错误时写入 issues；仅有细微美感差异时初稿可以直接通过。

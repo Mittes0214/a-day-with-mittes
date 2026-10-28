@@ -50,6 +50,7 @@ class FakeClient:
         return {"feasible": True, "target_kind": "object", "rejection_code": "", "reason": "", "subject": "杯子", "scene_type": "indoor", "include_outfit": False,
                 "style_category": "portrait", "identity_reference": "none", "contains_mittes": False, "scene_context": "none", "clothing_context": "none",
                 "framing": "俯拍", "visible_details": "杯子", "lighting": "室内灯", "prompt": "手机俯拍杯子",
+                "expression": {"visible": False, "intent": "", "mouth": "", "basis": ""},
                 "use_previous_photo": self.use_previous, **(self.plan_overrides or {})}, {}
 
     async def image(self, settings, prompt, images):
@@ -292,6 +293,72 @@ def test_image_prompt_is_readable_but_planning_and_check_keep_full_snapshot(setu
         assert '"captured_at"' not in client.last_prompt
         assert "sha256" not in client.last_prompt and "reference-1.png" not in client.last_prompt
         assert record["references"][0]["sha256"]
+    asyncio.run(run())
+
+
+def test_expression_is_in_actual_image_request_and_checker_without_inventing_snapshot_facts(setup):
+    async def run():
+        service, _, client, _ = setup
+        expression = {"visible": True, "intent": "轻松", "mouth": "嘴唇自然闭合，嘴角轻微上扬，不露齿",
+                      "basis": "对话里已经确认她刚坐定，尚未拿到试卷"}
+        client.plan_overrides = {"contains_mittes": True, "target_kind": "self", "identity_reference": "head",
+                                 "expression": expression}
+        record = await service.submit("拍一张课前自拍", "expression", "private", dict(SNAPSHOT), preview=True)
+        await service.process(record)
+        assert expression["mouth"] in client.last_prompt
+        assert expression["basis"] not in client.last_prompt
+        assert record["snapshot"] == SNAPSHOT
+        assert client.check_inputs[0]["plan"]["expression"] == expression
+        assert "嘴部开合" in next(ref["role"] for ref in record["references"] if ref["kind"] == "identity")
+        assert [call["stage"] for call in record["model_calls"]] == ["planning", "generating", "checking"]
+        assert record["status"] == "preview"
+    asyncio.run(run())
+
+
+def test_expression_is_preserved_through_safety_rewrite(setup):
+    async def run():
+        service, _, client, _ = setup
+        mouth = "嘴唇自然闭合，嘴角放松"
+        client.plan_overrides = {"contains_mittes": True, "target_kind": "self", "expression": {
+            "visible": True, "intent": "平静", "mouth": mouth, "basis": "当前对话平静，正在休息",
+        }}
+        client.image = AsyncMock(side_effect=[module.GenerationRejected("blocked"), (png((1024, 1536)), {})])
+        record = await service.submit("拍一张自拍", "expression-rewrite", "private", dict(SNAPSHOT), preview=True)
+        await service.process(record)
+        assert client.image.await_count == 2
+        assert all(mouth in call.args[1] for call in client.image.await_args_list)
+        assert client.rewrite_inputs[0]["plan"]["expression"]["mouth"] == mouth
+        assert record["status"] == "preview"
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("expression,contains", [
+    (None, True),
+    ({"visible": "false", "intent": "", "mouth": "", "basis": ""}, True),
+    ({"visible": True, "intent": "平静", "mouth": "闭口", "basis": "休息"}, False),
+    ({"visible": True, "intent": "平静", "mouth": "", "basis": "休息"}, True),
+    ({"visible": False, "intent": "平静", "mouth": "闭口", "basis": "休息"}, True),
+])
+def test_invalid_expression_stops_before_generation(setup, expression, contains):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"contains_mittes": contains, "expression": expression}
+        record = await service.submit("看看", "invalid-expression", "private", dict(SNAPSHOT), preview=True)
+        with pytest.raises(ValueError, match="表情"):
+            await service.process(record)
+        assert client.image_calls == 0
+    asyncio.run(run())
+
+
+def test_unseen_mouth_does_not_add_expression_or_change_framing(setup):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"contains_mittes": True, "target_kind": "self", "prompt": "镜头只拍袖口和一只手"}
+        record = await service.submit("看看袖口", "expression-invisible", "private", dict(SNAPSHOT), preview=True)
+        await service.process(record)
+        scene = client.last_prompt.split("本次拍摄：\n", 1)[1].split("\n\n事实依据", 1)[0]
+        assert scene == "镜头只拍袖口和一只手"
+        assert record["status"] == "preview"
     asyncio.run(run())
 
 
