@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_deployed_reference_manifest_matches_all_files():
     folder = ROOT / "camera/references"
     manifest = json.loads((folder / "references.json").read_text())
-    assert manifest["version"] == "mittes-phone-photo-style-v5"
+    assert manifest["version"] == "mittes-phone-photo-style-v6"
     assert {entry["category"] for entry in manifest["references"]} == {"portrait"}
     entries = [*manifest["references"], manifest["scene_reference"], *manifest["identity"].values(), *manifest["scene_supplements"], *manifest["clothing_supplements"]]
     assert {entry["category"] for entry in manifest["scene_supplements"]} == {"street", "terrace", "train", "cafe", "night_desk", "classroom"}

@@ -1,16 +1,17 @@
 {
-  "version": "mittes-phone-photo-style-v5",
-  "approved_on": "2026-10-17",
-  "status": "插件 3.12.0：景物以 01 加可选场景补充，人物以 02 加可选女仆装/袜子/鞋子补充；用户最终认可 1/3/4，睡衣不接入。",
+  "version": "mittes-phone-photo-style-v6",
+  "approved_on": "2026-10-28",
+  "status": "2026-10-28 用户确认替换人物主画风02；景物与可选衣着补充的分流及选择规则沿用v5。",
   "runtime_integrated": true,
   "origin_style": "用户认可的 v4 人设画风及其跨场景测试",
   "references": [
     {
       "file": "02_画风主基准_人物入镜.png",
-      "source": "workspace:doc/主动联系设计/take_mittes_photo-画风参考-v2/00_人物局部_画风主基准.png",
-      "sha256": "62d31ab117b372b2f3ef98ac8a59bf0b150d4d17d6b024175874d575d9953cb2",
-      "role": "已认可的主画风基准；人物局部、头发、皮肤与衣物的画法",
-      "category": "portrait"
+      "source": "workspace:doc/画风测试/01_现用画风_v4人设画风/2026-10-28_人物画风主参考更新/02_人物画风主参考.png",
+      "sha256": "0a54cbb7b5e2e06b7b0de66c105a7ca0995e124a22eabac40587a1ac881640a8",
+      "role": "用户指定的人物主画风参考；只控制线条、色彩、阴影与细节密度，不复制内容、构图或人物姿势",
+      "category": "portrait",
+      "approved_on": "2026-10-28"
     }
   ],
   "selection": "纯景物以 01 加最多一张 09—14；人物以 02 加最多一张 15—17（女仆装/袜子/鞋子），不混用景物参考；07/08 外貌及衣柜图按需添加。旧 03—06 继续停用，睡衣候选不接入。",
