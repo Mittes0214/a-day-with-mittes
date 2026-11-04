@@ -147,7 +147,7 @@ class PhotoService:
                     try:
                         await self.ctx.maisaka.proactive.trigger(
                             stream_id=record["stream_id"],
-                            intent="这次未能向用户分享照片。选择 reply 时，让 replyer 按 Mittes 本人拿手机拍照的语境简短说明这次没拍好，不讲工具或技术流程，不编造具体故障、姿势或意外经过。不要声称已有照片或已发送，不要自动重新调用拍照工具。",
+                            intent="这次照片没拍好，没能分享给对方，也没有发出照片；不要替她编具体故障、姿势或意外经过。选择 reply 回应对方，不要自动重新调用拍照工具。",
                             reason="camera_failed", metadata={"background_tool_result": True, "tool_name": "take_mittes_photo",
                                                                "tool_success": False, "task_id": record["id"]},
                         )
@@ -323,7 +323,7 @@ class PhotoService:
 
     async def _decline(self, record: dict[str, Any], code: str) -> None:
         guidance = DECLINE_GUIDANCE if code != "unclear_request" else (
-            "选择 reply，让 replyer 简短询问用户具体想看什么。不要擅自选择拍摄对象或自动重试。"
+            "还不清楚对方想看什么。选择 reply，向对方问清楚。不要自己挑拍摄对象，也不要自动重试。"
         )
         record["decline"] = {"reason_code": code, "reason": DECLINE_REASONS[code], "planner_guidance": guidance}
         await self.event(record, "declined", DECLINE_REASONS[code])

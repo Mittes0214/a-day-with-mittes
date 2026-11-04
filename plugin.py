@@ -809,7 +809,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                         "metadata": {"background_task": False, "background_task_id": record["id"]}}
             if record["status"] == "sent":
                 return {"success": True, "name": "take_mittes_photo", "status": "sent",
-                        "content": "照片已经发送到当前会话，按 Mittes 刚用手机拍的照片来理解，自然谈照片里的内容，不讲工具或技术流程。不要重复拍摄或发送。照片实际可见内容：" + record["description"],
+                        "content": "照片已经发到这个聊天，是 Mittes 刚用手机拍的。照片里实际能看到的：" + record["description"] + "。说到照片时以这些可见内容为准。不要重复拍摄或发送。",
                         "metadata": {"background_task": False, "background_task_id": record["id"]}}
             return {
                 "success": True, "name": "take_mittes_photo",
@@ -819,14 +819,14 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         except PhotoQuotaExceeded as exc:
             return {
                 "success": False, "name": "take_mittes_photo", "status": "quota_exceeded",
-                "content": str(exc) + " 选择 reply，让 replyer 按 Mittes 日常聊天的口吻自然说明现在暂时不能再拍，不讲工具或技术流程。当前请求不要重试，不要换消息 ID 或会话继续调用，不要声称已拍好或已发送照片。",
+                "content": str(exc) + " Mittes 现在暂时不能再拍了，这次没有拍，也没有发照片。选择 reply 回应对方。这次请求不要重试，也不要换消息 ID 或会话再调用。",
                 "metadata": {"reason": "daily_photo_limit", "used": exc.used, "limit": exc.limit,
                              "day": exc.day, "timezone": exc.timezone, "background_task": False},
             }
         except Exception:
             _logger.exception("[相机] 无法提交拍照请求")
             return {"success": False, "name": "take_mittes_photo",
-                    "content": "这次暂时无法拍照。选择 reply 时，让 replyer 按 Mittes 日常聊天的口吻简短说明这次拍不了，不讲工具或技术流程，不编造具体借口，不声称照片已拍好或已发送，不自动重试。"}
+                    "content": "这次没能拍成，没有具体原因可说，照片没拍也没发；不要替她编理由。选择 reply 回应对方，不要自动重试。"}
 
     def _photo_snapshot(self) -> dict[str, Any]:
         moment, day, segment, state = self._current()
@@ -904,14 +904,14 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             return f"{head}\n\n这一段的细节没有记录，只有上面的安排。"
         return (
             f"{head}\n\n{state.story}\n\n"
-            "以上是她真实经历过的，可以据此回答；不要复述原文，也不要在没人问的时候主动提起。"
+            "以上是她真实经历过的。回答时只取跟当前问题相关的部分，没问到的不用提起。"
         )
 
     @Tool(
         "get_mittes_outfit",
         brief_description=(
             "当需要描述 Mittes 穿什么时，必须调用此工具获取真实穿搭，不得推测。"
-            "查询后会向你和 replyer 的请求上下文加入服饰参考图；不填 time 就是此刻。"
+            "查询后会附上服饰参考图，回复时也能看到；不填 time 就是此刻。"
         ),
         parameters=[
             ToolParameterInfo(

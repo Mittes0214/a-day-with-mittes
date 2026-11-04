@@ -573,7 +573,7 @@ def test_tool_reports_quota_exhaustion_without_queue_or_model_call(setup):
         assert result["status"] == "quota_exceeded"
         assert result["metadata"]["background_task"] is False
         assert result["metadata"]["used"] == result["metadata"]["limit"] == 3
-        assert "replyer" in result["content"] and "不要重试" in result["content"]
+        assert "replyer" not in result["content"] and "选择 reply" in result["content"] and "不要重试" in result["content"]
         assert client.image_calls == 0
         repeated = await plugin.tool_take_photo("拍杯子", "0", "private")
         assert repeated["success"] is True
@@ -603,7 +603,7 @@ def test_privacy_decline_is_terminal_and_never_generates_or_sends(setup, preview
             assert feedback["metadata"]["background_tool_result"] is True
             assert feedback["metadata"]["tool_success"] is False
             assert feedback["reason"] == "camera_declined"
-            assert "replyer" in feedback["intent"] and "不要重试" in feedback["intent"]
+            assert "replyer" not in feedback["intent"] and "选择 reply" in feedback["intent"] and "不要重试" in feedback["intent"]
             assert "失败" not in feedback["intent"]
     asyncio.run(run())
 

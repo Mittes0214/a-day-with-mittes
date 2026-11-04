@@ -95,10 +95,9 @@ class PrivateTopicWaker:
                     "想找对方说点什么的念头？这个念头可能来自某个具体细节、一点尚未消散的情绪，"
                     "或这件事与对方的某种联系。\n\n"
                     "有这样的念头，且此刻适合联系，就选择 reply；否则可以不回复。\n\n"
-                    "选择 reply 时，请先确定她为什么想找这个人，以及最想让对方知道哪一点。"
-                    "事件背景供你判断和取材，经过与结局不需要一并交给 replyer。\n\n"
-                    "reply_reference 遵循工具的参数说明：只同步支撑这次联系动机的必要客观事实、"
-                    "Mittes 此刻的状态，以及核心表达态度。篇幅集中在选中的那一点，具体语言组织交给 replyer。"
+                    "选择 reply 时，先想清楚她为什么想找这个人、最想让对方知道哪一点。"
+                    "reply_reference 里放支撑这个念头的事实和她此刻的状态；"
+                    "事件背景是给你判断和取材用的，整段经过和结局不用都写进 reply_reference。"
                 )
                 result = await self._ctx.maisaka.proactive.trigger(
                     stream_id=stream_id, intent=intent, reason="schedule_private_topic",
