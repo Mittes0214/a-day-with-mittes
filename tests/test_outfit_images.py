@@ -232,3 +232,19 @@ def test_planner_ignores_failed_queries_and_queries_missing_from_context(plugin)
     context[-1]["success"] = True
     plugin._outfit_queries.tag_calls("group-a", [call("reply", "r2", turn="turn-b")])
     assert "modified_kwargs" not in run(plugin.handle_outfit_planner_request(items=context, session_id="group-a"))
+
+
+def test_reference_waits_until_parallel_tool_outputs_are_complete(plugin):
+    """11-05：查穿搭和拍照同轮调用，图插进两条工具结果之间，上游返回 400。"""
+    plugin._store = SimpleNamespace(segment_at=lambda moment: SimpleNamespace(outfit="浅蓝细棉长袖睡衣"))
+    _, context = query_context(plugin, "2026-10-12 00:30")
+    question, outfit_call, outfit_output = context
+    photo_call = call("take_mittes_photo", "p1", turn=outfit_call["meta"]["logical_turn_id"])
+    photo_output = {"item_type": "FunctionCallOutputItem", "meta": {**photo_call["meta"], "item_id": "output-p1"},
+                    "call_id": "p1", "tool_name": "take_mittes_photo", "output": "已接下", "success": True}
+    later = plugin_module._new_user_item("时间：00:31")
+    items = [question, outfit_call, photo_call, outfit_output, photo_output, later]
+    request = run(plugin.handle_outfit_planner_request(items=items, session_id="group-a"))["modified_kwargs"]["items"]
+    assert [item["item_type"] for item in request[3:6]] == ["FunctionCallOutputItem", "FunctionCallOutputItem", "UserMessageItem"]
+    assert request[5]["parts"][0]["text"] == images_module.REFERENCE_TITLE
+    assert request[6] is later

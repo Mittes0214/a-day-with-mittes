@@ -995,8 +995,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if not references:
             return {"success": True, "action": "continue"}
         # 一批查询的结果之后放一条标题＋原图，不提供 msg_id、路径或媒体索引。
+        # 同一轮并行的其他工具结果要先放完：图插在两条工具结果中间，上游会判后面那个调用
+        # 没有结果并返回 400（11-05 查穿搭和拍照同轮调用，群里 planner 连续失败）。
         names = list(dict.fromkeys(name for _, name in references))
-        updated.insert(references[-1][0] + 1, await self._outfit_reference_item(names))
+        position = references[-1][0] + 1
+        while position < len(updated) and updated[position].get("item_type") == "FunctionCallOutputItem":
+            position += 1
+        updated.insert(position, await self._outfit_reference_item(names))
         return _hook_response(updated, kwargs)
 
     @HookHandler(
