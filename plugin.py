@@ -41,7 +41,7 @@ from maibot_sdk import Command, HookHandler, MaiBotPlugin, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
 from .camera.prompts import PENDING_GUIDANCE
-from .camera.service import PhotoService
+from .camera.service import PhotoService, pending_line
 from .camera.store import PhotoQuotaExceeded
 from .character.outfit_images import (
     IMAGES_ARG,
@@ -1346,6 +1346,12 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
         moment, day, segment, state = self._current()
         block = self._planner_block(moment, segment, state)
+        if session_id and self._camera is not None:
+            # 已接下还没送达的照片每轮按队列现状写出来。拍照调用和回执可能被压缩或挤出窗口，
+            # planner 不知道照片还在路上就会拒绝对方，随后照片照样发出（11-04 拍脚照）。
+            pending = await asyncio.to_thread(self._camera.store.in_progress, session_id)
+            if pending:
+                block += "\n" + "\n".join(pending_line(record) for record in pending)
 
         index = _find_item_index(items, lambda text: text.startswith(_PLANNER_ANCHOR_PREFIX))
         updated = list(items)

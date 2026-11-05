@@ -137,6 +137,14 @@ class CameraStore:
                               "ORDER BY updated_at DESC LIMIT 1", (stream_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
+    def in_progress(self, stream_id: str) -> list[dict[str, Any]]:
+        """这个会话里已接下、还没有结果的拍照任务，按提交先后排列。"""
+        with closing(sqlite3.connect(self.db)) as con:
+            rows = con.execute("SELECT record FROM tasks WHERE stream_id=? AND status IN "
+                               "('queued','planning','generating','checking','repairing','ready','sending') "
+                               "ORDER BY created_at", (stream_id,)).fetchall()
+        return [json.loads(raw) for (raw,) in rows]
+
     def recover(self) -> None:
         """不重试结果未知的生成和发送；尚未开始的排队任务照常恢复。"""
         with closing(sqlite3.connect(self.db)) as con:

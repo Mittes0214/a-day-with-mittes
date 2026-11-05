@@ -483,11 +483,11 @@ def test_followup_uses_only_same_stream_previous_sent_photo(setup):
         await service.process(first)
         assert service.store.latest_sent("another-chat") is None
         followup = await service.submit("再拍近一点", "second", "private", dict(SNAPSHOT))
-        assert followup["previous_photo"]["id"] == first["id"]
-        assert followup["previous_photo"]["snapshot"]["outfit"] == SNAPSHOT["outfit"]
         client.use_previous = True
         client.checks = [{"passed": True, "issues": [], "repairable": False, "description": "更近的杯子"}]
         await service.process(followup)
+        assert followup["previous_photo"]["id"] == first["id"]
+        assert followup["previous_photo"]["snapshot"]["outfit"] == SNAPSHOT["outfit"]
         assert len(client.last_refs) == 2
         assert len(followup["references"]) == 2
         assert followup["status"] == "sent"
@@ -831,4 +831,85 @@ def test_original_context_reaches_director_for_pronoun_resolution(setup):
         assert client.planning_inputs["source_text"] == "看看她"
         assert client.planning_inputs["context"][0]["text"] == "Niya在旁边"
         assert record["status"] == "declined"
+    asyncio.run(run())
+
+
+def test_previous_photo_is_taken_when_processing_starts_not_at_submit(setup):
+    """11-04：拍脚照在穿搭照发出前 70ms 提交，提交时取会拿到更早的自拍。"""
+    async def run():
+        service, _, client, _ = setup
+        first = await service.submit("拍自拍", "selfie", "private", dict(SNAPSHOT))
+        await service.process(first)
+        outfit = await service.submit("看看穿搭", "outfit", "private", dict(SNAPSHOT))
+        feet = await service.submit("拍脚", "feet", "private", dict(SNAPSHOT))
+        assert feet["previous_photo"] is None
+        client.checks = [{"passed": True, "issues": [], "repairable": False, "description": "穿搭"}]
+        await service.process(outfit)
+        assert outfit["previous_photo"]["id"] == first["id"]
+        client.checks = [{"passed": True, "issues": [], "repairable": False, "description": "脚"}]
+        await service.process(feet)
+        assert feet["previous_photo"]["id"] == outfit["id"]
+        assert client.planning_inputs["previous_photo"]["id"] == outfit["id"]
+    asyncio.run(run())
+
+
+def test_delivery_note_names_the_request_without_repeating_description(setup):
+    async def run():
+        service, ctx, _, _ = setup
+        ctx.message.get_by_id.return_value = {
+            "session_id": "private", "platform": "qq", "account_id": "bot",
+            "message_info": {"user_info": {"user_id": "user", "user_nickname": "田晓钟", "user_cardname": ""}},
+            "processed_plain_text": "[回复了Mittes的消息: 照片里连脚都没拍到哦] @Mittes 拍一张看看",
+        }
+        record = await service.submit("群友想看脚部", "-1464541256", "private", dict(SNAPSHOT))
+        await service.process(record)
+        call = ctx.maisaka.context.append.await_args
+        note = "↑ 这张是给田晓钟拍的，回应「拍一张看看」(msg_id=-1464541256)"
+        assert call.kwargs["segments"] == [{"type": "text", "data": note}]
+        assert call.kwargs["visible_text"] == note
+        assert call.kwargs["message_id"] == "camera-delivery:" + record["id"]
+        assert record["description"] not in note
+    asyncio.run(run())
+
+
+def test_group_card_is_preferred_and_long_requests_are_truncated():
+    record = {"requester_name": "", "source_msg_id": "1", "instruction": "看看", "source_text": "@Mittes " + "很" * 40}
+    assert module.pending_line(record) == "正在拍摄：群友要的「" + "很" * 30 + "…」（拍好会自动发出）"
+    record["requester_name"] = "阿铭"
+    record["source_text"] = "@Mittes"
+    assert module.pending_line(record) == "正在拍摄：阿铭要的「看看」（拍好会自动发出）"
+
+
+def test_in_progress_lists_only_unfinished_tasks_of_this_stream(setup):
+    async def run():
+        service, _, client, _ = setup
+        done = await service.submit("拍杯子", "done", "private", dict(SNAPSHOT))
+        await service.process(done)
+        first = await service.submit("拍窗外", "a", "private", dict(SNAPSHOT))
+        second = await service.submit("拍脚", "b", "private", dict(SNAPSHOT))
+        assert [item["id"] for item in service.store.in_progress("private")] == [first["id"], second["id"]]
+        assert service.store.in_progress("another-chat") == []
+    asyncio.run(run())
+
+
+def test_planner_block_lists_photos_still_being_taken(setup, monkeypatch):
+    async def run():
+        service, _, _, _ = setup
+        plugin_module = importlib.import_module("plugins.01_a_day_with_mittes.plugin")
+        plugin = plugin_module.ADayWithMittesPlugin()
+        plugin._camera = service
+        monkeypatch.setattr(plugin, "_current", lambda: (None, None, None, None))
+        monkeypatch.setattr(plugin, "_planner_block", lambda *args: "【Mittes 此刻】\n所在：厨房")
+        monkeypatch.setattr(plugin, "_with_calendar_suffix", lambda item, day: item)
+        monkeypatch.setattr(plugin, "_topic_gate", AsyncMock(return_value=(True, "")))
+        items = [{"item_type": "UserMessageItem", "meta": {}, "parts": [{"type": "text", "text": "时间：23:33"}]}]
+
+        def injected(result):
+            return result["modified_kwargs"]["items"][1]["parts"][0]["text"]
+
+        result = await plugin.handle_planner_before_request(items=items, session_id="private")
+        assert injected(result) == "【Mittes 此刻】\n所在：厨房"
+        await service.submit("群友想看脚部", "feet", "private", dict(SNAPSHOT))
+        result = await plugin.handle_planner_before_request(items=items, session_id="private")
+        assert injected(result) == "【Mittes 此刻】\n所在：厨房\n正在拍摄：群友要的「看看杯子」（拍好会自动发出）"
     asyncio.run(run())

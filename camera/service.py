@@ -9,6 +9,7 @@ import base64
 import hashlib
 import json
 import logging
+import re
 
 from PIL import Image
 
@@ -49,6 +50,25 @@ def write_image(path: Path, data: bytes) -> dict[str, Any]:
     return {"width": width, "height": height, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
 
 
+def requester_label(record: dict[str, Any]) -> str:
+    return str(record.get("requester_name") or "").strip() or "群友"
+
+
+def request_quote(record: dict[str, Any], limit: int = 30) -> str:
+    """请求原话去掉引用前缀和 @，只留对方说的那句。"""
+    text = re.sub(r"^\[回复了[^\]]*\]\s*", "", str(record.get("source_text") or ""))
+    text = re.sub(r"@\S+\s*", "", text).strip() or str(record.get("instruction") or "").strip()
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def delivery_note(record: dict[str, Any]) -> str:
+    return f"↑ 这张是给{requester_label(record)}拍的，回应「{request_quote(record)}」(msg_id={record['source_msg_id']})"
+
+
+def pending_line(record: dict[str, Any]) -> str:
+    return f"正在拍摄：{requester_label(record)}要的「{request_quote(record)}」（拍好会自动发出）"
+
+
 class PhotoService:
     def __init__(self, ctx: Any, plugin_dir: Path, data_dir: Path,
                  get_config: Callable[..., Awaitable[Any]], client_factory: Any = CPAClient) -> None:
@@ -81,8 +101,8 @@ class PhotoService:
         if not source_msg_id or (not preview and not stream_id):
             raise ValueError("缺少原会话或真实用户消息 ID")
         context = []
-        previous_photo = None
         requester = None
+        requester_name = ""
         source_text = instruction
         if not preview:
             source = await self.ctx.message.get_by_id(source_msg_id, stream_id=stream_id)
@@ -95,6 +115,7 @@ class PhotoService:
             if not platform:
                 raise ValueError("源消息缺少平台，无法核验拍照额度")
             requester = {"platform": platform, "user_id": str(user["user_id"])}
+            requester_name = str(user.get("user_cardname") or user.get("user_nickname") or "").strip()
             source_text = message_text(source)
             recent = await self.ctx.message.get_recent(stream_id, limit=12)
             if not isinstance(recent, list):
@@ -103,19 +124,22 @@ class PhotoService:
                 text = message_text(message)
                 if text:
                     context.append({"text": text[:1200], "user_id": str(message.get("message_info", {}).get("user_info", {}).get("user_id", ""))})
-            previous = await asyncio.to_thread(self.store.latest_sent, stream_id)
-            if previous is not None:
-                previous_photo = {"id": previous["id"], "description": previous["description"],
-                                  "instruction": previous["instruction"], "file": previous["final_image"],
-                                  "snapshot": {key: previous["snapshot"].get(key) for key in ("captured_at", "outfit", "place")}}
         return await asyncio.to_thread(self.store.create, {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v15",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v16",
             "images": [], "references": [],
-            "previous_photo": previous_photo,
-            "requester": requester,
+            "previous_photo": None,
+            "requester": requester, "requester_name": requester_name,
         })
+
+    def _previous_photo(self, record: dict[str, Any]) -> dict[str, Any] | None:
+        previous = self.store.latest_sent(record["stream_id"])
+        if previous is None or previous["id"] == record["id"]:
+            return None
+        return {"id": previous["id"], "description": previous["description"],
+                "instruction": previous["instruction"], "file": previous["final_image"],
+                "snapshot": {key: previous["snapshot"].get(key) for key in ("captured_at", "outfit", "place")}}
 
     async def event(self, record: dict[str, Any], stage: str, text: str, **detail: Any) -> None:
         record["status"] = stage
@@ -158,6 +182,10 @@ class PhotoService:
         settings = record["settings"]
         # 重载后恢复的旧排队任务也使用统一尺寸，参数与归档保持一致。
         settings["size"] = PHOTO_SIZE
+        if not record["preview"]:
+            # 上一张照片在开始处理时才取：队列串行，此刻前一张已经发完。
+            # 提交时取会漏掉排在前面、尚未发出的那张（11-04 拍脚照拿到的是自拍而不是穿搭照）。
+            record["previous_photo"] = await asyncio.to_thread(self._previous_photo, record)
         await self.event(record, "planning", "读取请求快照，设计手机取景")
         base_url, key = await asyncio.to_thread(read_provider, self.plugin_dir.parents[1] / "config/model_config.toml", settings["api_provider"])
         client = CameraTraceClient(self.client_factory(base_url, key, float(settings["timeout_seconds"])), record, self.store)
@@ -365,14 +393,17 @@ class PhotoService:
             return
         record["message_id"] = result.get("message_id")
         await self.event(record, "sent", "照片已成功发送到原会话")
+        # 图片本身已同步进上下文，这里只补它回应的是哪条请求。排队时送达和新的调用可能同时出现，
+        # 没有这一行 planner 只能猜（11-04 把穿搭照当成了拍脚照）。
+        note = delivery_note(record)
         try:
             result = await self.ctx.maisaka.context.append(
-                stream_id=record["stream_id"], segments=[{"type": "text", "text": "Mittes 刚用手机拍下并已向当前会话发送用户想看的照片。后续聊天按她刚拍的照片来理解，自然谈照片中的内容，不讲工具或技术流程。照片实际可见内容：" + record["description"]}],
-                source_kind="plugin_camera_description", message_id="camera-description:" + record["id"],
+                stream_id=record["stream_id"], segments=[{"type": "text", "data": note}], visible_text=note,
+                source_kind="plugin_camera_delivery", message_id="camera-delivery:" + record["id"],
             )
             if not isinstance(result, dict) or result.get("success") is not True:
-                raise RuntimeError("主程序未确认照片描述已回填")
+                raise RuntimeError("主程序未确认照片对应请求已回填")
         except Exception:
-            record["events"].append({"at": timestamp(), "stage": "context_warning", "text": "图片已发送，但画面描述回填失败"})
+            record["events"].append({"at": timestamp(), "stage": "context_warning", "text": "图片已发送，但对应请求回填失败"})
             await asyncio.to_thread(self.store.save, record)
-            _logger.exception("[相机] 照片描述回填失败 %s", record["id"])
+            _logger.exception("[相机] 照片对应请求回填失败 %s", record["id"])
