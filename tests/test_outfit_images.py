@@ -134,8 +134,8 @@ def test_replyer_uses_user_image_before_reference_and_preserves_retry_snapshot(p
     # 实际 host 协议必须接受附加的内部参数，并原样传入插件执行器。
     restored = deserialize_prompt_items(tagged, mode=ContextProtocolMode.MODEL_OUTPUT)
     query_args = restored[0].tool_call.materialize_args()
+    # 主程序 1.4.0 移除旧 Action 后，载荷构建不再接收组件条目。
     payload = ComponentQueryService._build_tool_invocation_payload(
-        SimpleNamespace(invoke_method="plugin.invoke_tool"),
         ToolInvocation(tool_name="get_mittes_outfit", arguments={"time": "2026-10-12 09:00", **query_args}),
         ToolExecutionContext(session_id="group-a", stream_id="group-a"),
     )
