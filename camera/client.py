@@ -6,6 +6,7 @@ from typing import Any
 import asyncio
 import base64
 import json
+import os
 import tomllib
 
 import httpx
@@ -19,11 +20,23 @@ class GenerationRejected(RuntimeError):
     """生图接口明确因内容安全拒绝，未生成图片。"""
 
 
-def read_provider(config_path: Path, name: str) -> tuple[str, str]:
-    config = tomllib.loads(config_path.read_text())
+# 主程序 1.4.0 起供应商与密钥统一存放在宿主公共模型目录（host/model_catalog.toml），
+# 宿主经此环境变量把路径交给 Bot 与插件子进程；model_config.toml 只保留任务分工。
+SHARED_MODEL_CATALOG_ENV = "MAIBOT_SHARED_MODEL_CATALOG"
+
+
+def shared_model_catalog_path() -> Path:
+    value = os.environ.get(SHARED_MODEL_CATALOG_ENV, "").strip()
+    if not value:
+        raise ValueError(f"缺少 {SHARED_MODEL_CATALOG_ENV}，无法定位宿主公共模型目录")
+    return Path(value)
+
+
+def read_provider(name: str, catalog_path: Path | None = None) -> tuple[str, str]:
+    config = tomllib.loads((catalog_path or shared_model_catalog_path()).read_text())
     provider = next((p for p in config["api_providers"] if p["name"] == name), None)
     if provider is None:
-        raise ValueError(f"model_config.toml 未配置供应商 {name}")
+        raise ValueError(f"公共模型目录未配置供应商 {name}")
     base_url, key = str(provider["base_url"]).rstrip("/"), str(provider["api_key"])
     if not base_url.startswith(("http://", "https://")) or not key:
         raise ValueError("相机供应商缺少有效地址或密钥")

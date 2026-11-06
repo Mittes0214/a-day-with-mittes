@@ -913,3 +913,19 @@ def test_planner_block_lists_photos_still_being_taken(setup, monkeypatch):
         result = await plugin.handle_planner_before_request(items=items, session_id="private")
         assert injected(result) == "【Mittes 此刻】\n所在：厨房\n正在拍摄：群友要的「看看杯子」（拍好会自动发出）"
     asyncio.run(run())
+
+
+def test_provider_comes_from_shared_model_catalog(tmp_path, monkeypatch):
+    """主程序 1.4.0 把供应商迁入宿主公共模型目录，相机必须从那里读地址与密钥。"""
+    from importlib import import_module
+
+    client = import_module(module.__name__.rsplit(".", 1)[0] + ".client")
+    catalog = tmp_path / "model_catalog.toml"
+    catalog.write_text('[[api_providers]]\nname = "CPA"\nbase_url = "http://cpa/v1/"\napi_key = "k"\n')
+    monkeypatch.setenv(client.SHARED_MODEL_CATALOG_ENV, str(catalog))
+    assert client.read_provider("CPA") == ("http://cpa/v1", "k")
+    with pytest.raises(ValueError, match="未配置供应商"):
+        client.read_provider("missing", catalog)
+    monkeypatch.delenv(client.SHARED_MODEL_CATALOG_ENV)
+    with pytest.raises(ValueError, match="MAIBOT_SHARED_MODEL_CATALOG"):
+        client.shared_model_catalog_path()

@@ -187,7 +187,7 @@ class PhotoService:
             # 提交时取会漏掉排在前面、尚未发出的那张（11-04 拍脚照拿到的是自拍而不是穿搭照）。
             record["previous_photo"] = await asyncio.to_thread(self._previous_photo, record)
         await self.event(record, "planning", "读取请求快照，设计手机取景")
-        base_url, key = await asyncio.to_thread(read_provider, self.plugin_dir.parents[1] / "config/model_config.toml", settings["api_provider"])
+        base_url, key = await asyncio.to_thread(read_provider, settings["api_provider"])
         client = CameraTraceClient(self.client_factory(base_url, key, float(settings["timeout_seconds"])), record, self.store)
         try:
             plan, usage = await client.json(settings["director_model"], DIRECTOR, {
