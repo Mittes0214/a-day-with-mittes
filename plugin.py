@@ -67,6 +67,7 @@ from .schedule.store import (
     now_jst,
     weekday_name,
 )
+from .schedule.topic_judge import build_judge_prompt, parse_judge_response
 from .weather.fetcher import fetch_daily_forecast, fetch_weather
 
 
@@ -120,6 +121,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         # 语义严格是「本轮 planner 取过材」。装的是已发生的事实，不是推断，
         # 所以不需要 TTL 去猜有效期。
         self._topic_pitched: dict[str, tuple[date, str]] = {}
+        # session_id → (逻辑日, 时段, 谈资原文)。replyer 请求前注入了谈资就写，
+        # 收到 replyer 回复时取走，交给小模型判断这条回复有没有讲到这件事。
+        self._topic_awaiting_judge: dict[str, tuple[date, str, str]] = {}
 
     # ── 生命周期 ──
     async def on_load(self) -> None:
@@ -1077,6 +1081,74 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             return {"name": "get_weather", "content": "请提供要查询的城市或地点名称"}
         return {"name": "get_weather", "content": await fetch_weather(location)}
 
+    # ── 谈资用掉判定 ──
+    @HookHandler(
+        "maisaka.replyer.after_response",
+        name="topic_share_judge",
+        description="本轮注入过谈资时，让小模型判断回复有没有讲到这件事，讲到就记为用掉",
+        mode="observe",
+        timeout_ms=60000,
+    )
+    async def handle_replyer_after_response(
+        self, session_id: str = "", response: str = "", **kwargs: Any
+    ) -> None:
+        """observe 模式在后台跑，不拖慢发送。
+
+        判的是 replyer 产出的完整回复（分段之前）。被角色守护拦下没发出去的回复也会被判，
+        可能误记成用掉——那只是少一次提起的机会；漏判才会让同一件事重复讲，两种错不对称。
+        """
+        del kwargs
+        pending = self._topic_awaiting_judge.pop(session_id, None)
+        reply = str(response or "").strip()
+        if not pending or not reply:
+            return
+        if not bool(await self._get_config("topic.share_judge.enabled", True)):
+            return
+        day, slot, topic = pending
+        if await self._share_seen(day, slot, session_id):
+            return
+        await self._judge_topic_share(day, slot, topic, session_id, reply)
+
+    async def _judge_topic_share(
+        self, day: date, slot: str, topic: str, session_id: str, reply: str
+    ) -> None:
+        """调小模型判一次；判定讲到了就 mark_shared，之后这一时段不再注入。
+
+        调用失败或输出解析不了：记 warning，本次不标记，下一次注入后再判。
+        """
+        task_name = str(await self._get_config("topic.share_judge.task_name", "utils"))
+        try:
+            result = await self.ctx.llm.generate(
+                prompt=build_judge_prompt(topic, reply),
+                task_name=task_name,
+                temperature=0.0,
+                max_tokens=400,
+            )
+        except Exception as exc:
+            _logger.warning("[谈资] 用掉判定调用失败 %s %s 会话=%s：%s", day, slot, session_id, exc)
+            return
+        if not isinstance(result, dict) or not result.get("success"):
+            error = result.get("error") if isinstance(result, dict) else result
+            _logger.warning("[谈资] 用掉判定返回失败 %s %s 会话=%s：%s", day, slot, session_id, error)
+            return
+        try:
+            used, evidence = parse_judge_response(str(result.get("response") or ""))
+        except ValueError as exc:
+            _logger.warning("[谈资] 用掉判定输出无法解析 %s %s 会话=%s：%s", day, slot, session_id, exc)
+            return
+        if not used:
+            _logger.info("[谈资] 判定未讲到 %s %s 会话=%s", day, slot, session_id)
+            return
+        self._require_store().mark_shared(
+            day,
+            slot,
+            session_id,
+            now_jst().isoformat(timespec="seconds"),
+            reply_text=reply,
+            hit_key=f"判定：{evidence}" if evidence else "判定",
+        )
+        _logger.info("[谈资] 判定已讲到 %s %s 会话=%s，这条谈资就此用掉：%s", day, slot, session_id, evidence)
+
     # ── Tool：谈资 ──
     @Tool(
         _TOPIC_TOOL_NAME,
@@ -1438,6 +1510,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 if is_pitch
                 else self._topic_block_reply(state.topic)
             )
+        if topic:
+            # 两条通道最终都会把谈资放进 items（开口版锚点失配也会退回低位注入），
+            # 所以这里记下就等于"本次 replyer 看到了这件事"。
+            self._topic_awaiting_judge[session_id] = (day, segment.slot, state.topic)
         if not manner and not topic:
             return {"success": True, "action": "continue"}
 

@@ -778,6 +778,8 @@ main { min-width: 0; padding: 26px 36px 72px; max-width: 1240px; width: 100%; }
   display: inline-block; background: var(--accent); color: #fff; border-radius: 4px;
   padding: 0 6px; font-size: 11.5px; margin-right: 8px; vertical-align: 1px;
 }
+.topic.used .tag { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+.topic.used .topic-text { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
 .topic .keys { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
 .topic .share { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
 .topic .share b { color: var(--accent); font-weight: 600; }
@@ -1457,7 +1459,8 @@ function timeline(data, nowMin) {
     const fresh = hasTopic
       ? `<span class="fresh" style="width:${Math.min(100, freshMinutes / span * 100)}%"></span>`
       : '';
-    const tip = `${s.slot}　${s.title}（${s.kind}）${hasTopic ? '　有可说的事' : ''}`;
+    const used = ((data.shares || {})[s.slot] || []).some(r => r.shared_at);
+    const tip = `${s.slot}　${s.title}（${s.kind}）${hasTopic ? (used ? '　可说的事已用掉' : '　有可说的事') : ''}`;
     // 格子里写 kind 不写标题：标题动辄十几个字，60 分钟的格子只有四十来像素，
     // 挤进去只能截成半截。kind 两个字一定放得下，完整标题留给 tooltip。
     return `<button class="band-cell ${cls}" style="flex:${span} 1 0" data-jump="${esc(s.slot)}"
@@ -1512,8 +1515,9 @@ function trail(s, nowMin) {
 
 function topicBlock(s, shares) {
   if (!s.topic) return '<div class="topic none">这段没什么好说的</div>';
-  // 「用掉」现在等于 planner 调过 get_mittes_topic；旧记录里的 hit_key 是关键词，
-  // 新记录里是"工具调用"，两种都照原样显示
+  // 「用掉」现在由小模型判定回复讲到了这件事，hit_key 是「判定：依据」；
+  // 更早的记录里是关键词或"工具调用"，都照原样显示
+  const used = shares.some(r => r.shared_at);
   const rows = shares.map(r => {
     if (!r.shared_at) {
       return `<div class="share">注入 ${r.injected} 次${r.pitched ? `　取材 ${r.pitched} 次` : ''}，还没用掉</div>`;
@@ -1523,8 +1527,8 @@ function topicBlock(s, shares) {
     return `<div class="share"><b>已用掉 ${esc(r.shared_at.slice(11, 16))}</b>`
       + `　注入 ${r.injected} 次${r.pitched ? `　取材 ${r.pitched} 次` : ''}${hit}${said}</div>`;
   }).join('');
-  return `<div class="topic">
-    <span class="tag">可说</span>${esc(s.topic)}
+  return `<div class="topic${used ? ' used' : ''}">
+    <span class="tag">${used ? '已用掉' : '可说'}</span><span class="topic-text">${esc(s.topic)}</span>
     ${rows || '<div class="share">还没在任何会话里注入过</div>'}
   </div>`;
 }

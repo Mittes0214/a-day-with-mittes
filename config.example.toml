@@ -87,6 +87,14 @@ linked_platform = "qq"
 [topic.reply_channel]
 enabled = true
 
+# ── 用掉判定：每次 replyer 注入过谈资，就让小模型判断回复有没有讲到这件事 ──
+# 讲到了（哪怕只提一个细节）就记为用掉，配合 stop_after_shared 之后这一时段不再注入。
+# 只在注入过且还没用掉时才调用，每时段每会话最多判「注入次数」那么多次。
+[topic.share_judge]
+enabled = true
+# 主程序模型任务名（model_config.toml 的 model_task_config.<任务名>）
+task_name = "utils"
+
 # ── 通道二：开口（get_mittes_topic 工具，只在窗口期暴露）──
 [topic.pitch_channel]
 enabled = true
