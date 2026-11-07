@@ -12,10 +12,11 @@
 这是自用小工具的取舍，别往公网端口映射。
 """
 
+from contextlib import contextmanager
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import parse_qs, urlparse
 
 import argparse
@@ -29,11 +30,6 @@ import urllib.request
 
 
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
-# 表达方式那张表跟运行时同源：插件用它拼 reply_style，这里原样发到页面上做预览。
-# 前端自己抄一份的话，改完插件页面还显示旧文本——看着对、实际不对，比不显示更糟。
-# reply_style.py 只用标准库，import 它不会把 maibot_sdk 拖进这个独立脚本。
-sys.path.insert(0, str(PLUGIN_DIR))
-import reply_style  # noqa: E402
 # 日程库随插件数据一起迁到统一持久化目录 data/plugins/<插件ID>/。
 # PLUGIN_DIR 固定是 <项目根>/plugins/<本插件目录>，parents[1] 即项目根。
 PROJECT_ROOT = PLUGIN_DIR.parents[1]
@@ -51,15 +47,23 @@ _HOLIDAY_LOCK = threading.Lock()
 _HOLIDAY_MEM: dict[int, dict[str, Any]] = {}
 
 
-def _connect(db_path: Path, *, readonly: bool = True) -> sqlite3.Connection:
-    """每个 HTTP 请求使用自己的短连接，避免 ThreadingHTTPServer 共享连接。"""
+@contextmanager
+def _connect(db_path: Path, *, readonly: bool = True) -> Iterator[sqlite3.Connection]:
+    """每个 HTTP 请求使用自己的短连接，避免 ThreadingHTTPServer 共享连接。
+
+    必须用完即关：sqlite3.Connection 自带的 ``with`` 只提交/回滚事务、不关闭连接，
+    曾因此每个请求漏一对 db/wal 句柄，跑一周撞满 1024 个 fd 后 /api/days 全部失败。
+    """
     if readonly:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     else:
         conn = sqlite3.connect(db_path, isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
+        yield conn
+    finally:
+        conn.close()
 
 
 def _list_days(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -203,21 +207,6 @@ def _manner_enabled(path: Path) -> bool:
     except (OSError, tomllib.TOMLDecodeError):
         return True
     return bool((data.get("manner") or {}).get("enabled", True))
-
-
-def _reply_style_enabled(path: Path) -> bool:
-    """按心情 × 体力替换 reply_style 这套功能开着没有（``[reply_style] enabled``）。
-
-    关掉时页面**照样把九格显示出来**——这是设计文案的地方，停用期间还要能改。
-    但每处都必须标明当前没生效，否则页面展示的是一套 replyer 根本收不到的文字，
-    「看着对、实际不对」比不显示更糟。
-    """
-    try:
-        with path.open("rb") as handle:
-            data = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
-        return True
-    return bool((data.get("reply_style") or {}).get("enabled", True))
 
 
 def _load_gate_config(path: Path) -> dict[str, Any]:
@@ -496,35 +485,42 @@ PAGE = """<!doctype html>
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 15px/1.7 -apple-system, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
-  display: flex; min-height: 100vh;
+  display: grid; grid-template-columns: 284px minmax(0, 1fr); min-height: 100vh;
 }
-aside {
-  width: 238px; flex: none; border-right: 1px solid var(--line);
-  padding: 16px 0; overflow-y: auto; height: 100vh; position: sticky; top: 0;
-}
-aside h1 { font-size: 15px; margin: 0 16px 12px; letter-spacing: .05em; }
-aside a {
-  display: block; padding: 7px 16px; color: var(--text);
-  text-decoration: none; font-variant-numeric: tabular-nums; font-size: 14px;
-}
-aside a:hover { background: var(--badge); }
-aside a.on { background: var(--badge); border-left: 3px solid var(--accent); padding-left: 13px; }
-aside .sub { color: var(--muted); font-size: 12px; margin-left: 6px; }
-aside #more-days {
-  display: block; width: calc(100% - 32px); margin: 6px 16px 0; padding: 5px 0;
-  font: inherit; font-size: 12.5px; color: var(--muted); text-align: left;
-  background: none; border: 0; border-top: 1px solid var(--line); cursor: pointer;
-}
-aside #more-days:hover { color: var(--text); }
-/* ── 右侧日历 ──
-   main 封了 900px，宽屏下右边一直空着一大块。这里放一张月历：
-   周末、祝日、連休、哪天有归档，一眼看全，点一下就跳过去。
-   margin-left:auto 让它贴右边——不加的话它紧挨着 main，右边照样空一条。 */
-#cal {
-  width: 300px; flex: none; margin-left: auto; padding: 16px 14px 28px;
-  border-left: 1px solid var(--line);
+button { color: inherit; }
+
+/* ── 侧栏：日历是主导航，最近几天带状态标记，生成表单压在最底下 ──
+   原来左边日期列表、右边日历各占一栏，两边都是在选日子；合成一栏，正文拿到整块宽度。 */
+#rail {
+  border-right: 1px solid var(--line); background: var(--bg);
   height: 100vh; position: sticky; top: 0; overflow-y: auto;
+  padding: 18px 16px 28px; display: flex; flex-direction: column; gap: 16px;
 }
+#rail h1 { font-size: 15px; margin: 0; letter-spacing: .05em; }
+.rail-sec > summary, .rail-label {
+  font-size: 11px; font-weight: 600; letter-spacing: .08em; color: var(--muted);
+  margin-bottom: 8px; list-style: none;
+}
+.rail-sec > summary { cursor: pointer; }
+.rail-sec > summary::-webkit-details-marker { display: none; }
+#days { display: flex; flex-direction: column; gap: 1px; }
+#days a {
+  display: flex; align-items: baseline; gap: 6px; padding: 5px 9px; border-radius: 6px;
+  color: var(--text); text-decoration: none; font-variant-numeric: tabular-nums; font-size: 13.5px;
+}
+#days a:hover { background: var(--badge); }
+#days a.on { background: var(--accent); color: var(--band-ink); }
+#days .sub { margin-left: auto; color: var(--muted); font-size: 11.5px; }
+#days a.on .sub { color: inherit; opacity: .85; }
+#more-days {
+  font: inherit; font-size: 12px; color: var(--muted); text-align: left;
+  background: none; border: 0; padding: 6px 9px 0; cursor: pointer;
+}
+#more-days:hover { color: var(--text); }
+.create-day { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+.create-day input { min-width: 0; padding: 5px 8px; font-size: 13px; }
+.create-day button { font-size: 13px; padding: 5px 10px; }
+.create-day .job-status { grid-column: 1 / -1; margin: 0; }
 #cal .cal-head { display: flex; align-items: center; gap: 4px; margin-bottom: 10px; }
 #cal .cal-head h2 {
   flex: 1; margin: 0; font-size: 14px; letter-spacing: .04em;
@@ -607,16 +603,44 @@ aside #more-days:hover { color: var(--text); }
   display: inline-block; width: 4px; height: 4px; border-radius: 50%;
   background: var(--muted); vertical-align: 3px; margin-right: 4px;
 }
-/* aside 238 + main 900 = 1138，再窄就该把日历让出去给正文 */
-@media (max-width: 1240px) { #cal { display: none; } }
-main { flex: 1; min-width: 0; padding: 28px 32px 64px; max-width: 900px; }
-.dayhead { border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 24px; }
-.dayhead h2 { margin: 0 0 6px; font-size: 22px; }
-.dayhead .meta { color: var(--muted); font-size: 13px; }
-.digest {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-  padding: 10px 14px; margin-top: 12px; font-size: 14px; color: var(--muted);
+#cal .cal-more { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+#cal .cal-more > summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+#cal .cal-more > summary:hover { color: var(--text); }
+
+main { min-width: 0; padding: 26px 36px 72px; max-width: 1240px; width: 100%; }
+
+/* ── 当日抬头 ── */
+.dayhead { margin-bottom: 22px; }
+.dayhead-top { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 20px; }
+.dayhead-title { flex: 1; min-width: 240px; }
+.dayhead h2 { margin: 0; font-size: 24px; line-height: 1.35; font-variant-numeric: tabular-nums; }
+.dayhead h2 .wd { color: var(--muted); font-weight: 500; margin-left: 6px; font-size: 18px; }
+.pill {
+  display: inline-block; vertical-align: 4px; margin-left: 8px; padding: 0 8px; border-radius: 999px;
+  font-size: 11.5px; line-height: 20px; font-weight: 600; background: var(--accent); color: var(--band-ink);
 }
+.pill.warn { background: var(--kind-busy); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip {
+  font-size: 12px; color: var(--muted); background: var(--badge); border-radius: 6px;
+  padding: 1px 8px; font-variant-numeric: tabular-nums;
+}
+.chip.strong { color: var(--text); }
+.day-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.day-actions .action { font-size: 12.5px; padding: 4px 10px; color: var(--muted); background: transparent; }
+.day-actions .action:hover { color: var(--accent); }
+.day-actions .job-status { margin: 0; flex-basis: 100%; text-align: right; }
+.notice {
+  margin-top: 12px; padding: 9px 12px; border-radius: 8px; font-size: 13.5px;
+  background: var(--hol-bg); color: var(--text);
+}
+/* 脉络默认收成两行：它是写手的构思，翻日程时偶尔才需要通读 */
+.outline {
+  margin: 14px 0 0; font-size: 13.5px; color: var(--muted); cursor: pointer;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.outline.open { display: block; }
+.outline b { color: var(--text); font-weight: 600; margin-right: 6px; }
 /* ── 全天时间条 ──
    一天十来段拉得很长，翻到底才知道大概。这条是"这一天长什么样"的缩略图：
    颜色是 kind，斜纹是谈资的新鲜期窗口，▼ 是断点，竖线是此刻。点一下跳到那一段。 */
@@ -674,18 +698,65 @@ main { flex: 1; min-width: 0; padding: 28px 32px 64px; max-width: 900px; }
 .band-legend .hatch { background: repeating-linear-gradient(135deg,
   var(--muted) 0 2px, transparent 2px 5px); border: 1px solid var(--line); }
 
+/* ── 正文：左边议程，右边当日穿搭（宽屏）；窄了穿搭挪到议程下面横排 ── */
+.day-body { display: grid; grid-template-columns: minmax(0, 1fr) 248px; gap: 28px; align-items: start; }
+.sec-head { display: flex; align-items: baseline; gap: 10px; margin: 0 0 10px; }
+.sec-head h3 { margin: 0; font-size: 15px; }
+.sec-head .count { color: var(--muted); font-size: 12px; }
+.sec-head .link {
+  margin-left: auto; font: inherit; font-size: 12.5px; color: var(--muted);
+  background: none; border: 0; padding: 0; cursor: pointer;
+}
+.sec-head .link:hover { color: var(--accent); }
+
+/* 一段一行。summary 只放扫一眼要的东西：时间、做什么、在哪跟谁、几个标记；
+   story 和 topic 收在里面，现在那一段默认展开。左边那条色带就是时间条上的 kind 颜色。 */
 .seg {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  padding: 16px 18px; margin-bottom: 14px;
+  margin-bottom: 6px; box-shadow: inset 4px 0 0 var(--kind-idle);
 }
+.seg.sleep { box-shadow: inset 4px 0 0 var(--kind-sleep); }
+.seg.busy { box-shadow: inset 4px 0 0 var(--kind-busy); }
 .seg.now { border-color: var(--accent); }
-.seg h3 { margin: 0 0 4px; font-size: 16px; }
-.seg h3 .slot { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 10px; }
-.skeleton { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
-.story { margin: 0 0 12px; }
+.seg > summary {
+  display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; gap: 4px 14px; align-items: center;
+  padding: 10px 14px 10px 18px; cursor: pointer; list-style: none;
+}
+.seg > summary::-webkit-details-marker { display: none; }
+.seg > summary:hover { background: color-mix(in srgb, var(--badge) 55%, transparent); border-radius: 10px; }
+.seg[open] > summary { border-bottom: 1px dashed var(--line); border-radius: 10px 10px 0 0; }
+.seg-time { display: flex; flex-direction: column; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.seg-time b { font-size: 14.5px; }
+.seg-time i { font-style: normal; font-size: 11.5px; color: var(--muted); }
+.seg-main { min-width: 0; display: flex; flex-direction: column; line-height: 1.45; }
+.seg-title { font-weight: 600; font-size: 14.5px; }
+.seg-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seg-flags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: 220px; }
+.seg-flags .state-level { margin-left: 0; }
+.flag {
+  display: inline-block; border-radius: 4px; padding: 0 6px; font-size: 11.5px; line-height: 19px;
+  background: var(--badge); color: var(--muted); white-space: nowrap;
+}
+.flag.now { background: var(--accent); color: var(--band-ink); font-weight: 600; }
+.flag.say { color: var(--accent); background: transparent; box-shadow: inset 0 0 0 1px var(--accent); }
+.flag.say.used { color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+.flag.neg { background: var(--accent); color: #fff; }
+.seg-body { padding: 12px 18px 16px 18px; }
+.seg-body .story { margin: 10px 0 12px; }
+.seg-body .fields { margin: 0; }
 .fields { display: grid; grid-template-columns: 62px 1fr; gap: 4px 10px; font-size: 13.5px; }
 .fields dt { color: var(--muted); }
 .fields dd { margin: 0; }
+.trail { display: flex; flex-wrap: wrap; gap: 6px; }
+.trail .leg {
+  font-size: 12px; color: var(--muted); background: var(--badge);
+  padding: 1px 8px; border-radius: 999px; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.trail .leg.on { color: var(--band-ink); background: var(--accent); font-weight: 600; }
+.seg-body .outfit {
+  font: inherit; color: var(--accent); background: none; border: 0; padding: 0;
+  cursor: pointer; border-bottom: 1px dashed currentColor;
+}
 .state-level {
   display: inline-block; border-radius: 999px; padding: 0 7px; margin-left: 8px;
   font-size: 11.5px; line-height: 19px; vertical-align: 1px;
@@ -707,12 +778,6 @@ main { flex: 1; min-width: 0; padding: 28px 32px 64px; max-width: 900px; }
   display: inline-block; background: var(--accent); color: #fff; border-radius: 4px;
   padding: 0 6px; font-size: 11.5px; margin-right: 8px; vertical-align: 1px;
 }
-.trail { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
-.trail .leg {
-  font-size: 12.5px; color: var(--muted); background: var(--badge);
-  padding: 2px 8px; border-radius: 999px; white-space: nowrap;
-}
-.trail .leg.on { color: var(--panel); background: var(--accent); font-weight: 600; }
 .topic .keys { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
 .topic .share { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
 .topic .share b { color: var(--accent); font-weight: 600; }
@@ -724,9 +789,6 @@ main { flex: 1; min-width: 0; padding: 28px 32px 64px; max-width: 900px; }
 }
 .topic .said.none { color: var(--muted); border-left-color: var(--line); font-style: italic; }
 .empty { color: var(--muted); padding: 40px 0; }
-.create-day { padding: 0 16px 14px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
-.create-day label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 5px; }
-.create-day input { width: 100%; margin-bottom: 7px; }
 input, textarea, button { font: inherit; }
 input, textarea {
   color: var(--text); background: var(--panel); border: 1px solid var(--line);
@@ -739,7 +801,6 @@ button.action {
 button.action:hover { border-color: var(--accent); }
 button.action.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
 button.action:disabled { opacity: .55; cursor: wait; }
-.create-day button { width: 100%; }
 .job-status { color: var(--muted); font-size: 12px; margin-top: 6px; min-height: 1.4em; }
 .job-status.error { color: var(--accent); }
 /* 排队/执行中：状态文字前一个转圈；刷新页面后会从 /api/jobs/active 接着显示 */
@@ -751,11 +812,6 @@ button.action:disabled { opacity: .55; cursor: wait; }
 .job-status.done { color: #3a9a6a; }
 @keyframes job-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .job-status.busy::before, button.action.busy::before { animation-duration: 2.4s; } }
-.day-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.day-actions .action {
-  color: var(--accent); background: transparent; border-color: var(--accent);
-}
-.day-actions .action:hover { color: #fff; background: var(--accent); }
 .expression { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 11px; }
 .expression label { display: block; color: var(--muted); font-size: 12.5px; margin-bottom: 5px; }
 .expression textarea {
@@ -764,116 +820,23 @@ button.action:disabled { opacity: .55; cursor: wait; }
 .expression-foot { display: flex; align-items: center; gap: 9px; margin-top: 7px; }
 .expression-foot .job-status { margin: 0; flex: 1; }
 
-/* 骨架行里可点的穿搭名 */
-.skeleton .outfit {
-  font: inherit; color: var(--accent); background: none; border: 0; padding: 0;
-  cursor: pointer; border-bottom: 1px dashed currentColor;
+/* ── 当日穿搭：缩略图，点开是原来的大图弹层 ── */
+.outfits { position: sticky; top: 20px; }
+.fits { display: flex; flex-direction: column; gap: 12px; }
+.fit { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.fit.now { border-color: var(--accent); }
+.fit .outfit-picture img { aspect-ratio: 3 / 2; }
+.fit-info { padding: 8px 12px 10px; }
+.fit-info h4 { margin: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.fit-info .when { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.fit-info .now-tag { color: var(--accent); font-size: 11px; font-weight: 600; margin-right: 6px; }
+.fit-links { display: flex; gap: 12px; margin-top: 4px; }
+.fit-links .outfit {
+  font: inherit; font-size: 12px; color: var(--muted); background: none; border: 0; padding: 0; cursor: pointer;
 }
-.skeleton .outfit:hover { background: var(--badge); }
-
-/* ── 表达方式九宫格 ──
-   心情三档 × 体力三档拼出九种 reply_style。格子是取景器，点哪格就把哪格拼给人看；
-   运行时该发哪一格由当前时段的档位决定，跟这里点了什么无关。 */
-.style-panel {
-  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
-  padding: 14px 16px 16px; margin-bottom: 24px;
-}
-.style-panel h3 { margin: 0 0 4px; font-size: 15px; }
-.style-panel .hint { color: var(--muted); font-size: 12.5px; margin: 0 0 12px; }
-.style-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.style-cell {
-  font: inherit; text-align: left; cursor: pointer; position: relative;
-  border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
-  padding: 9px 10px 10px; display: flex; flex-direction: column;
-  gap: 4px; align-items: flex-start;
-}
-.style-cell:hover { border-color: var(--muted); }
-.style-cell.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-.style-cell .state-level { margin-left: 0; }
-.style-cell .whence {
-  position: absolute; top: 7px; right: 9px;
-  font-size: 11px; color: var(--accent); letter-spacing: .05em;
-}
-.style-out { margin-top: 13px; border-top: 1px solid var(--line); padding-top: 12px; }
-.style-out p { margin: 0; font-size: 14.5px; }
-.style-out .part-mood { color: var(--accent); }
-.style-out .part-energy { color: var(--kind-idle); }
-.style-out .part-fixed { color: var(--muted); }
-.style-out .legend { margin-top: 9px; font-size: 12px; color: var(--muted); }
-
-/* ── 【表达】页的树 ──
-   九宫格看的是「此刻落在哪一格」，这棵树看的是「同一句口吻下三档体力各怎么写」。
-   同一份数据两种排法，改文案时对着树看，跑起来对着九宫格看。
-
-   连接线用 li 的两个伪元素画：::before 是竖干（最后一个子节点只画到横枝为止，
-   免得多出一截悬空的线），::after 是横枝。横枝的 top 跟节点框第一行的中线对齐——
-   li 上边距 12 + 边框 1 + 内边距 11 + 半行高 ≈ 36px，所以每个节点框的第一行
-   必须是「档位标签 + 正文」同一行，多一行标题就会错位。 */
-.tree { max-width: 820px; }
-.tree ul { list-style: none; margin: 0; padding: 0 0 0 30px; }
-.tree li { position: relative; padding: 12px 0 0 26px; }
-.tree li::before {
-  content: ""; position: absolute; left: 0; top: 0; bottom: 0;
-  border-left: 1px solid var(--line);
-}
-.tree li:last-child::before { bottom: auto; height: 36px; }
-.tree li::after {
-  content: ""; position: absolute; left: 0; top: 36px; width: 26px;
-  border-top: 1px solid var(--line);
-}
-.tree .node {
-  display: flex; gap: 12px; align-items: flex-start;
-  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
-  padding: 11px 14px;
-}
-.tree .node .state-level { margin-left: 0; flex: none; }
-.tree .node p { margin: 0; flex: 1; min-width: 0; }
-/* 心情节点是这一支的头，给它一条竖色带；体力叶子保持素净，视线才有层次 */
-.tree .node.mood { border-left: 3px solid var(--accent); }
-.tree .node.leaf { background: var(--bg); }
-.tree-root {
-  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
-  padding: 12px 14px;
-}
-.tree-root h3 { margin: 0 0 6px; font-size: 14px; }
-.tree-root p { margin: 0; color: var(--muted); font-size: 13.5px; }
-.tree-root .fixed-text { color: var(--text); margin-top: 6px; }
-.tree-note {
-  border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px;
-  color: var(--muted); font-size: 13.5px; max-width: 820px; margin-top: 22px;
-}
-.tree-note p { margin: 0 0 6px; }
-.tree-note p:last-child { margin-bottom: 0; }
-.style-off {
-  display: inline-block; margin-left: 10px; padding: 1px 9px; border-radius: 999px;
-  background: var(--accent); color: #fff; font-size: 12px; vertical-align: 3px;
-}
-.tree-note code {
-  font-family: inherit; color: var(--text); background: var(--badge);
-  border-radius: 4px; padding: 1px 6px;
-}
-
-/* Hallmark · 衣柜局部：沿用页面色彩，每套外搭 / 内搭成对，完整展示图片。 */
-.outfit-section { margin-bottom: 24px; }
-.outfit-section-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 12px; }
-.outfit-section-head h3 { font-size: 15px; margin: 0; }
-.outfit-section-head span { font-size: 12px; color: var(--muted); }
-.outfit-strip { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
-.outfit-strip .outfit-card { flex: 0 0 min(95%, 680px); scroll-snap-align: start; }
-.outfit-card { container-type: inline-size; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-.outfit-caption { padding: 14px 18px; border-bottom: 1px solid var(--line); }
-.outfit-caption h3 { margin: 0; font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; }
-.outfit-current { color: var(--accent); font-size: 11px; margin-bottom: 4px; }
-.outfit-panels { display: grid; grid-template-columns: minmax(0, 1fr); }
-.outfit-panel { min-width: 0; }
-.outfit-panel + .outfit-panel { border-top: 1px solid var(--line); }
-.outfit-panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 10px 16px; }
-.outfit-panel-head h4 { margin: 0; font-size: 13px; }
-.outfit-panel-head span { font-size: 11px; color: var(--muted); }
-@container (min-width: 36rem) {
-  .outfit-panels { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .outfit-panel + .outfit-panel { border-top: 0; border-left: 1px solid var(--line); }
-}
+.fit-links .outfit:hover { color: var(--accent); }
+.fit .outfit-missing { aspect-ratio: 3 / 2; margin: 0; display: grid; place-items: center;
+  font-size: 12px; color: var(--muted); background: var(--badge); padding: 10px; text-align: center; }
 .outfit-picture { display: block; position: relative; width: 100%; padding: 0; border: 0; cursor: zoom-in; background: #fffdf8; color: var(--text); }
 .outfit-picture img { display: block; width: 100%; height: auto; aspect-ratio: 3 / 2; object-fit: contain; background: #fffdf8; }
 .outfit-picture[data-status="loading"]::after { content: "正在加载…"; position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; }
@@ -915,52 +878,60 @@ button.action:disabled { opacity: .55; cursor: wait; }
 }
 #modal .close:hover { color: var(--text); }
 #modal .none { color: var(--muted); font-style: italic; }
-.extra-link { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 12px !important; }
-@media (max-width: 640px) {
-  body { flex-direction: column; }
-  aside { width: auto; height: auto; position: static; border-right: 0; border-bottom: 1px solid var(--line); }
-  main { padding: 20px 16px 48px; }
+#modal .part-switch { display: flex; gap: 6px; margin: -4px 0 12px; }
+#modal .part-switch .outfit {
+  font: inherit; font-size: 12.5px; padding: 2px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: none; color: var(--muted);
+}
+#modal .part-switch .outfit.on { background: var(--accent); border-color: var(--accent); color: var(--band-ink); }
+
+@media (max-width: 1280px) {
+  .day-body { grid-template-columns: minmax(0, 1fr); }
+  .outfits { position: static; }
+  .fits { flex-direction: row; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x proximity; }
+  .fit { flex: 0 0 220px; scroll-snap-align: start; }
+}
+/* 手机：先看正文。侧栏收成顶上一条——最近几天横排，日历折叠 */
+@media (max-width: 860px) {
+  body { display: block; }
+  #rail { height: auto; position: static; border-right: 0; border-bottom: 1px solid var(--line); padding: 14px 16px; gap: 12px; }
+  #days { flex-direction: row; overflow-x: auto; gap: 4px; padding-bottom: 4px; }
+  #days a { flex: none; background: var(--badge); }
+  #days a .sub { margin-left: 4px; }
+  #days #older-days, #more-days { display: none; }
+  main { padding: 18px 16px 48px; }
+  .dayhead h2 { font-size: 21px; }
+  .day-actions .job-status { text-align: left; }
+  /* 手机上一天十几段挤在 360px 里，刻度只会叠成一团；时刻看各段的悬停提示和议程 */
+  .band-axis { display: none; }
+  .seg > summary { grid-template-columns: 50px minmax(0, 1fr); padding: 10px 12px 10px 16px; }
+  .seg-flags { grid-column: 2; justify-content: flex-start; max-width: none; }
+  .seg-body { padding: 10px 14px 14px; }
   .outfit-picture .zoom-hint { opacity: 1; }
   #modal { padding: 12px; }
   #modal .sheet { padding: 16px; }
-  #cal {
-    display: block; width: auto; height: auto; position: static; margin: 0;
-    border-left: 0; border-top: 1px solid var(--line);
-  }
 }
 </style>
 </head>
 <body>
-<aside>
+<aside id="rail">
   <h1>Mittes 的一天</h1>
-  <div class="create-day">
-    <label for="generate-date">指定日期</label>
-    <input id="generate-date" type="date">
-    <button id="generate-day" class="action primary">生成指定日期日程</button>
-    <div id="generate-status" class="job-status"></div>
+  <details class="rail-sec" id="cal-fold"><summary>日历</summary><div id="cal"></div></details>
+  <div class="rail-sec"><div class="rail-label">最近</div><nav id="days" aria-label="最近的日程"></nav></div>
+  <div class="rail-sec">
+    <label class="rail-label" for="generate-date">生成指定日期</label>
+    <div class="create-day">
+      <input id="generate-date" type="date">
+      <button id="generate-day" class="action primary">生成</button>
+      <div id="generate-status" class="job-status"></div>
+    </div>
   </div>
-  <nav id="days"></nav>
 </aside>
 <main id="main"><p class="empty">加载中…</p></main>
-<aside id="cal"></aside>
 <div id="modal"></div>
 <script>
 const WD = ['一','二','三','四','五','六','日'];
 const esc = s => (s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
-// 表达方式那张表由 viewer 从 reply_style.py 原样发过来（见 _page_bytes），
-// 前端不留副本。心情决定口吻，体力决定这个口吻还剩多少输出；体力那层是先按心情
-// 分组的，所以取值要 ENERGY_BLOCK[心情][体力]，不是 ENERGY_BLOCK[体力]。
-const STYLE_TABLE = __STYLE_TABLE__;
-const MOOD_BLOCK = STYLE_TABLE.voice;
-const ENERGY_BLOCK = STYLE_TABLE.stamina;
-const STYLE_FIXED = STYLE_TABLE.fixed;
-// 功能关掉时九格照常显示（这里是改文案的地方），但每处都要挂上这块牌子。
-const STYLE_OFF = STYLE_TABLE.enabled === false
-  ? '<span class="style-off">功能已关闭，当前不替换 reply_style</span>' : '';
-const MOODS = STYLE_TABLE.moods;
-const ENERGIES = STYLE_TABLE.energies;
-let stylePick = null;
 
 let knownDays = [];
 
@@ -973,16 +944,14 @@ async function loadDays() {
     return `<a href="#${d.date}" data-d="${d.date}">${d.date.slice(5)} 周${WD[d.weekday]}
       <span class="sub">${bad}${neg}</span></a>`;
   };
-  // 归档只会越来越长，全列出来底下的「表达」入口会被顶到要滚动才够得着。
-  // 近七天是日常真正会点的范围，更早的收进折叠区（days 已按日期倒序）。
+  // 归档只会越来越长，近七天是日常真正会点的范围，更早的收进折叠区（days 已按日期倒序）。
   const older = days.slice(7);
   const foldout = older.length
     ? `<button type="button" id="more-days" aria-expanded="false">更早的 ${older.length} 天</button>
        <div id="older-days" hidden>${older.map(link).join('')}</div>`
     : '';
-  document.getElementById('days').innerHTML = days.slice(0, 7).map(link).join('') + foldout
-    // 衣柜整页已移到 mittes-panel 的 /wardrobe 单独维护，这里只留当日穿搭
-    + `<a href="#expression" data-d="expression" class="extra-link">表达　<span class="sub">心情 × 体力</span></a>`;
+  // 衣柜整页已移到 mittes-panel 的 /wardrobe 单独维护，这里只留当日穿搭
+  document.getElementById('days').innerHTML = days.slice(0, 7).map(link).join('') + foldout;
 }
 
 function toggleOlder(open) {
@@ -1043,6 +1012,7 @@ function holidayNote(name) {
 const HOL = {};
 let calYM = null;        // 当前显示的月份 "YYYY-MM"
 let selectedDay = null;  // 正在看的那天，日历上要高亮
+let calMoreOpen = false; // 祝日说明的折叠状态，翻月重画时保留
 
 const pad2 = n => String(n).padStart(2, '0');
 const isoOf = d => `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
@@ -1178,6 +1148,7 @@ async function renderCal() {
       ${cells.map(cell).join('')}
     </div>
     ${missing}
+    <details class="cal-more"${calMoreOpen ? ' open' : ''}><summary>本月祝日与连休 · 图例</summary>
     ${holidays ? `<div class="cal-sec"><b>本月祝日</b>${holidays}</div>` : ''}
     ${runs ? `<div class="cal-sec"><b>连休</b>${runs}</div>` : ''}
     <div class="cal-note">日本没有调休补班，只有多出来的假：祝日撞上周日，补休顺延到之后头一个平日；
@@ -1188,7 +1159,7 @@ async function renderCal() {
       <i><span class="sw"></span>底色是祝日和连休</i>
       <i><span class="dot"></span>有归档，可点</i>
       <i>细框是今天</i>
-    </div>`;
+    </div></details>`;
   };
 
   // 缺哪年的祝日表就去取，但**先按手头有的画一遍**：取一年要走网络，最慢 6 秒，
@@ -1203,6 +1174,8 @@ async function renderCal() {
 
 async function boot() {
   document.getElementById('generate-date').value = jstNow().date;
+  // 宽屏日历常开；手机上先看正文，日历收起来要用再点
+  document.getElementById('cal-fold').open = matchMedia('(min-width: 861px)').matches;
   await loadDays();
   window.addEventListener('hashchange', route);
   await route();
@@ -1210,20 +1183,12 @@ async function boot() {
 }
 
 async function route() {
-  if (location.hash === '#expression') {
-    document.querySelectorAll('#days a').forEach(a => a.classList.toggle('on', a.dataset.d === 'expression'));
-    renderExpression();
-    selectedDay = null;
-    renderCal();
-    window.scrollTo(0, 0);
-    return;
-  }
   const today = jstNow().date;
   const day = location.hash.slice(1)
     || (knownDays.includes(today) ? today : knownDays[0]);
   if (!day) {
     document.getElementById('main').innerHTML =
-      '<p class="empty">归档库里还没有数据，可以从左侧指定日期生成。</p>';
+      '<p class="empty">归档库里还没有数据，可以在侧栏指定日期生成。</p>';
     renderCal();   // 一条归档都没有时日历照样画，至少能看祝日和周末
     return;
   }
@@ -1253,150 +1218,93 @@ function focusNow() {
 
 function render(day, data, w) {
   const m = data.meta;
-  const d = new Date(day + 'T00:00:00');
   const jst = jstNow();
   const isToday = jst.date === day;
   const nowSlot = isToday ? jst.minutes : -1;
+  const busy = (data.gate || {}).busy_kinds || [];
+  const shares = data.shares || {};
 
-  const meta = [
+  const chips = [
     m.weather && esc(m.weather),
     m.holiday && esc(m.holiday),
     `${m.ok_count}/${m.total_count} 段生成`,
     m.batch_reason && esc(m.batch_reason),
     m.batch_elapsed ? `耗时 ${Math.round(m.batch_elapsed)}s` : '',
-    isToday ? `现在 ${jst.clock} JST${jst.wrapped ? '（跨零点，仍算这一天）' : ''}` : '',
-  ].filter(Boolean).join('　·　');
-
-  // 此刻那一段的档位。不是今天、或者这一段还是底稿（没有档位）时为 null，
-  // 九宫格就没有「现在」标记，默认停在中性 · 一般。
-  stylePick = null;
-  let current = null;
-  for (const s of data.segments) {
-    const [a, b] = s.slot.split('-').map(t => +t.slice(0,2) * 60 + +t.slice(3));
-    if (nowSlot >= a && nowSlot < b && s.mood_level && s.energy_level) {
-      current = {mood: s.mood_level, energy: s.energy_level};
-      break;
-    }
-  }
+  ].filter(Boolean).map(t => `<span class="chip">${t}</span>`).join('')
+    + (isToday ? `<span class="chip strong">现在 ${jst.clock} JST${jst.wrapped ? '（跨零点，仍算这一天）' : ''}</span>` : '');
 
   const segs = data.segments.map(s => {
-    const [a, b] = s.slot.split('-').map(t => +t.slice(0,2) * 60 + +t.slice(3));
+    const [a, b] = slotMinutes(s.slot);
     const now = nowSlot >= a && nowSlot < b;
-    return `<article class="seg${now ? ' now' : ''}" data-anchor="${esc(s.slot)}">
-      <h3><span class="slot">${s.slot}</span>${esc(s.title)}
-        ${s.generated ? '' : '<span class="badge">底稿</span>'}
-        ${s.negative_level ? `<span class="badge neg">不顺心 · ${esc(s.negative_level)}</span>` : ''}
-      </h3>
-      <div class="skeleton">${esc(s.place)}　/　<button class="outfit" data-o="${esc(s.outfit)}">${esc(s.outfit)}</button>　/　${esc(s.company)}　/　${esc(s.kind)}</div>
-      ${trail(s, now ? nowSlot : -1)}
-      <p class="story">${esc(s.story)}</p>
-      <dl class="fields">
-        <dt>心情</dt><dd>${esc(s.mood)}${stateLevel(s.mood_level)}</dd>
-        <dt>体力</dt><dd>${esc(s.physical_state || '—')}${stateLevel(s.energy_level)}</dd>
-      </dl>
-      ${data.manner_enabled === false ? '' : `<div class="expression">
-        <label>表达方式</label>
-        <textarea maxlength="200" data-expression>${esc(s.manner)}</textarea>
-        <div class="expression-foot">
-          <button class="action save-expression" data-day="${day}" data-slot="${esc(s.slot)}">保存</button>
-          <span class="job-status"></span>
+    const cls = s.kind === '睡眠' ? 'sleep' : (busy.includes(s.kind) ? 'busy' : 'idle');
+    const used = (shares[s.slot] || []).some(r => r.shared_at);
+    const flags = [
+      now ? '<span class="flag now">现在</span>' : '',
+      s.generated ? '' : '<span class="flag">底稿</span>',
+      s.negative_level ? `<span class="flag neg">不顺心 · ${esc(s.negative_level)}</span>` : '',
+      s.topic ? `<span class="flag say${used ? ' used' : ''}">${used ? '已说' : '可说'}</span>` : '',
+      stateLevel(s.mood_level),
+      stateLevel(s.energy_level),
+    ].join('');
+    const [from, to] = s.slot.split('-');
+    return `<details class="seg ${cls}${now ? ' now' : ''}" data-anchor="${esc(s.slot)}"${now ? ' open' : ''}>
+      <summary>
+        <span class="seg-time"><b>${esc(from)}</b><i>${esc(to)}</i></span>
+        <span class="seg-main"><span class="seg-title">${esc(s.title)}</span>
+          <span class="seg-sub">${esc(s.place)} · ${esc(s.company)} · ${esc(s.kind)}</span></span>
+        <span class="seg-flags">${flags}</span>
+      </summary>
+      <div class="seg-body">
+        ${trail(s, now ? nowSlot : -1)}
+        <p class="story">${esc(s.story) || '<span style="color:var(--muted)">（这段没有生成内容）</span>'}</p>
+        <dl class="fields">
+          <dt>心情</dt><dd>${esc(s.mood)}${stateLevel(s.mood_level)}</dd>
+          <dt>体力</dt><dd>${esc(s.physical_state || '—')}${stateLevel(s.energy_level)}</dd>
+          <dt>穿搭</dt><dd><button class="outfit" data-o="${esc(s.outfit)}">${esc(s.outfit)}</button></dd>
+        </dl>
+        ${data.manner_enabled === false ? '' : `<div class="expression">
+          <label>表达方式</label>
+          <textarea maxlength="200" data-expression>${esc(s.manner)}</textarea>
+          <div class="expression-foot">
+            <button class="action save-expression" data-day="${day}" data-slot="${esc(s.slot)}">保存</button>
+            <span class="job-status"></span>
+          </div>
+        </div>`}
+        ${topicBlock(s, shares[s.slot] || [])}
+      </div>
+    </details>`;
+  }).join('');
+
+  const outline = m.outline ? `<p class="outline" title="点击展开 / 收起"><b>脉络</b>${esc(m.outline)}</p>`
+    : m.day_digest ? `<p class="outline" title="点击展开 / 收起"><b>当日概要</b>${esc(m.day_digest)}</p>` : '';
+
+  document.getElementById('main').innerHTML = `
+    <header class="dayhead">
+      <div class="dayhead-top">
+        <div class="dayhead-title">
+          <h2>${+day.slice(5, 7)} 月 ${+day.slice(8)} 日<span class="wd">${day.slice(0, 4)} · 周${WD[m.weekday]}</span>${isToday ? '<span class="pill">今天</span>' : ''}${m.aborted ? '<span class="pill warn">批次中止</span>' : ''}</h2>
+          <div class="chips">${chips}</div>
         </div>
-      </div>`}
-      ${topicBlock(s, (data.shares || {})[s.slot] || [])}
-    </article>`;
-  }).join('');
-
-  document.getElementById('main').innerHTML = `
-    <div class="dayhead">
-      <h2>${day} 周${WD[m.weekday]}${m.aborted ? ' —— 批次中止' : ''}</h2>
-      <div class="meta">${meta}</div>
-      ${m.aborted ? `<div class="digest">中止原因：${esc(m.aborted)}</div>` : ''}
-      ${m.outline ? `<div class="digest">脉络：${esc(m.outline)}</div>`
-        : m.day_digest ? `<div class="digest">当日概要：${esc(m.day_digest)}</div>` : ''}
+        <div class="day-actions">
+          <button class="action" id="regen-day" data-day="${day}">重新生成日程</button>
+          <button class="action" id="regen-topics" data-day="${day}">重新生成 topic</button>
+          ${data.manner_enabled === false ? '' : `<button class="action" id="regen-expressions" data-day="${day}">重新生成表达方式</button>`}
+          <span id="day-job-status" class="job-status"></span>
+        </div>
+      </div>
+      ${m.aborted ? `<div class="notice">中止原因：${esc(m.aborted)}</div>` : ''}
+      ${outline}
       ${timeline(data, nowSlot)}
-      <div class="day-actions">
-        <button class="action" id="regen-day" data-day="${day}">重新生成当日日程</button>
-        <button class="action" id="regen-topics" data-day="${day}">重新生成 topic</button>
-        ${data.manner_enabled === false ? '' : `<button class="action" id="regen-expressions" data-day="${day}">重新生成表达方式</button>`}
-        <span id="day-job-status" class="job-status"></span>
-      </div>
-    </div>${dayOutfits(data.segments, nowSlot, w)}${styleGrid(current)}${segs}`;
-  paintJobs();
-}
-
-// 九宫格本体。current 只决定「现在」标记和默认选中格；点别的格子只换预览。
-function styleGrid(current) {
-  const pick = stylePick || current || {mood: '中性', energy: '一般'};
-  stylePick = pick;
-  const cells = [];
-  for (const mood of MOODS) {
-    for (const energy of ENERGIES) {
-      const on = pick.mood === mood && pick.energy === energy;
-      const now = current && current.mood === mood && current.energy === energy;
-      cells.push(`<button type="button" class="style-cell${on ? ' on' : ''}"
-        data-mood="${mood}" data-energy="${energy}">${now ? '<span class="whence">现在</span>' : ''}
-        ${stateLevel(mood)}${stateLevel(energy)}</button>`);
-    }
-  }
-  const hint = current
-    ? '「现在」是此刻那一段的档位。点格子看别的组合。'
-    : '这一天没有正在进行的时段，默认停在中性 · 一般。点格子看别的组合。';
-  return `<section class="style-panel">
-    <h3>表达方式组合${STYLE_OFF}</h3>
-    <p class="hint">${hint}</p>
-    <div class="style-grid">${cells.join('')}</div>
-    <div class="style-out" id="style-out">${styleText(pick)}</div>
-  </section>`;
-}
-
-// 三段拼起来就是要发给 replyer 的那串，顺序跟 reply_style.compose 一致：
-// 口吻 → 体力 → 固定。分色是为了一眼看出哪半句归哪个板块管，也方便发现两块说重了——
-// 比如心情已经给过温度，体力那块就不该再给一次。
-function styleText(pick) {
-  return `<p><span class="part-mood">${esc(MOOD_BLOCK[pick.mood])}</span>`
-    + `<span class="part-energy">${esc(ENERGY_BLOCK[pick.mood][pick.energy])}</span>`
-    + `<span class="part-fixed">${esc(STYLE_FIXED)}</span></p>`
-    + `<p class="legend"><span class="part-mood">心情板块</span>　`
-    + `<span class="part-energy">体力板块</span>　`
-    + `<span class="part-fixed">固定部分</span></p>`;
-}
-
-// 【表达】页：一棵真正带连接线的树。根是拼接规则，往下三个心情节点，每个心情
-// 节点再挂它自己那三档体力，全文列出，方便横着比也竖着比。
-//
-// 每个节点框的第一行都得是「档位标签 + 正文」同一行——横枝的位置是按这个算死的，
-// 节点里多加一行标题就会跟线错开。固定部分只在根节点出现一次：九片叶子上印九遍
-// 同一句，真正在变的那半句反而看不出来了。
-function renderExpression() {
-  const nodes = MOODS.map(mood => {
-    const leaves = ENERGIES.map(energy => `<li>
-      <div class="node leaf">${stateLevel(energy)}<p>${esc(ENERGY_BLOCK[mood][energy])}</p></div>
-    </li>`).join('');
-    return `<li>
-      <div class="node mood">${stateLevel(mood)}<p>${esc(MOOD_BLOCK[mood])}</p></div>
-      <ul>${leaves}</ul>
-    </li>`;
-  }).join('');
-
-  document.getElementById('main').innerHTML = `
-    <div class="dayhead">
-      <h2>表达方式${STYLE_OFF}</h2>
-      <div class="meta">心情决定口吻，体力决定这个口吻还剩多少输出　·　${MOODS.length} × ${ENERGIES.length} = ${MOODS.length * ENERGIES.length} 格</div>
-    </div>
-    <div class="tree">
-      <div class="tree-root">
-        <h3>reply_style ＝ 口吻 ＋ 体力 ＋ 固定</h3>
-        <p>整段替换主程序配置里的那份。每条路径末尾都接同一句固定部分：</p>
-        <p class="fixed-text">${esc(STYLE_FIXED)}</p>
-      </div>
-      <ul>${nodes}</ul>
-    </div>
-    <div class="tree-note">
-      <p>红色竖带的是心情节点，它下面挂的三条是这一档心情<b>专属</b>的体力写法——三档心情各有各的一组，改一组不会牵动另一组。</p>
-      <p>正面和中性眼下三档字面全同，但已经是两张独立的表——改一边不会牵动另一边。</p>
-      <p>底稿段（没有档位）整套不替换，沿用 bot_config.toml 里配置的那份。</p>
-      ${STYLE_TABLE.enabled === false ? '<p><b>这套功能当前是关闭的</b>（插件 config.toml 的 <code>[reply_style] enabled</code>）。下面的文案照常可以改，但 replyer 现在收到的是 bot_config.toml 里的 reply_style 原文。</p>' : ''}
+    </header>
+    <div class="day-body">
+      <section class="agenda" aria-label="当日日程">
+        <div class="sec-head"><h3>日程</h3><span class="count">${data.segments.length} 段</span>
+          <button type="button" class="link" id="toggle-all">全部展开</button></div>
+        ${segs}
+      </section>
+      ${dayOutfits(data.segments, nowSlot, w)}
     </div>`;
+  paintJobs();
 }
 
 function stateLevel(value) {
@@ -1657,53 +1565,63 @@ function alwaysDescription(w, className = '') {
       .map(([k, label]) => `<dt>${label}</dt><dd>${esc(w.always[k])}</dd>`).join('')}</dl></details>`;
 }
 
-function outfitPanel(name, w, part) {
-  const url = outfitImageUrl(name, w, part);
+function outfitThumb(name, w) {
+  const url = outfitImageUrl(name, w, 'outer');
   const o = (w.wardrobe || {})[name];
-  const label = part === 'inner' ? '内搭' : '外搭';
-  const picture = url ? `<button type="button" class="outfit-picture" data-status="loading" data-o="${esc(name)}" data-part="${part}" aria-label="放大查看${esc(name)}${label}">
-      <img src="${esc(url)}" alt="${esc(name)}${label}设定图" width="1536" height="1024" loading="lazy" decoding="async">
+  return url ? `<button type="button" class="outfit-picture" data-status="loading" data-o="${esc(name)}" data-part="outer" aria-label="放大查看${esc(name)}">
+      <img src="${esc(url)}" alt="${esc(name)}设定图" width="1536" height="1024" loading="lazy" decoding="async">
       <span class="zoom-hint" aria-hidden="true">查看大图 ↗</span></button>`
-    : `<p class="outfit-missing">${o ? label + '设定图尚未添加' : '当日临时搭配 · 暂无设定图'}</p>`;
-  return `<section class="outfit-panel" aria-label="${esc(name)}${label}"><div class="outfit-panel-head"><h4>${label}</h4><span>独立设定图</span></div>${picture}${outfitDescription(o, part)}</section>`;
+    : `<p class="outfit-missing">${o ? '设定图尚未添加' : '当日临时搭配 · 暂无设定图'}</p>`;
 }
 
-function outfitCard(name, w, current = false) {
-  return `<article class="outfit-card"><div class="outfit-caption">
-      ${current ? '<div class="outfit-current">此刻穿着</div>' : ''}<h3>${esc(name)}</h3>
-    </div><div class="outfit-panels">${outfitPanel(name, w, 'outer')}${outfitPanel(name, w, 'inner')}</div></article>`;
+// 同一套连着穿的几段合成一个时间范围，读起来是「什么时候穿的」而不是一串时段
+function outfitSpans(segments, name) {
+  const spans = [];
+  segments.forEach(s => {
+    if (s.outfit !== name) return;
+    const [from, to] = s.slot.split('-');
+    const last = spans.at(-1);
+    if (last && last[1] === from) last[1] = to; else spans.push([from, to]);
+  });
+  return spans.map(([a, b]) => `${a}–${b}`).join('　');
 }
 
 function dayOutfits(segments, nowSlot, w) {
   const names = [...new Set(segments.map(s => s.outfit).filter(Boolean))];
   if (!names.length) return '';
-  if (w.error) return `<section class="outfit-section"><h3>当日穿搭</h3><p class="empty">${esc(w.error)}</p></section>`;
+  const head = `<div class="sec-head"><h3>当日穿搭</h3><span class="count">${names.length} 套</span></div>`;
+  if (w.error) return `<aside class="outfits">${head}<p class="empty">${esc(w.error)}</p></aside>`;
   const current = segments.find(s => {
     const [a, b] = slotMinutes(s.slot);
     return nowSlot >= a && nowSlot < b;
   });
-  // 当前搭配排在最前，归档日则保持当天首次穿着的顺序。
-  if (current && names.includes(current.outfit)) {
-    names.splice(names.indexOf(current.outfit), 1);
-    names.unshift(current.outfit);
-  }
-  return `<section class="outfit-section" aria-label="当日穿搭">
-    <div class="outfit-section-head"><h3>当日穿搭</h3><span>${names.length} 套</span></div>
-    <div class="outfit-strip" tabindex="0" aria-label="当日服饰图片，可横向滚动">${names.map(name => outfitCard(name, w, name === current?.outfit)).join('')}</div>
-    </section>`;
+  const hasInner = name => (w.inner_images || []).includes(name);
+  const cards = names.map(name => {
+    const now = name === current?.outfit;
+    return `<article class="fit${now ? ' now' : ''}">${outfitThumb(name, w)}
+      <div class="fit-info">
+        <h4>${now ? '<span class="now-tag">此刻</span>' : ''}${esc(name)}</h4>
+        <div class="when">${outfitSpans(segments, name)}</div>
+        <div class="fit-links">
+          <button type="button" class="outfit" data-o="${esc(name)}" data-part="outer">外搭</button>
+          ${hasInner(name) ? `<button type="button" class="outfit" data-o="${esc(name)}" data-part="inner">内搭</button>` : ''}
+        </div>
+      </div></article>`;
+  }).join('');
+  return `<aside class="outfits" aria-label="当日穿搭">${head}<div class="fits">${cards}</div></aside>`;
 }
 
 let outfitTrigger = null;
 function closeOutfit() {
   document.getElementById('modal').classList.remove('on');
   document.body.style.overflow = '';
-  document.querySelectorAll('body > aside, body > main').forEach(node => node.inert = false);
+  document.querySelectorAll('#rail, #main').forEach(node => node.inert = false);
   if (outfitTrigger?.isConnected) outfitTrigger.focus({preventScroll: true});
 }
 
 // 点段落里的穿搭名或画廊图片 → 先看完整设定图，文字默认收起。
 async function showOutfit(name, part = 'outer') {
-  outfitTrigger = document.activeElement;
+  if (!document.getElementById('modal').classList.contains('on')) outfitTrigger = document.activeElement;
   const w = await wardrobe();
   const o = (w.wardrobe || {})[name];
   const url = outfitImageUrl(name, w, part);
@@ -1713,13 +1631,17 @@ async function showOutfit(name, part = 'outer') {
         <a class="original" href="${esc(url)}" target="_blank" rel="noopener">查看原图 ↗</a>`
     : `<p class="none">${o ? '这套穿搭尚未添加设定图。' : '这一身不在衣柜里，是当天临时定的搭配，暂无设定图。'}</p>`;
   const always = o ? alwaysDescription(w) : '';
+  const parts = [['outer', '外搭'], ['inner', '内搭']]
+    .filter(([key]) => key === 'outer' || (w.inner_images || []).includes(name))
+    .map(([key, text]) => `<button type="button" class="outfit${key === part ? ' on' : ''}" data-o="${esc(name)}" data-part="${key}">${text}</button>`).join('');
   document.getElementById('modal').innerHTML =
     `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="outfit-title">
       <button type="button" class="close" aria-label="关闭服饰详情">×</button>
-      <h3 id="outfit-title">${esc(name)} · ${label}</h3>${body}${outfitDescription(o, part)}${always}</div>`;
+      <h3 id="outfit-title">${esc(name)} · ${label}</h3>
+      ${parts.includes('data-part="inner"') ? `<div class="part-switch">${parts}</div>` : ''}${body}${outfitDescription(o, part)}${always}</div>`;
   document.getElementById('modal').classList.add('on');
   document.body.style.overflow = 'hidden';
-  document.querySelectorAll('body > aside, body > main').forEach(node => node.inert = true);
+  document.querySelectorAll('#rail, #main').forEach(node => node.inert = true);
   document.querySelector('#modal .close').focus({preventScroll: true});
 }
 
@@ -1781,18 +1703,27 @@ document.addEventListener('click', e => {
   const jump = e.target.closest('.band-cell');
   if (jump) {
     const target = document.querySelector(`.seg[data-anchor="${CSS.escape(jump.dataset.jump)}"]`);
-    if (target) target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (target) {
+      target.open = true;
+      target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
     return;
   }
 
-  const cell = e.target.closest('.style-cell');
-  if (cell) {
-    stylePick = {mood: cell.dataset.mood, energy: cell.dataset.energy};
-    document.querySelectorAll('.style-cell').forEach(node => node.classList.toggle(
-      'on', node.dataset.mood === stylePick.mood && node.dataset.energy === stylePick.energy));
-    document.getElementById('style-out').innerHTML = styleText(stylePick);
+  const all = e.target.closest('#toggle-all');
+  if (all) {
+    const segs = [...document.querySelectorAll('.seg')];
+    const open = segs.some(seg => !seg.open);
+    segs.forEach(seg => { seg.open = open; });
+    all.textContent = open ? '全部收起' : '全部展开';
     return;
   }
+
+  const outline = e.target.closest('.outline');
+  if (outline) { outline.classList.toggle('open'); return; }
+
+  const calMore = e.target.closest('#cal .cal-more > summary');
+  if (calMore) { calMoreOpen = !calMore.parentElement.open; return; }
 
   const more = e.target.closest('#more-days');
   if (more) { toggleOlder(document.getElementById('older-days').hidden); return; }
@@ -1869,23 +1800,7 @@ boot();
 
 
 def _page_bytes() -> bytes:
-    """把表达方式表嵌进页面再发。
-
-    ``<`` 转义掉是因为这段 JSON 落在 ``<script>`` 里：正文出现 ``</script>`` 会提前
-    截断脚本。现在的文案里没有尖括号，但这张表是随时会改的文案，不能指望它一直没有。
-    """
-    table = json.dumps(
-        {
-            "voice": reply_style.VOICE,
-            "fixed": reply_style.FIXED,
-            "stamina": reply_style.STAMINA,
-            "enabled": _reply_style_enabled(CONFIG_PATH),
-            "moods": list(reply_style.MOODS),
-            "energies": list(reply_style.ENERGIES),
-        },
-        ensure_ascii=False,
-    ).replace("<", "\\u003c")
-    return PAGE.replace("__STYLE_TABLE__", table).encode("utf-8")
+    return PAGE.encode("utf-8")
 
 
 def _lan_address() -> str:

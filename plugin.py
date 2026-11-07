@@ -54,7 +54,6 @@ from .character.outfit_images import (
 from .character.wardrobe import Wardrobe
 from .generation.pipeline import SegmentGenerator
 from .observability.prompt_preview import PromptPreview
-from .reply_style import compose as compose_reply_style
 from .schedule.holidays import ScheduleGenerator
 from .schedule.negative_events import LEVEL_MILD, NegativeEntry, NegativeScheduler
 from .schedule.private_topics import PrivateTopicWaker
@@ -83,15 +82,6 @@ _REPLYER_FALLBACK_PREFIX = "当前时间："
 # 日历后缀的起首字样。既是拼接用的前缀，也是**幂等判据**——hook 万一在同一批 items
 # 上跑第二次（重试、或将来有别的链路复用），看到这两个字样之一就不再追加。
 _CALENDAR_MARKS = ("（日本祝日", "（连休")
-
-# reply_style 在 system prompt 里的上下两句。它们是 prompts/zh-CN/maisaka_replyer.prompt
-# 模板里写死的正文，reply_style 就夹在中间独占一行。
-#
-# **用模板句子当锚点，不去读 global_config.personality.reply_style 再做匹配。**
-# 那个值是人随时会改的配置，改完这里就静默失配；模板句子只有跟上游同步时才会动，
-# 真动了也会在这条 warning 上立刻看出来。
-_REPLY_STYLE_HEAD = "然后给出日常且口语化的回复，\n"
-_REPLY_STYLE_TAIL = "\n你可以参考【回复信息参考】中的信息"
 
 # 谈资工具名。planner hook 要按它从 tool_definitions 里摘工具，所以名字必须只有一处。
 _TOPIC_TOOL_NAME = "get_mittes_topic"
@@ -282,16 +272,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         不是"删除"，改回 true 就恢复，不需要重新生成。
         """
         return bool(await self._get_config("manner.enabled", True))
-
-    async def _reply_style_enabled(self) -> bool:
-        """按心情 × 体力替换 reply_style 这套功能开着没有。
-
-        关掉之后 replyer 的 system prompt **完全不动**，主程序配置里的
-        ``[personality] reply_style`` 原样生效。这跟「档位不全所以不替换」是两回事：
-        那是逐段的退让，这是整套停用。``reply_style.py`` 的表原样留着，
-        ``/status`` 和管理页仍会显示拼出来的结果，只是标明当前没生效。
-        """
-        return bool(await self._get_config("reply_style.enabled", True))
 
     async def _linked_sessions(self, session_id: str) -> list[str]:
         """返回和 ``session_id`` 同属一个关联组的所有会话（含它自己）。
@@ -1428,10 +1408,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
         用「包含」而不是「相等」来匹配，是因为 02_owner_auth_plugin 可能已经往
         reference 首行合并过身份文案，两个插件的 hook 顺序不保证。
-
-        另外还会按此刻的心情 × 体力档位整段替换 system prompt 里的 reply_style，
-        见 ``reply_style.py``。那一步跟 A、C 都无关，所以这一轮既没有表达方式也没有
-        谈资时也照做。
         """
         if not items:
             return {"success": True, "action": "continue"}
@@ -1439,26 +1415,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         moment, day, segment, state = self._current()
         store = self._require_store()
         updated = list(items)
-
-        # 语气：整段换掉主程序配置里的 reply_style。两道门都得过——功能开关开着，
-        # 且这一段有完整档位（底稿段没有，见 reply_style.compose）。任一不过就不碰
-        # system item，主程序配置里那份原样生效。
-        style = (
-            compose_reply_style(state.mood_level, state.energy_level)
-            if await self._reply_style_enabled()
-            else ""
-        )
-        style_applied = False
-        if style:
-            system_index = _find_item_type_index(updated, "SystemMessageItem")
-            rewritten = (
-                _replace_reply_style(updated[system_index], style) if system_index >= 0 else None
-            )
-            if rewritten is None:
-                _logger.warning("[replyer] system item 里没找到 reply_style 锚点，本轮沿用配置里那份")
-            else:
-                updated[system_index] = rewritten
-                style_applied = True
 
         # A：表达方式。C：今天那件可说的小事，两条通道二选一——planner 本轮调过
         # get_mittes_topic 就走"开口版"，否则走"接话版"。
@@ -1483,17 +1439,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 else self._topic_block_reply(state.topic)
             )
         if not manner and not topic:
-            if not style_applied:
-                return {"success": True, "action": "continue"}
-            return _hook_response(
-                updated,
-                kwargs,
-                extra={
-                    "reply_reason": reply_reason,
-                    "reply_tool_args": reply_tool_args,
-                    "session_id": session_id,
-                },
-            )
+            return {"success": True, "action": "continue"}
 
         # 接话版是低优先级背景：紧跟 system，但放在所有聊天记录之前，
         # 后面的真实对话会重新取得注意力。不塞进 system 正文，那样权重反而更高。
@@ -1554,9 +1500,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         store = self._require_store()
         run_at = await self._run_at()
         trail = _render_trail(state) or "（没有时段轴，退回骨架地点）"
-        # 功能关掉时照样把拼出来的那串显示出来，但要标明没生效——
-        # 光显示文字会让人以为 replyer 收到的就是它。
-        style_off = "" if await self._reply_style_enabled() else "　← 功能已关，未生效"
         lines = [
             f"{day:%Y-%m-%d} 周{weekday_name(day)} {moment:%H:%M}（JST）　"
             f"{'（跨零点，仍算前一天）' if day != moment.date() else ''}",
@@ -1573,7 +1516,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             f"心情分档：{state.mood_level or '（旧记录未生成）'}",
             f"体力：{state.physical_state or '（旧记录未生成）'}",
             f"体力分档：{state.energy_level or '（旧记录未生成）'}",
-            f"reply_style：{compose_reply_style(state.mood_level, state.energy_level) or '（档位不全，沿用配置里那份）'}{style_off}",
             f"topic：{state.topic or '（这段没什么好说的）'}",
             "",
             "来源：生成结果" if state.generated else "来源：底稿（该段未生成成功）",
@@ -1594,11 +1536,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         visible, reason = await self._topic_gate(stream_id)
         empty = "（这段没什么好说的，不注入）"
         suffix = _calendar_suffix(self._require_store().day_context(day))
-        style_note = "" if await self._reply_style_enabled() else "【功能已关，实际不替换】"
         text = (
-            f"── replyer reply_style（整段替换 system prompt 里那一行）{style_note} ──\n"
-            f"{compose_reply_style(state.mood_level, state.energy_level) or '（档位不全，沿用配置里那份）'}\n"
-            "\n"
             "── planner「时间：」那条的行尾后缀 ──\n"
             + (f"…{moment:%H:%M:%S}{suffix}" if suffix else "（今天既不是祝日也不在连休里，不加）")
             + "\n"
@@ -2237,34 +2175,6 @@ def _find_item_type_index(items: list[Any], item_type: str) -> int:
         if isinstance(item, dict) and item.get("item_type") == item_type:
             return index
     return -1
-
-
-def _replace_reply_style(item: Any, style: str) -> dict[str, Any] | None:
-    """把 system item 里 reply_style 那一行换成 ``style``，返回新 item；换不了返回 None。
-
-    只改命中锚点的那个 text part，其余 part 和 meta 原样带过去——item_id 也不换，
-    这不是新增的 item，是同一条被改了正文。
-    """
-    if not isinstance(item, dict):
-        return None
-    parts = item.get("parts")
-    if not isinstance(parts, list):
-        return None
-    for index, part in enumerate(parts):
-        if not isinstance(part, dict) or part.get("type") != "text":
-            continue
-        text = str(part.get("text") or "")
-        head = text.find(_REPLY_STYLE_HEAD)
-        if head < 0:
-            continue
-        head += len(_REPLY_STYLE_HEAD)
-        tail = text.find(_REPLY_STYLE_TAIL, head)
-        if tail < 0:
-            return None
-        new_parts = list(parts)
-        new_parts[index] = {**part, "text": text[:head] + style + text[tail:]}
-        return {**item, "parts": new_parts}
-    return None
 
 
 def _new_user_item(text: str) -> dict[str, Any]:

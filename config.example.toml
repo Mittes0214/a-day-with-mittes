@@ -44,6 +44,11 @@ expression_model = "claude-sonnet-5"
 # story 再吐十条 topic。第三轮每个时段单独生成表达方式。240 秒只剩两成余量，
 # 顶穿了就整天退底稿——那时候该换一个
 # hard_timeout 更宽的基座任务，而不是缩这边。
+#
+# **单次请求还受模型所在 provider 的 `timeout` 管**，而且它比 hard_timeout 先触发：
+# 本部署走 CLIProxyAPI，原先是 90 秒，2026-10-28 周四骨架排到 15 段，主生成一次
+# 129 秒，连着两次超时整天退底稿，已调到 240。插件跑在独立的 runner 子进程里，
+# 改了 model_config.toml 要重启 Bot（mittes-dev.sh）才会生效。
 base_task = "memory"
 
 temperature = 0.9
@@ -59,16 +64,6 @@ negative_medium_ratio = 0.3
 # 暂时关掉：第三轮不再生成、replyer 不再注入、管理页不再显示。
 # 库里已有的 manner 原样保留，改回 true 就恢复，不需要重新生成。
 [manner]
-enabled = true
-
-# ── 按心情 × 体力替换 reply_style ──
-# 开着时 replyer 的 system prompt 里那行 reply_style 会被整段换成 reply_style.py
-# 按当前档位拼出来的那串；关掉之后 system prompt 完全不动，主程序配置里的
-# [personality] reply_style 原样生效。
-#
-# 关掉不影响生成：第一轮照常写 mood_level / energy_level，库里的档位照常累积，
-# /status 和管理页也照常显示拼出来的结果（标明未生效），改回 true 立刻恢复。
-[reply_style]
 enabled = true
 
 [topic]
