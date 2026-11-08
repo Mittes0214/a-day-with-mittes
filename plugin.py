@@ -28,7 +28,7 @@
 
 from datetime import date, datetime, time as dt_time, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List
 
 import asyncio
 import copy
@@ -40,8 +40,9 @@ import uuid
 from maibot_sdk import Command, HookHandler, MaiBotPlugin, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
+from .camera.prompt_context import helpers_of
 from .camera.prompts import PENDING_GUIDANCE
-from .camera.service import PhotoService, pending_line
+from .camera.service import PhotoService, pending_line, photo_origin
 from .camera.store import PhotoQuotaExceeded
 from .character.outfit_images import (
     IMAGES_ARG,
@@ -93,6 +94,8 @@ _ROLE_BY_ITEM_TYPE = {
     "AssistantMessageItem": "assistant",
 }
 
+
+SHARE_LOOKBACK_DAYS = 7  # 问以前的照片时，今天没有就往前找，最多找到 6 天前
 
 class ADayWithMittesPlugin(MaiBotPlugin):
     def __init__(self) -> None:
@@ -793,7 +796,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                         "metadata": {"background_task": False, "background_task_id": record["id"]}}
             if record["status"] == "sent":
                 return {"success": True, "name": "take_mittes_photo", "status": "sent",
-                        "content": "照片已经发到这个聊天，是 Mittes 刚用手机拍的。照片里实际能看到的：" + record["description"] + "。说到照片时以这些可见内容为准。不要重复拍摄或发送。",
+                        "content": "照片已经发到这个聊天，" + photo_origin(record) + "。照片里实际能看到的：" + record["description"] + "。说到照片时以这些可见内容为准。不要重复拍摄或发送。",
                         "metadata": {"background_task": False, "background_task_id": record["id"]}}
             return {
                 "success": True, "name": "take_mittes_photo",
@@ -812,17 +815,55 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             return {"success": False, "name": "take_mittes_photo",
                     "content": "这次没能拍成，没有具体原因可说，照片没拍也没发；不要替她编理由。选择 reply 回应对方，不要自动重试。"}
 
+    def _day_weather(self, day: date) -> str:
+        return self._require_store().db.day_weather(day)
+
+    def _share_options(self, day: date, now_minutes: int) -> List[Dict[str, Any]]:
+        """可分享的「别人帮她拍的照片」来源：今天到此刻为止、再往前 SHARE_LOOKBACK_DAYS-1 天里，
+        同伴中有认识的人的时段（从新到旧）。一个人待着的时段不会有这种照片，不列出。"""
+        out: List[Dict[str, Any]] = []
+        for back in range(SHARE_LOOKBACK_DAYS):
+            out += self._share_options_of(day - timedelta(days=back), now_minutes if back == 0 else None)
+        return out
+
+    def _share_options_of(self, day: date, now_minutes: int | None) -> List[Dict[str, Any]]:
+        store = self._require_store()
+        out: List[Dict[str, Any]] = []
+        for segment in reversed(store.segments_of(day)):
+            if now_minutes is not None and segment.start_minutes > now_minutes:
+                continue
+            helpers = helpers_of(segment.company)
+            state = store.state_of(day, segment) if helpers else None
+            if state is None:
+                continue
+            outfit = self._wardrobe.get(segment.outfit) if self._wardrobe is not None else None
+            places = state.places or []
+            out.append({
+                "logical_day": day.isoformat(), "slot": segment.slot, "title": segment.title,
+                "place": str((places[0] or {}).get("place") or "") if places else segment.place.split("/")[0].strip(),
+                "places": places, "skeleton_place": segment.place, "weather": self._day_weather(day),
+                "outfit": segment.outfit,
+                "outfit_details": {k: v for k, v in outfit.parts.items() if k != "underwear"} if outfit else {},
+                "outfit_optional": outfit.optional if outfit else "",
+                "story": state.story, "topic": state.topic, "company": segment.company,
+                "helpers": helpers,
+            })
+        return out
+
     def _photo_snapshot(self) -> dict[str, Any]:
         moment, day, segment, state = self._current()
         outfit = self._wardrobe.get(segment.outfit) if self._wardrobe is not None else None
         return {
             "captured_at": moment.isoformat(), "logical_day": day.isoformat(), "slot": segment.slot,
             "title": segment.title, "place": self._require_store().place_at(moment, segment, state), "places": state.places,
+            "skeleton_place": segment.place, "weather": self._day_weather(day),
             "outfit": segment.outfit,
             "outfit_details": {key: value for key, value in outfit.parts.items() if key != "underwear"} if outfit else {},
             "outfit_optional": outfit.optional if outfit else "",
             "appearance": self._wardrobe.appearance if self._wardrobe is not None else {},
-            "story": state.story, "topic": state.topic,
+            "story": state.story, "topic": state.topic, "company": segment.company,
+            "helpers": helpers_of(segment.company),
+            "share_options": self._share_options(day, self._require_store().resolve_moment(moment)[1]),
         }
 
     @Tool(

@@ -42,12 +42,24 @@ def test_snapshot_contains_appearance_and_actual_place_without_innerwear():
     wardrobe = plugin_module.Wardrobe(ROOT / "character/wardrobe.toml")
     wardrobe.load()
     plugin._wardrobe = wardrobe
-    plugin._store = SimpleNamespace(place_at=lambda *args: "卧室书桌前")
-    segment = SimpleNamespace(slot="22:30-24:00", title="洗澡、写手账", outfit="浅蓝细棉长袖睡衣")
+    segment = SimpleNamespace(slot="22:30-24:00", title="洗澡、写手账", outfit="浅蓝细棉长袖睡衣", place="二楼浴室 / 三楼卧室",
+                              company="一个人", kind="自由", start_minutes=22 * 60 + 30)
+    plugin._store = SimpleNamespace(
+        place_at=lambda *args: "卧室书桌前", resolve_moment=lambda moment: (date(2026, 10, 18), 23 * 60 + 30),
+        segments_of=lambda day: [segment], state_of=lambda day, seg: state,
+        db=SimpleNamespace(day_weather=lambda day: "晴"))
     state = SimpleNamespace(places=[], story="洗完澡回卧室写手账", topic="")
     plugin._current = lambda: (datetime.fromisoformat("2026-10-18T23:30:00+09:00"), date(2026, 10, 18), segment, state)
     snapshot = plugin._photo_snapshot()
     assert snapshot["place"] == "卧室书桌前"
+    assert snapshot["skeleton_place"] == "二楼浴室 / 三楼卧室"
+    assert snapshot["weather"] == "晴" and snapshot["company"] == "一个人"
+    # 一个人待着的时段不会有别人帮拍的照片，不列为分享来源
+    assert snapshot["share_options"] == [] and snapshot["helpers"] == []
+    segment.company = "Niya、老师"
+    snapshot = plugin._photo_snapshot()
+    assert snapshot["helpers"] == ["Niya"]
+    assert [o["logical_day"] for o in snapshot["share_options"]] == [f"2026-10-{d}" for d in range(18, 11, -1)]
     assert "银白" in snapshot["appearance"]["hair_base"]
     assert "underwear" not in snapshot["outfit_details"]
     assert "干发毛巾" in snapshot["outfit_details"]["hair"]

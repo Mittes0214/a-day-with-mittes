@@ -1,7 +1,7 @@
 """独立的相机任务归档。面板以只读 SQLite 连接读取同一份记录。"""
 
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -12,8 +12,9 @@ import uuid
 
 
 DAILY_LIMIT = 3
+CHAT_DAILY_LIMIT = 5  # 每个聊天（群）每天最多几张，Sweyn 的请求不计
+FACE_DAILY_LIMIT = 2  # 别人帮拍的露脸照，每个提问人、每个聊天每天各最多几张（Sweyn 和本地预览不限）
 QUOTA_TIMEZONE = ZoneInfo("Asia/Tokyo")
-EXEMPT_ACCOUNT = ("qq", "923856490")
 # 入队时暂占名额以限制并发；只有确认发送成功后才永久计入额度。
 RESERVED_STATUSES = frozenset({
     "queued", "planning", "generating", "checking", "repairing", "ready", "sending", "sent",
@@ -23,12 +24,13 @@ RESERVED_STATUSES = frozenset({
 class PhotoQuotaExceeded(ValueError):
     """用户当日额度已用完，不能再创建生图任务。"""
 
-    def __init__(self, day: str, used: int) -> None:
+    def __init__(self, day: str, used: int, *, chat: bool = False) -> None:
         self.day = day
         self.used = used
-        self.limit = DAILY_LIMIT
+        self.limit = CHAT_DAILY_LIMIT if chat else DAILY_LIMIT
         self.timezone = QUOTA_TIMEZONE.key
-        super().__init__(f"当前拍照名额已占满（{used}/{DAILY_LIMIT}，含正在拍摄的请求）；失败会释放名额，东京时间每天零点重置。")
+        whose = "这个聊天今天的" if chat else "当前"
+        super().__init__(f"{whose}拍照名额已占满（{used}/{self.limit}，含正在拍摄的请求）；失败会释放名额，东京时间每天零点重置。")
 
 
 def timestamp() -> str:
@@ -86,7 +88,7 @@ class CameraStore:
             account = (str(requester.get("platform") or ""), str(requester.get("user_id") or ""))
             if record.get("preview") is not True and not all(account):
                 raise ValueError("缺少经真实消息验证的拍照用户身份")
-            exempt = record.get("preview") is True or account == EXEMPT_ACCOUNT
+            exempt = record.get("preview") is True or record["requester_persona"] == "Sweyn"  # 店长不计额度
             quota = {"day": day, "timezone": QUOTA_TIMEZONE.key, "limit": DAILY_LIMIT, "exempt": exempt}
             if not exempt:
                 row = con.execute("SELECT used FROM daily_usage WHERE platform=? AND user_id=? AND day=?",
@@ -94,6 +96,9 @@ class CameraStore:
                 used = row[0] if row else 0
                 if used >= DAILY_LIMIT:
                     raise PhotoQuotaExceeded(day, used)
+                chat_used = sum(1 for other in self._today_in_stream(con, record["stream_id"], day) if not (other.get("quota") or {}).get("exempt"))
+                if chat_used >= CHAT_DAILY_LIMIT:
+                    raise PhotoQuotaExceeded(day, chat_used, chat=True)
                 con.execute("""INSERT INTO daily_usage VALUES (?,?,?,1)
                     ON CONFLICT(platform,user_id,day) DO UPDATE SET used=used+1""", (*account, day))
                 quota.update(used=used + 1, remaining=DAILY_LIMIT - used - 1)
@@ -126,6 +131,13 @@ class CameraStore:
             con.execute("UPDATE tasks SET status=?,updated_at=?,record=? WHERE id=?",
                         (record["status"], record["updated_at"], json.dumps(record, ensure_ascii=False), record["id"]))
 
+    def get(self, task_id: str) -> dict[str, Any]:
+        with closing(sqlite3.connect(self.db)) as con:
+            row = con.execute("SELECT record FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if row is None:
+            raise ValueError("拍照任务不存在")
+        return json.loads(row[0])
+
     def next_queued(self) -> dict[str, Any] | None:
         with closing(sqlite3.connect(self.db)) as con:
             row = con.execute("SELECT record FROM tasks WHERE status='queued' ORDER BY created_at LIMIT 1").fetchone()
@@ -136,6 +148,77 @@ class CameraStore:
             row = con.execute("SELECT record FROM tasks WHERE stream_id=? AND status='sent' "
                               "ORDER BY updated_at DESC LIMIT 1", (stream_id,)).fetchone()
         return json.loads(row[0]) if row else None
+
+    @staticmethod
+    def _today_in_stream(con: sqlite3.Connection, stream_id: str, day: str) -> list[dict[str, Any]]:
+        """同一聊天里今天（东京时间）占着名额的任务（进行中的也算）。"""
+        placeholders = ",".join("?" * len(RESERVED_STATUSES))
+        rows = con.execute(f"SELECT record FROM tasks WHERE stream_id=? AND status IN ({placeholders})",
+                           (stream_id, *sorted(RESERVED_STATUSES))).fetchall()
+        records = [json.loads(raw) for (raw,) in rows]
+        return [r for r in records if (r.get("quota") or {}).get("day") == day]
+
+    def face_photos_today(self, record: dict[str, Any]) -> int:
+        """今天（东京时间）已占用的别人帮拍露脸照张数，进行中的也算：同一提问人与同一聊天两者取多。"""
+        requester = record["requester"] or {}
+        day = datetime.now(QUOTA_TIMEZONE).date().isoformat()
+        since = (datetime.now(QUOTA_TIMEZONE) - timedelta(days=2)).astimezone(timezone.utc).isoformat()
+        with closing(sqlite3.connect(self.db)) as con:
+            rows = con.execute("SELECT id, status, record FROM tasks WHERE created_at >= ?", (since,)).fetchall()
+        by_person = by_chat = 0
+        for task_id, status, raw in rows:
+            other = json.loads(raw)
+            if task_id == record["id"] or status not in RESERVED_STATUSES or not other.get("share"):
+                continue
+            if datetime.fromisoformat(other["created_at"]).astimezone(QUOTA_TIMEZONE).date().isoformat() != day:
+                continue
+            by_person += (other.get("requester") or {}) == requester
+            by_chat += other["stream_id"] == record["stream_id"]
+        return max(by_person, by_chat)
+
+    def earlier_photos(self, record: dict[str, Any], days: int = 7) -> list[dict[str, Any]]:
+        """最近几天已发出、没露脸的照片（别人帮拍的和露脸自拍不算），给「之前那张」类请求挑选。
+        本地试拍时也列出试拍成品，方便实测。"""
+        now = datetime.fromisoformat(record["snapshot"]["captured_at"])
+        statuses = ("sent", "preview") if record["preview"] else ("sent",)
+        with closing(sqlite3.connect(self.db)) as con:
+            rows = con.execute(f"SELECT id, record FROM tasks WHERE status IN ({','.join('?' * len(statuses))}) "
+                               "ORDER BY created_at DESC LIMIT 400", statuses).fetchall()
+        out: list[dict[str, Any]] = []
+        for task_id, raw in rows:
+            other = json.loads(raw)
+            plan = other.get("plan") or {}
+            if task_id == record["id"] or other.get("share") or other.get("reuse") or not other.get("final_image"):
+                continue
+            if (plan.get("face_cover") or {}).get("method") == "shown":
+                continue
+            taken = datetime.fromisoformat(other["snapshot"]["captured_at"])
+            if not timedelta(0) <= now - taken <= timedelta(days=days):
+                continue
+            out.append({"id": task_id, "taken_at": taken.astimezone(QUOTA_TIMEZONE).strftime("%Y-%m-%d %H:%M"),
+                        "place": other["snapshot"].get("place", ""), "title": other["snapshot"].get("title", ""),
+                        "subject": plan.get("subject", ""), "description": other.get("description", "")})
+        return out
+
+    def recent_face_covers(self, limit: int = 6) -> list[str]:
+        """最近几张已发出的人物照用过的遮脸方式（从新到旧），给取景分析器轮换用。"""
+        with closing(sqlite3.connect(self.db)) as con:
+            rows = con.execute("SELECT record FROM tasks WHERE status IN ('sent','preview') ORDER BY updated_at DESC LIMIT 40").fetchall()
+        out: list[str] = []
+        for (raw,) in rows:
+            method = ((json.loads(raw).get("plan") or {}).get("face_cover") or {}).get("method")
+            if method and method != "none":
+                out.append(method)
+            if len(out) >= limit:
+                break
+        return out
+
+    def recent_candids(self, limit: int = 4) -> list[str]:
+        """最近几张分享照用过的抓拍方式（从新到旧），给取景分析器轮换用。"""
+        with closing(sqlite3.connect(self.db)) as con:
+            rows = con.execute("SELECT record FROM tasks WHERE status IN ('sent','preview') ORDER BY updated_at DESC LIMIT 40").fetchall()
+        shares = [json.loads(raw).get("share") or {} for (raw,) in rows]
+        return [s["candid"] for s in shares if "candid" in s][:limit]
 
     def in_progress(self, stream_id: str) -> list[dict[str, Any]]:
         """这个会话里已接下、还没有结果的拍照任务，按提交先后排列。"""

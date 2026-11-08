@@ -278,6 +278,11 @@ class ScheduleDB:
         row = self._db.execute("SELECT 1 FROM days WHERE date = ?", (day.isoformat(),)).fetchone()
         return row is not None
 
+    def day_weather(self, day: date) -> str:
+        """当天生成日程时记下的天气预报（给相机的世界模型渲染用）。"""
+        row = self._db.execute("SELECT weather FROM days WHERE date = ?", (day.isoformat(),)).fetchone()
+        return str(row["weather"] or "") if row else ""
+
     def load_day(self, day: date) -> dict[str, Any] | None:
         """读取一天供管理任务临时装入内存；历史日期也可用。"""
         row = self._db.execute(

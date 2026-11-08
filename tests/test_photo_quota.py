@@ -14,10 +14,10 @@ import pytest
 module = importlib.import_module("plugins.01_a_day_with_mittes.camera.store")
 
 
-def request(index, *, user="guest", platform="qq", preview=False):
+def request(index, *, user="guest", platform="qq", preview=False, persona=""):
     return {
         "stream_id": f"chat-{index % 2}", "source_msg_id": f"message-{index}",
-        "requester": {"platform": platform, "user_id": user}, "preview": preview,
+        "requester": {"platform": platform, "user_id": user}, "requester_persona": persona, "preview": preview,
         # 计数不依赖可能过期或由调用方传入的日程日期。
         "snapshot": {"logical_day": "2000-01-01"},
     }
@@ -58,9 +58,10 @@ def test_duplicate_still_returns_existing_task_when_quota_is_full(store):
         store.create(request(3))
 
 
-def test_only_qq_owner_account_is_exempt(store):
+def test_only_sweyn_is_exempt(store):
+    """店长 Sweyn 由提交时按管理员名单认出（任何平台）；同号码但不是名单账号的仍计额度。"""
     for index in range(6):
-        owner = store.create(request(index, user="923856490"))
+        owner = store.create(request(index, user="1739875050", platform="telegram", persona="Sweyn"))
         assert owner["quota"]["exempt"] is True
     for index in range(3):
         result = store.create(request(index + 10, user="923856490", platform="telegram"))
