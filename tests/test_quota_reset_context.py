@@ -21,18 +21,18 @@ def test_photo_reset_context(result):
     )
     async def run():
         if result["success"]:
-            assert await Plugin.cmd_pik_reset(plugin, "chat") == (True, "重置成功", True)
+            assert await Plugin.cmd_pik_reset(plugin, "chat") == (True, "拍照次数重置了~", True)
         else:
             with pytest.raises(RuntimeError, match="写入上下文失败"):
                 await Plugin.cmd_pik_reset(plugin, "chat")
         plugin.reset_photo_quota.assert_awaited_once()
-        plugin.ctx.send.text.assert_awaited_once_with("重置成功", "chat")
+        plugin.ctx.send.text.assert_awaited_once_with("拍照次数重置了~", "chat")
         context.assert_awaited_once()
         args = context.call_args
         assert args.args[0] == "chat"
         assert args.args[1] == [{"type": "text", "data": args.kwargs["visible_text"]}]
         assert "/pik reset" in args.kwargs["visible_text"]
-        assert "重置成功" in args.kwargs["visible_text"]
+        assert "拍照次数重置了~" in args.kwargs["visible_text"]
         assert "用户、聊天和露脸照" in args.kwargs["visible_text"]
         assert "replyable" not in args.kwargs
     asyncio.run(run())
