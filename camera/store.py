@@ -64,7 +64,7 @@ class CameraStore:
                 record = json.loads(raw)
                 quota = record.get("quota") or {}
                 requester = record.get("requester") or {}
-                if quota.get("exempt") or not quota.get("day"):
+                if quota.get("exempt") or quota.get("reset") or not quota.get("day"):
                     continue
                 key = (str(requester.get("platform") or ""), str(requester.get("user_id") or ""), quota["day"])
                 if all(key):
@@ -72,6 +72,21 @@ class CameraStore:
             con.execute("DELETE FROM daily_usage")
             con.executemany("INSERT INTO daily_usage VALUES (?,?,?,?)",
                             ((platform, user_id, day, used) for (platform, user_id, day), used in counts.items()))
+
+    def reset_quota(self) -> None:
+        """释放今天所有用户、聊天和露脸照额度，保留任务与照片归档。"""
+        day = datetime.now(QUOTA_TIMEZONE).date().isoformat()
+        with closing(sqlite3.connect(self.db)) as con, con:
+            con.execute("BEGIN IMMEDIATE")
+            for task_id, raw in con.execute("SELECT id, record FROM tasks").fetchall():
+                record = json.loads(raw)
+                quota = record.get("quota") or {}
+                if quota.get("day") == day:
+                    quota["reset"] = True
+                    record["quota"] = quota
+                    con.execute("UPDATE tasks SET record=? WHERE id=?",
+                                (json.dumps(record, ensure_ascii=False), task_id))
+            con.execute("DELETE FROM daily_usage WHERE day=?", (day,))
 
     def create(self, record: dict[str, Any]) -> dict[str, Any]:
         record = {**record, "id": uuid.uuid4().hex, "status": "queued",
@@ -96,7 +111,7 @@ class CameraStore:
                 used = row[0] if row else 0
                 if used >= DAILY_LIMIT:
                     raise PhotoQuotaExceeded(day, used)
-                chat_used = sum(1 for other in self._today_in_stream(con, record["stream_id"], day) if not (other.get("quota") or {}).get("exempt"))
+                chat_used = sum(1 for other in self._today_in_stream(con, record["stream_id"], day) if not (other.get("quota") or {}).get("exempt") and not (other.get("quota") or {}).get("reset"))
                 if chat_used >= CHAT_DAILY_LIMIT:
                     raise PhotoQuotaExceeded(day, chat_used, chat=True)
                 con.execute("""INSERT INTO daily_usage VALUES (?,?,?,1)
@@ -118,11 +133,15 @@ class CameraStore:
             if row is None:
                 raise ValueError("拍照任务不存在")
             previous_status, previous_raw = row
+            previous = json.loads(previous_raw)
+            # 工作中的任务可能持有重置前的副本，保存时保留数据库中的重置标记。
+            if (previous.get("quota") or {}).get("reset"):
+                record["quota"]["reset"] = True
             if previous_status in RESERVED_STATUSES and record["status"] not in RESERVED_STATUSES:
                 previous = json.loads(previous_raw)
                 quota = previous.get("quota") or {}
                 requester = previous.get("requester") or {}
-                if not quota.get("exempt") and quota.get("day"):
+                if not quota.get("exempt") and not quota.get("reset") and quota.get("day"):
                     con.execute("""UPDATE daily_usage SET used=used-1
                         WHERE platform=? AND user_id=? AND day=? AND used>0""",
                         (requester.get("platform"), requester.get("user_id"), quota["day"]))
@@ -168,6 +187,8 @@ class CameraStore:
         by_person = by_chat = 0
         for task_id, status, raw in rows:
             other = json.loads(raw)
+            if (other.get("quota") or {}).get("reset"):
+                continue
             if task_id == record["id"] or status not in RESERVED_STATUSES or not other.get("share"):
                 continue
             if datetime.fromisoformat(other["created_at"]).astimezone(QUOTA_TIMEZONE).date().isoformat() != day:

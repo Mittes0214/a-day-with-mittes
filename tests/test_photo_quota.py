@@ -168,3 +168,35 @@ def test_failed_queue_insert_rolls_back_charge(store):
     with pytest.raises(TypeError):
         store.create({**request(0), "unserializable": object()})
     assert store.create(request(0))["quota"]["remaining"] == 2
+
+
+def test_reset_survives_restart_and_stale_task_save(store):
+    old = [store.create(request(i)) for i in range(3)]
+    old[0]["share"] = {"candid": "walk"}
+    store.save(old[0])
+    store.reset_quota()
+    store.initialize()
+    fresh = store.create(request(10))
+    assert fresh["quota"]["used"] == 1
+    assert store.face_photos_today(fresh) == 0
+    old[0]["status"] = "failed"
+    store.save(old[0])
+    assert store.get(old[0]["id"])["quota"]["reset"] is True
+    assert store.create(request(11))["quota"]["used"] == 2
+    store.initialize()
+    assert store.create(request(12))["quota"]["used"] == 3
+    with pytest.raises(module.PhotoQuotaExceeded):
+        store.create(request(13))
+
+
+def test_reset_releases_chat_limit_and_keeps_archive(store):
+    for i in range(module.CHAT_DAILY_LIMIT):
+        payload = request(i, user=f"guest-{i}")
+        payload["stream_id"] = "same-chat"
+        store.create(payload)
+    store.reset_quota()
+    payload = request(20)
+    payload["stream_id"] = "same-chat"
+    assert store.create(payload)["quota"]["used"] == 1
+    with sqlite3.connect(store.db) as con:
+        assert con.execute("SELECT count(*) FROM tasks").fetchone()[0] == module.CHAT_DAILY_LIMIT + 1

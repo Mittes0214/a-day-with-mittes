@@ -37,7 +37,7 @@ import logging
 import tomllib
 import uuid
 
-from maibot_sdk import Command, HookHandler, MaiBotPlugin, Tool
+from maibot_sdk import API, Command, HookHandler, MaiBotPlugin, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
 from .camera.prompt_context import helpers_of
@@ -751,6 +751,24 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
 
     # ── Tool ──
+    @API("reset_photo_quota", description="重置自拍当天全部额度", public=True)
+    async def reset_photo_quota(self) -> bool:
+        if self._camera is None:
+            raise RuntimeError("相机服务尚未启动")
+        await asyncio.to_thread(self._camera.store.reset_quota)
+        return True
+
+    @Command(
+        "pik_reset",
+        description="重置自拍当天全部用户和聊天的额度（仅管理员）",
+        permission="operator",
+        pattern=r"^/pik\s+reset\s*$",
+    )
+    async def cmd_pik_reset(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
+        await self.reset_photo_quota()
+        await self.ctx.send.text("重置成功", stream_id)
+        return True, "重置成功", True
+
     @Tool(
         "take_mittes_photo",
         visibility="visible",
