@@ -128,7 +128,7 @@ class Segment:
 class SegmentState:
     """一个时段的生成结果。
 
-    ``story`` / ``mood`` / ``physical_state`` 和两项分档来自主生成（第一轮），
+    ``story`` / ``mood`` / ``mood_level`` 来自主生成（第一轮），
     ``places`` / ``topic`` 来自第二轮抽取（``topic_keys`` 已退役），
     ``manner`` 来自逐时段的第三轮表达方式生成。
     """
@@ -136,10 +136,10 @@ class SegmentState:
     story: str
     manner: str
     mood: str
-    # 第一轮产出：当时剩余的可支配体力，不混心情；字段名为兼容旧库保留
-    physical_state: str = ""
     # 第一轮产出的粗分档，便于前端一眼看出趋势
     mood_level: str = ""
+    # physical_state / energy_level 已不再生成，字段保留只为读得动历史数据
+    physical_state: str = ""
     energy_level: str = ""
     # v3.2 起不再生成，字段保留只为读得动历史数据（设计文档 3.1）
     busy: str = ""

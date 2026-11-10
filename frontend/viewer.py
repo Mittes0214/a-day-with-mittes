@@ -1246,7 +1246,6 @@ function render(day, data, w) {
       s.negative_level ? `<span class="flag neg">不顺心 · ${esc(s.negative_level)}</span>` : '',
       s.topic ? `<span class="flag say${used ? ' used' : ''}">${used ? '已说' : '可说'}</span>` : '',
       stateLevel(s.mood_level),
-      stateLevel(s.energy_level),
     ].join('');
     const [from, to] = s.slot.split('-');
     return `<details class="seg ${cls}${now ? ' now' : ''}" data-anchor="${esc(s.slot)}"${now ? ' open' : ''}>
@@ -1261,7 +1260,6 @@ function render(day, data, w) {
         <p class="story">${esc(s.story) || '<span style="color:var(--muted)">（这段没有生成内容）</span>'}</p>
         <dl class="fields">
           <dt>心情</dt><dd>${esc(s.mood)}${stateLevel(s.mood_level)}</dd>
-          <dt>体力</dt><dd>${esc(s.physical_state || '—')}${stateLevel(s.energy_level)}</dd>
           <dt>穿搭</dt><dd><button class="outfit" data-o="${esc(s.outfit)}">${esc(s.outfit)}</button></dd>
         </dl>
         ${data.manner_enabled === false ? '' : `<div class="expression">

@@ -12,7 +12,7 @@
 
 字段分工（4.3）：
 - ``story``            → 事实层工具结果，被问才吐，可以有活动名词
-- ``mood`` / ``physical_state`` / 两项分档 → planner 注入与前端展示，
+- ``mood`` / ``mood_level`` → planner 注入与前端展示，
   第一轮随 story 生成
 - ``topic``            → replyer 常驻注入（C），第二轮提炼，说过之后按
   ``topic.stop_after_shared`` 决定还注不注入
@@ -63,7 +63,6 @@ _MAX_TOKENS = 32000
 _DAY_SUBMIT_TOOL = "submit_day_story"
 _TOPIC_SUBMIT_TOOL = "submit_day_topics"
 _MOOD_LEVELS = ("正面", "中性", "负面")
-_ENERGY_LEVELS = ("良好", "一般", "不佳")
 
 # 给模型看的文字全在 ``prompts/`` 下，一次请求一个文件：
 # ``01_生成全天故事与情绪.prompt``、``02_提取地点与话题.prompt``、
@@ -322,7 +321,6 @@ class SegmentGenerator:
                 title=prev_segment.title,
                 story=prev_state.story,
                 mood=prev_state.mood,
-                physical_state=prev_state.physical_state,
             )
 
         marked = "\n".join(
@@ -377,38 +375,17 @@ class SegmentGenerator:
                     "type": "string",
                     "description": "story 自然留下的情绪，只写情绪，不写身体状况。",
                 },
-                "physical_state": {
-                    "type": "string",
-                    "description": (
-                        "这一段她整个人的状态：还有多少劲、撑不撑得住。跟着 story 走，"
-                        "不写心情，不写身体部位清单，不把舒服、清爽等表面感受当体力。"
-                        "只写体力本身，不写她在哪、手上拿着什么、周围在发生什么——那些归 story。"
-                        "困意不归这个字段，凌晨两点之前不写困。"
-                    ),
-                },
                 "mood_level": {
                     "type": "string",
                     "enum": list(_MOOD_LEVELS),
                     "description": "mood 中最主要情绪的分档。",
-                },
-                "energy_level": {
-                    "type": "string",
-                    "enum": list(_ENERGY_LEVELS),
-                    "description": (
-                        "physical_state 的独立体力分档：良好=无明显疲劳，是她大部分时候的状态；"
-                        "一般=有累意但能正常继续；不佳=体力见底、提不起劲、想坐下停手。"
-                        "判的是没力气不是想睡，夜深本身不构成不佳的理由。"
-                        "不受 mood_level 影响。"
-                    ),
                 },
             },
             "required": [
                 "slot",
                 "story",
                 "mood",
-                "physical_state",
                 "mood_level",
-                "energy_level",
             ],
             "additionalProperties": False,
         }
@@ -512,7 +489,7 @@ class SegmentGenerator:
     def _validate_state(self, state: SegmentState, segment: Segment, previous_story: str) -> str:
         """校验第一轮的一段完整结果，返回不合格原因。
 
-        硬校验：缺字段，两项分档越界，首句与上一段雷同。
+        硬校验：缺字段，心情分档越界，首句与上一段雷同。
         只告警不重写：story 字数越界——它是被问才吐的事实层，长一点没有副作用，
         为字数烧一次调用不值得。
 
@@ -521,7 +498,7 @@ class SegmentGenerator:
         理由是代价不成比例：这里判不合格就**整段作废**、铺骨架底稿，而 ``story``
         根本不在注入链里（只在 ``get_mittes_schedule`` 被调用时才吐）。一个十来字的
         mood 里有一个词犯规，会连累同一段两百多字、内容完全合格的 story 一起丢掉，
-        还顺带丢掉 physical_state 和两项分档；判掉的段又不重试（见模块开头），
+        还顺带丢掉心情分档；判掉的段又不重试（见模块开头），
         损失是永久的。09-16 与 09-17 两天被这样判掉五段，其中包括周三 16:00-19:00
         那整整三小时。
         ``_find_banned_word`` 保留，仍然给 ``_validate_expression`` 用——那边不合格
@@ -529,7 +506,7 @@ class SegmentGenerator:
         """
         missing = [
             name
-            for name in ("story", "mood", "physical_state", "mood_level", "energy_level")
+            for name in ("story", "mood", "mood_level")
             if not getattr(state, name)
         ]
         if missing:
@@ -537,8 +514,6 @@ class SegmentGenerator:
 
         if state.mood_level not in _MOOD_LEVELS:
             return f"心情分档不合法：{state.mood_level}"
-        if state.energy_level not in _ENERGY_LEVELS:
-            return f"体力分档不合法：{state.energy_level}"
 
         # 首句跟上一段雷同 = 模型把某个句子当模板锁死了。
         # 实测发生过：prompt 里演示「首句要出现 Mittes」的那个例句被原样照抄，
@@ -970,9 +945,7 @@ def _parse_day_call(
             story=str(raw.get("story") or "").strip(),
             manner="",
             mood=str(raw.get("mood") or "").strip(),
-            physical_state=str(raw.get("physical_state") or "").strip(),
             mood_level=str(raw.get("mood_level") or "").strip(),
-            energy_level=str(raw.get("energy_level") or "").strip(),
         )
 
     problems: list[str] = []

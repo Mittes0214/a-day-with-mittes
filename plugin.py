@@ -698,22 +698,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         （5.14）。之所以仍然这么做：导演需要在决定怎么演之前就知道人在哪，
         而 Tool 是「该聊她在干嘛」时才调用的，那时候给已经晚了。观察项见设计文档 7。
 
-        **体力给 `physical_state` 原句，前提是那句足够短。** 这一行一度改成只注档位。
-        起因是 09-21 14:30-17:00：原句是「在坡道和店内连续走动站立，双腿开始泛起
-        轻微的酸胀」，planner 把它摘成「腿酸」填进 `reply_reference`，23 次 reply
-        调用里 16 次带，落到群里 5 句，没有一次是别人问的。对照组是同一段的
-        `reply_style`——同样每轮注入、同样由体力档位决定，23 轮零复读，
-        区别只在它描述的是倾向而不是症状，planner 摘不出名词可抄。
-
-        之后在生成侧把这个字段压到 15 字上限、明令不写周边环境和物件、并照 mood
-        的样子补了三档示例。改完的原句长这样：「体力消耗见底，极想坐下歇歇」——
-        场景和具体症状都带不动了，于是换回原句。档位只有三个词，planner 判
-        「她现在能不能接这个活」时信息太薄，短原句是更好的折中。
-
-        这条线往回退的判据很简单：原句一旦重新变长、开始带地点或道具，
-        `reply_reference` 里的复述率就会跟着涨，那时该收紧的是生成侧的字数和禁令，
-        不是把这一行改回档位。
-
         **谈资不在这里了。** 早先这里有一段「她手上有一件今天发生、还没跟人说过的
         小事」，由 planner 决定要不要换题。那个设计被推翻：只要那句话在，planner 就
         倾向于用它，等于每轮下一道命令；而它又拿不到内容，只能写出「我碰上件挺巧的
@@ -722,14 +706,12 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         """
         store = self._require_store()
         trail = _render_trail(state)
-        # 顺序是从外到内：一天的走向 → 此刻在哪 → 还剩多少体力 → 什么心情。
+        # 顺序是从外到内：一天的走向 → 此刻在哪 → 什么心情。
         # 越靠后越贴近「她现在是什么样的人」，也越贴近 planner 要做的那个决定。
         lines = ["【Mittes 此刻】"]
         if trail:
             lines.append(f"行程表：{trail}")
         lines.append(f"所在：{store.place_at(moment, segment, state)}")
-        if state.physical_state:
-            lines.append(f"体力：{state.physical_state}")
         lines.append(f"心情：{state.mood}")
         lines.append("可用get_mittes_schedule查询详情")
         return "\n".join(lines)
@@ -1631,8 +1613,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             f"表达方式：{state.manner}",
             f"mood：{state.mood}",
             f"心情分档：{state.mood_level or '（旧记录未生成）'}",
-            f"体力：{state.physical_state or '（旧记录未生成）'}",
-            f"体力分档：{state.energy_level or '（旧记录未生成）'}",
             f"topic：{state.topic or '（这段没什么好说的）'}",
             "",
             "来源：生成结果" if state.generated else "来源：底稿（该段未生成成功）",
