@@ -767,6 +767,13 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def cmd_pik_reset(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         await self.reset_photo_quota()
         await self.ctx.send.text("重置成功", stream_id)
+        note = "管理员执行 /pik reset，已回复：重置成功。自拍当天全部用户、聊天和露脸照额度已重置。"
+        result = await self.ctx.maisaka.context.append(
+            stream_id, [{"type": "text", "data": note}], visible_text=note,
+            source_kind="plugin:khiqwq.a-day-with-mittes:quota_reset",
+        )
+        if not isinstance(result, dict) or result.get("success") is not True:
+            raise RuntimeError(f"重置结果写入上下文失败：{result}")
         return True, "重置成功", True
 
     @Tool(
