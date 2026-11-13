@@ -303,6 +303,31 @@ class ScheduleDB:
             result["segments"][item["slot"]] = self._segment_state_dict(item)
         return result
 
+    def load_archived_segments(self, day: date) -> list[dict[str, Any]]:
+        """按生成时的骨架快照读出某一天的全部时段，连同生成结果。
+
+        换骨架后，过去的日子要按当时记下的标题、地点、穿搭和同伴回看，
+        不能拿现行骨架去套。
+
+        Returns:
+            list: 按 ``seq`` 排序，每项是 ``{"skeleton": 骨架七字段, "state": 生成结果}``。
+        """
+        rows = self._db.execute(
+            "SELECT * FROM segments WHERE date = ? ORDER BY seq",
+            (day.isoformat(),),
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            start, end = str(row["slot"]).split("-")
+            result.append({
+                "skeleton": {
+                    "start": start, "end": end, "title": row["title"], "place": row["place"],
+                    "outfit": row["outfit"], "company": row["company"], "kind": row["kind"],
+                },
+                "state": self._segment_state_dict(row),
+            })
+        return result
+
     # ── 读 ──
     def load_days(self, limit: int) -> dict[str, dict[str, Any]]:
         """读最近若干天，供启动时填充内存热路径。

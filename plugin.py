@@ -154,7 +154,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
         self._negative.load()
 
-        self._wardrobe = Wardrobe(self._plugin_dir / "character" / "wardrobe.toml")
+        self._wardrobe = Wardrobe(
+            self._plugin_dir / "character" / "wardrobe.toml", self._plugin_dir / "character" / "seasons"
+        )
         self._wardrobe.load()
         self._outfit_images.load(self._wardrobe.names)
         self._warn_unknown_outfits()
@@ -834,16 +836,16 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         return out
 
     def _share_options_of(self, day: date, now_minutes: int | None) -> List[Dict[str, Any]]:
+        """按归档里当天生成时的骨架快照列候选：换季后回看旧日子，穿的仍是当时的衣服。"""
         store = self._require_store()
         out: List[Dict[str, Any]] = []
-        for segment in reversed(store.segments_of(day)):
+        for segment, state in reversed(store.archived_segments(day)):
             if now_minutes is not None and segment.start_minutes > now_minutes:
                 continue
             helpers = helpers_of(segment.company)
-            state = store.state_of(day, segment) if helpers else None
-            if state is None:
+            if not helpers:
                 continue
-            outfit = self._wardrobe.get(segment.outfit) if self._wardrobe is not None else None
+            outfit = self._wardrobe.get_any(segment.outfit) if self._wardrobe is not None else None
             places = state.places or []
             out.append({
                 "logical_day": day.isoformat(), "slot": segment.slot, "title": segment.title,

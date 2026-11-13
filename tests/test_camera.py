@@ -93,7 +93,7 @@ def setup(tmp_path, monkeypatch):
         (refs / filename).write_bytes(data)
         supplements.append({"file": filename, "category": category, "sha256": hashlib.sha256(data).hexdigest()})
     clothing = []
-    for category in ["maid", "socks", "shoes"]:
+    for category in ["socks", "shoes"]:
         filename = f"clothing-{category}.png"
         (refs / filename).write_bytes(data)
         clothing.append({"file": filename, "category": category, "sha256": hashlib.sha256(data).hexdigest()})
@@ -769,7 +769,7 @@ def test_invalid_scene_context_stops_before_image_generation(setup, context):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("clothing", ["maid", "socks", "shoes"])
+@pytest.mark.parametrize("clothing", ["socks", "shoes"])
 @pytest.mark.parametrize("contains", [False, True])
 def test_clothing_supplements_are_single_selected_and_do_not_mix_style_families(setup, clothing, contains):
     async def run():
@@ -788,7 +788,7 @@ def test_clothing_supplements_are_single_selected_and_do_not_mix_style_families(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("clothing", [None, "unknown"])
+@pytest.mark.parametrize("clothing", [None, "unknown", "maid"])
 def test_invalid_clothing_context_stops_before_generation(setup, clothing):
     async def run():
         service, _, client, _ = setup
@@ -814,9 +814,9 @@ def test_clothing_supplement_requires_current_wardrobe_reference(setup):
 def test_corrupted_clothing_supplement_stops_before_generation(setup):
     async def run():
         service, _, client, refs = setup
-        client.plan_overrides = {"clothing_context": "maid", "contains_mittes": True, "include_outfit": True}
-        (refs / "clothing-maid.png").write_bytes(b"changed")
-        record = await service.submit("看看女仆装", "clothing", "private", SNAPSHOT, preview=True)
+        client.plan_overrides = {"clothing_context": "socks", "contains_mittes": True, "include_outfit": True}
+        (refs / "clothing-socks.png").write_bytes(b"changed")
+        record = await service.submit("看看袜子", "clothing", "private", SNAPSHOT, preview=True)
         with pytest.raises(ValueError, match="摘要"):
             await service.process(record)
         assert client.image_calls == 0

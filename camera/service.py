@@ -355,7 +355,7 @@ class PhotoService:
                 raise ValueError("拍摄方案缺少人物入镜标记")
             if plan.get("scene_context") not in {"none", "street", "terrace", "train", "cafe", "night_desk", "classroom"}:
                 raise ValueError("拍摄方案缺少有效的场景参考类别")
-            if plan.get("clothing_context") not in {"none", "maid", "socks", "shoes"}:
+            if plan.get("clothing_context") not in {"none", "socks", "shoes"}:
                 raise ValueError("拍摄方案缺少有效的衣着参考类别")
             if plan["contains_mittes"] and plan["clothing_context"] != "none" and not plan["include_outfit"]:
                 raise ValueError("衣着分享参考必须同时加载当前衣柜款式")

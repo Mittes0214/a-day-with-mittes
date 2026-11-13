@@ -8,6 +8,22 @@ import json
 import tomllib
 
 
+def _outfit_image_mapping(character_dir: Path) -> dict[str, str]:
+    """套装名 → 设定图路径（相对 ``character/``）。
+
+    当季映射优先；分享过去日子的照片时，那天穿的可能是换季存档里的旧衣服，
+    所以再并入 ``seasons/*/outfit_images.toml``，较新的存档优先。
+    """
+    mapping: dict[str, str] = {}
+    sources = [character_dir / "outfit_images.toml",
+               *sorted(character_dir.glob("seasons/*/outfit_images.toml"), reverse=True)]
+    for path in sources:
+        with path.open("rb") as handle:
+            for name, image in tomllib.load(handle)["images"].items():
+                mapping.setdefault(name, image)
+    return mapping
+
+
 def build_references(plugin_dir: Path, camera_root: Path, record: dict[str, Any], plan: dict[str, Any]) -> list[bytes]:
     folder = camera_root / record["id"]
     folder.mkdir(parents=True, exist_ok=True)
@@ -53,8 +69,7 @@ def build_references(plugin_dir: Path, camera_root: Path, record: dict[str, Any]
         fixed(manifest["identity"][identity],
               "人物外貌参考：只控制银白浅樱粉发色与可见外貌；发型随当前活动，不继承画风、表情、笑容、嘴部开合、露齿或脸红，不复制衣服、配饰或姿势；图中的猫耳、铃铛等道具不是外貌特征，不继承", "identity")
     if plan["include_outfit"]:
-        with (plugin_dir / "character/outfit_images.toml").open("rb") as handle:
-            mapping = tomllib.load(handle)["images"]
+        mapping = _outfit_image_mapping(plugin_dir / "character")
         name = record["snapshot"]["outfit"]
         if name not in mapping:
             raise ValueError(f"当前穿搭「{name}」缺少设定图，无法保证照片穿搭一致")

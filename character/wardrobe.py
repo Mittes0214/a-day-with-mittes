@@ -10,6 +10,9 @@
 
 骨架里可能出现衣柜里没有的名字（周五拍摄现场那身是品牌方或角色的衣服，
 每次都不同）。这种情况不报错，工具照实回答「每次不同」。
+
+换季后旧衣柜整份存档在 ``character/seasons/<季>/wardrobe.toml``。现行查询只认
+当季衣柜；回看过去日子的照片时用 ``get_any``，旧季的套装名照样查得到细节。
 """
 
 from dataclasses import dataclass, field
@@ -51,41 +54,56 @@ class Outfit:
     optional: str = ""
 
 
-class Wardrobe:
-    """``wardrobe.toml`` 的只读封装。"""
+def _read_outfits(path: Path) -> tuple[dict[str, Outfit], dict[str, str]]:
+    """读一份衣柜文件，返回 (套装, [always] 底子)。文件缺失或格式不对直接抛。"""
+    with path.open("rb") as handle:
+        raw: dict[str, Any] = tomllib.load(handle)
 
-    def __init__(self, wardrobe_path: Path) -> None:
+    wardrobe_raw = raw.get("wardrobe")
+    if not isinstance(wardrobe_raw, dict) or not wardrobe_raw:
+        raise ValueError(f"衣柜缺少 [wardrobe.*]：{path}")
+
+    always = {
+        key: str(value).strip()
+        for key, value in (raw.get("always") or {}).items()
+        if str(value).strip()
+    }
+    outfits: dict[str, Outfit] = {}
+    for name, value in wardrobe_raw.items():
+        parts = {
+            key: str(value.get(key) or "").strip()
+            for key, _label in _PART_LABELS
+            if str(value.get(key) or "").strip()
+        }
+        outfits[str(name)] = Outfit(
+            name=str(name),
+            parts=parts,
+            optional=str(value.get("optional") or "").strip(),
+        )
+    return outfits, always
+
+
+class Wardrobe:
+    """``wardrobe.toml`` 的只读封装，另带换季存档里的旧衣柜供回看。"""
+
+    def __init__(self, wardrobe_path: Path, seasons_dir: Path | None = None) -> None:
         self._path = wardrobe_path
+        self._seasons_dir = seasons_dir
         self._outfits: dict[str, Outfit] = {}
+        self._archived: dict[str, Outfit] = {}
         self._always: dict[str, str] = {}
 
     def load(self) -> None:
-        """读衣柜。文件缺失或格式不对直接抛——这是随插件走的资产，不该缺。"""
-        with self._path.open("rb") as handle:
-            raw: dict[str, Any] = tomllib.load(handle)
-
-        wardrobe_raw = raw.get("wardrobe")
-        if not isinstance(wardrobe_raw, dict) or not wardrobe_raw:
-            raise ValueError(f"衣柜缺少 [wardrobe.*]：{self._path}")
-
-        self._always = {
-            key: str(value).strip()
-            for key, value in (raw.get("always") or {}).items()
-            if str(value).strip()
-        }
-        self._outfits = {}
-        for name, value in wardrobe_raw.items():
-            parts = {
-                key: str(value.get(key) or "").strip()
-                for key, _label in _PART_LABELS
-                if str(value.get(key) or "").strip()
-            }
-            self._outfits[str(name)] = Outfit(
-                name=str(name),
-                parts=parts,
-                optional=str(value.get("optional") or "").strip(),
-            )
-        _logger.info("[衣柜] 载入 %d 套穿搭", len(self._outfits))
+        """读当季衣柜和存档衣柜。这些是随插件走的资产，缺失或格式不对直接抛。"""
+        self._outfits, self._always = _read_outfits(self._path)
+        self._archived = {}
+        if self._seasons_dir is not None:
+            # 季名按时间命名（如 2026-autumn），倒序读让较新的存档先占住同名套装
+            for path in sorted(self._seasons_dir.glob("*/wardrobe.toml"), reverse=True):
+                outfits, _always = _read_outfits(path)
+                for name, outfit in outfits.items():
+                    self._archived.setdefault(name, outfit)
+        _logger.info("[衣柜] 载入 %d 套穿搭，存档衣柜 %d 套", len(self._outfits), len(self._archived))
 
     @property
     def names(self) -> set[str]:
@@ -98,6 +116,11 @@ class Wardrobe:
 
     def get(self, name: str) -> Outfit | None:
         return self._outfits.get(name.strip())
+
+    def get_any(self, name: str) -> Outfit | None:
+        """当季衣柜查不到时再查换季存档，回看过去日子的穿搭用。"""
+        key = name.strip()
+        return self._outfits.get(key) or self._archived.get(key)
 
     def render(self, name: str) -> str:
         """渲染一套穿搭，供工具结果使用。

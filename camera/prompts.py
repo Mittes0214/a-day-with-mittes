@@ -83,7 +83,7 @@ absent_helper(string，只在 helper_absent 时填被点名的人，其余为空
 不可拍时到此为止，不再写生图提示词。目标为 other_person 时始终不可拍。
 可拍时另外返回以下字段。各字段只写本字段的事，用短句，不写泛泛美感词：
 subject(string)：拍摄主体，一句话。
-scene_type(indoor/outdoor), style_category(portrait/food/drink/outdoor/object), scene_context(none/street/terrace/train/cafe/night_desk/classroom), clothing_context(none/maid/socks/shoes),
+scene_type(indoor/outdoor), style_category(portrait/food/drink/outdoor/object), scene_context(none/street/terrace/train/cafe/night_desk/classroom), clothing_context(none/socks/shoes),
 contains_mittes(boolean), include_outfit(boolean), identity_reference(none/body/head), use_previous_photo(boolean)。
 mode(shoot/assist/share/reuse)。reuse(object)：photo_id（不是 reuse 时为空字符串）。share(object)：source(拍照的人), candid(requested/asked/unaware/noticed/mid_action/through), day, slot, taken_at, caption（shoot 时全部为空字符串；assist 时 day、slot、taken_at 为空字符串）。
 shot(object)：method(front_selfie 前置自拍 / mirror_selfie 对镜自拍 / self_view 本人视角拍自己身上或手里 / timer 手机放着定时拍 / handheld 手持拍物品或环境 / helper 身边的人帮忙拍，只用于 assist 和 share), phone(手机在哪、朝哪、谁拿着), height(镜头相对身体或地面的高度), angle(平视/俯拍/仰拍及大致角度), distance(镜头到主体的距离)。
@@ -97,7 +97,7 @@ expression(object)。
 prompt(string)：画面描述，用几句完整中文补充以上字段表达不了的氛围、质感与物件关系，不重复字段内容。style_category 只标记主体类别，不用于添加画风补充；人物穿搭通常 portrait，食物 food，饮品 drink，室外环境 outdoor，独立随身物件 object。
 无人物时，scene_context 按本次真正取景与快照选择最多一个相关场景：street 普通街道与通学步行；terrace 露台/阳台；train 电车车厢；cafe 咖啡店营业区/吧台空间；night_desk 夜间书桌且局部灯光；classroom 教室/学校窗边课桌。只拍食物或独立物件、无相关空间入镜，或不属于这六类时选 none，不强行匹配。有 Mittes 或身体局部入镜时选 none。
 场景参考只控制同一画风对材质、空间和光影的表现，不能为了使用某张参考改变取景或事实，也不把参考里的晴天、暗隧道、灯光、物件或布置套用到其他时间地点。
-clothing_context 只在衣着穿在 Mittes 身上且是本次分享重点时选择：maid 女仆装；socks 袜子；shoes 鞋子，一次最多一种。有此类请求时 contains_mittes=true、include_outfit=true；其他未匹配服装、无人物、独立摆放衣物或不以衣着为重点时选 none。衣着补充仅控制同一画风下的衣料与自然局部表现，不照搬款式与姿势。机位按情境选择；前方角度可用镜自拍，不强制所有衣着都直接俯拍。
+clothing_context 只在衣着穿在 Mittes 身上且是本次分享重点时选择：socks 袜子；shoes 鞋子，一次最多一种。有此类请求时 contains_mittes=true、include_outfit=true；其他未匹配服装、无人物、独立摆放衣物或不以衣着为重点时选 none。衣着补充仅控制同一画风下的衣料与自然局部表现，不照搬款式与姿势。机位按情境选择；前方角度可用镜自拍，不强制所有衣着都直接俯拍。
 只要有穿在身上的衣物入镜，include_outfit=true。
 先按用户想看的主体和自然拍摄动作确定取景，再标记是否有人物。普通景物可以双手持机，手在镜头后；只有持物展示等实际动作需要时才让手入镜，不为了分享感或证明拍摄者身份而硬加手。
 contains_mittes 仅按计划画面是否实际出现 Mittes 判断，出现手、腿、头发、身体或穿在身上的衣物等局部也为 true；纯食物、物件或环境为 false。
@@ -108,7 +108,7 @@ expression 固定返回 visible(boolean), intent(string), mouth(string), basis(s
 仅在取景原本包含嘴部时 visible=true；intent 写情绪意图，mouth 写可画出的嘴部开合、嘴角方向和表现程度，basis 写依据。不能只写抽象情绪。嘴部不入镜、仅身体局部或无人物时 visible=false，其他三项为空字符串；不能为表现表情扩大取景，shoot 时也不能因此露出上半张脸。
 不要把时段故事中尚未发生的事件提前作为表情依据。没有明显情绪线索时采用符合当前动作的自然神态，不默认微笑、张嘴、露齿或脸红，也不随机挑选夸张表情。嘴部开合须符合喝水等当前动作。
 prompt 中若描述表情，必须与 expression.mouth 一致。程序会将 mouth 另行写入本次拍摄；intent 和 basis 只供归档与检查，不当作已经发生的事实注入生图。
-outfit_optional 里的可选衣着或配饰，由你按所在地点与时段故事判断这次是否佩戴：写明在某个场合佩戴的，到了该场合就默认戴上，除非时段故事明确说摘下；戴的话在 visible 里写明（如“头戴猫耳发箍”），不戴就不写。不得为了照片换装或虚构经历。发型以日程活动及衣柜为准，日常双马尾，女仆装扎牢；洗浴时可以包起，睡前合理束起，不默认披发。
+outfit_optional 里的可选衣着或配饰，由你按所在地点与时段故事判断这次是否佩戴：写明在某个场合佩戴的，到了该场合就默认戴上，除非时段故事明确说摘下；戴的话在 visible 里写明（如“头戴猫耳发箍”），不戴就不写。不得为了照片换装或虚构经历。发型以日程活动及当前穿搭的衣柜写法为准；洗浴时可以包起，睡前合理束起，不默认披发。
 拍穿搭和身体局部时根据用户关注的内容与自然机位取景，不为避开面部一律紧裁，也不机械交代全身。拍物品、食物、饮品和环境时自由选择适合主体的范围，可完整展示主体及周围环境，不要求局部、紧裁或特写。不强制同一角度。画面重心不能落在裙底、大腿根、胸部等部位；拍穿搭或腿脚时取景服从用户关注的部位，不以裙摆下方和大腿根为中心。
 参考图姿势不控制取景，手机几何关系须符合本人持机；镜自拍允许。
 普通背景、器皿等可合理视觉补全，呈现自然的生活环境。不写泛泛美感词，不重写画风或统一限制材质细节，画法由程序按人物是否入镜分配的固定参考控制。

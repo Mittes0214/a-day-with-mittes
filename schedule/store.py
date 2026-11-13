@@ -637,6 +637,17 @@ class ScheduleStore:
                 return str(entry.get("place") or "").strip()
         return segment.place.split("/")[0].strip()
 
+    def archived_segments(self, day: date) -> list[tuple[Segment, SegmentState]]:
+        """按归档里记下的骨架快照取某一天的时段和生成结果，没生成过就是空列表。
+
+        回看过去的照片时用它：那一天穿什么、在哪、和谁一起，以当天生成时为准。
+        现行骨架换过季，拿它去套过去的日子会把旧时段丢掉、穿搭也会换成新衣柜。
+        """
+        return [
+            (Segment(**item["skeleton"]), SegmentState.from_dict(item["state"]))
+            for item in self._db.load_archived_segments(day)
+        ]
+
     def state_of(self, day: date, segment: Segment) -> SegmentState | None:
         """取指定某天某段的生成结果，库里也没有才返回 ``None``。"""
         cached = self.load_day_cache(day)
