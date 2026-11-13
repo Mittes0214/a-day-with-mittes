@@ -61,7 +61,7 @@ def test_all_nine_assets_are_real_pngs(plugin):
 
 def test_tool_returns_only_title_and_planner_gets_matching_private_image(plugin):
     captured = []
-    name = "浅蓝细棉长袖睡衣"
+    name = "浅雾蓝荷叶领长袖睡裙"
     plugin._store = SimpleNamespace(segment_at=lambda moment: (captured.append(moment), SimpleNamespace(outfit=name))[1])
     result, context = query_context(plugin, "2026-10-12 00:30")
     assert captured[0].hour == 0 and captured[0].day == 12
@@ -174,7 +174,7 @@ def test_replyer_without_query_or_visual_model_has_no_injected_image(plugin):
         items=items, reply_tool_args={}, selected_model_visual=True,
     ))
     assert "modified_kwargs" not in run(plugin.handle_outfit_replyer_model_request(
-        items=items, reply_tool_args={images_module.IMAGES_ARG: ["黑白女仆装"]},
+        items=items, reply_tool_args={images_module.IMAGES_ARG: ["黑色长袖长裙女仆装配白色长围裙"]},
         selected_model_visual=False, selected_model_name="text-only",
     ))
 
@@ -236,7 +236,7 @@ def test_planner_ignores_failed_queries_and_queries_missing_from_context(plugin)
 
 def test_reference_waits_until_parallel_tool_outputs_are_complete(plugin):
     """11-05：查穿搭和拍照同轮调用，图插进两条工具结果之间，上游返回 400。"""
-    plugin._store = SimpleNamespace(segment_at=lambda moment: SimpleNamespace(outfit="浅蓝细棉长袖睡衣"))
+    plugin._store = SimpleNamespace(segment_at=lambda moment: SimpleNamespace(outfit="浅雾蓝荷叶领长袖睡裙"))
     _, context = query_context(plugin, "2026-10-12 00:30")
     question, outfit_call, outfit_output = context
     photo_call = call("take_mittes_photo", "p1", turn=outfit_call["meta"]["logical_turn_id"])

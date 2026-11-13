@@ -1,11 +1,13 @@
-# 外搭图片；与 wardrobe.toml 名称一致。内搭独立映射见 innerwear_images.toml。
+# 冬季外搭图片；与 wardrobe.toml 名称一致。内搭独立映射见 innerwear_images.toml。
 [images]
-"黑白女仆装" = "design-sheets/2026-10-12/maid-split-v2/01_黑白女仆装_外装.png"
-"白色长袖水手服配藏青百褶裙" = "design-sheets/2026-10-12/outerwear-v6/02_白色长袖水手服配藏青百褶裙_外搭.png"
-"奶白色水手领卫衣配浅灰短裤" = "design-sheets/2026-10-12/outerwear-v6/03_奶白色水手领卫衣配浅灰短裤_外搭.png"
-"有口袋的燕麦色针织背心裙" = "design-sheets/2026-10-12/outerwear-v6/04_有口袋的燕麦色针织背心裙_外搭.png"
-"米白短风衣配酒红格纹百褶裙" = "design-sheets/2026-10-12/outerwear-v6/05_米白短风衣配酒红格纹百褶裙_外搭.png"
-"浅樱粉短开衫配藏青细格百褶裙" = "design-sheets/2026-10-12/outerwear-v6/06_浅樱粉短开衫配藏青细格百褶裙_外搭.png"
-"白色短款外套配浅樱粉滑冰练习裙" = "design-sheets/2026-10-12/outerwear-v6/07_白色短款外套配浅樱粉滑冰练习裙_外搭.png"
-"赶场用的燕麦色宽大开衫配黑百褶短裙" = "design-sheets/2026-10-12/outerwear-v6/08_赶场用的燕麦色宽大开衫配黑百褶短裙_外搭.png"
-"浅蓝细棉长袖睡衣" = "design-sheets/2026-10-12/outerwear-v6/09_浅蓝细棉长袖睡衣_外搭.png"
+"黑色长袖长裙女仆装配白色长围裙" = "design-sheets/2026-11-14/winter-v1/01_黑色长袖长裙女仆装配白色长围裙_外搭.png"
+"素色酒红和服配藏青袴与白围裙" = "design-sheets/2026-11-14/winter-v1/02_素色酒红和服配藏青袴与白围裙_外搭.png"
+"黑色西装外套配酒红领结和灰格纹百褶裙" = "design-sheets/2026-11-14/winter-v1/03_黑色西装外套配酒红领结和灰格纹百褶裙_外搭.png"
+"红色运动外套配白色体操衫和运动长裤" = "design-sheets/2026-11-14/winter-v1/04_红色运动外套配白色体操衫和运动长裤_外搭.png"
+"酒红棒球外套配白色连帽卫衣和黑色百褶短裙" = "design-sheets/2026-11-14/winter-v1/05_酒红棒球外套配白色连帽卫衣和黑色百褶短裙_外搭.png"
+"驼色短大衣配奶白麻花毛衣和酒红百褶裙" = "design-sheets/2026-11-14/winter-v1/06_驼色短大衣配奶白麻花毛衣和酒红百褶裙_外搭.png"
+"奶白粗棒针开衫配深蓝牛仔长裙" = "design-sheets/2026-11-14/winter-v1/07_奶白粗棒针开衫配深蓝牛仔长裙_外搭.png"
+"燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙" = "design-sheets/2026-11-14/winter-v1/08_燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙_外搭.png"
+"浅雾蓝荷叶领长袖睡裙" = "design-sheets/2026-11-14/winter-v1/09_浅雾蓝荷叶领长袖睡裙_外搭.png"
+"正红古典花纹振袖配金色袋带和白色毛绒披肩" = "design-sheets/2026-11-14/winter-v1/10_正红古典花纹振袖配金色袋带和白色毛绒披肩_外搭.png"
+"白色蕾丝领和服配红色腰带" = "design-sheets/2026-11-14/winter-v1/11_白色蕾丝领和服配红色腰带_外搭.png"

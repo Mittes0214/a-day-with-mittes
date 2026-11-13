@@ -1,4 +1,4 @@
-# Mittes 一周时段骨架（秋 · 学期中）
+# Mittes 一周时段骨架（冬 · 十二月到二月 · 学期中）
 #
 # 这份文件只有头部注释是写给改骨架的人看的；生成日程的 LLM 看不到注释，
 # 只拿到每段的 start / end / title / place / outfit / company / kind。
@@ -84,18 +84,50 @@
 #
 # ── 固定事实：店 ──
 #
-# 店铺周一定休，周二至周日 11:00 营业、20:30 最后点单、21:00 打烊。
-# 上课期间 Sweyn 独自看店；放学后 Mittes 和 Niya 来帮忙（Niya 上课日放学后固定上班，
-# 周末和假期只在活动或客流多时来）。平日客流高峰 12:00–14:00 和 16:30–18:30。
-# 员工餐在 20:30 最后点单后主要由 Mittes 准备；闭店收尾后她先去洗澡。
-# 每周认真整理一次房间，通常在周一店休，顺带洗床品。
+# 店铺周一定休，周二至周日 11:00 营业、21:00 打烊。
+# 冬季版起 Mittes 周二至周五 18:00–21:00 当班，周六 17:00–21:00 当班；周日店照开，
+# 由 Sweyn 看店，她不上班。祝日落在周二至周日时照常 18:00–21:00 当班。
+# 白天和放学后由 Sweyn 看店；Niya 上课日 18:00–21:00 和她同班。
+# 当班日打烊后三个人吃员工餐，这段算自由时间，不算当班。
+# 每周认真整理一次房间，在周一店休，顺带洗床品。
 # 正式拍摄和漫展不进周表，要排的时候从前端「生成指定日期日程」单独生成。
+#
+# ── 一周的固定去处 ──
+#
+# 课余去处按星期几固定下来，每周重复，story 写的是这周去那里具体是什么样：
+#
+#   周一  下午  和店长去新宿的大超市，采购店里和家里一周要用的东西
+#   周二  放学  神保町旧书店街（和 Niya）
+#   周三  下午  秋叶原，看动画周边和漫画（和 Niya）
+#   周四  放学  水道桥的卡拉 OK（和 Niya）；回来顺路去荒木町的超市买菜
+#   周五  下午  新宿的布料手艺店和纪伊国屋书店（一个人）；回家做 Cos 服
+#   周六  白天  原宿、表参道逛街，在常去的咖啡店歇脚（一个人）；17:00 起当班
+#   周日  白天  穿白和服在新宿御苑和 Niya 练外拍，再去新宿三丁目的喫茶店选片
+#   祝日（店开）上野的国立博物馆（一个人）
+#   祝日（店休）神乐坂（和店长）
+#
+# 只排每周都会发生的事。被人拦下街拍、被叫上黑板、错过电车这类偶发的事
+# 不写进 title，要发生由生成侧按负面事件排期或临场决定。
 #
 # ── 穿搭 ──
 #
-# 这一版配的是秋季衣柜（东京十月到十一月），校服是 `白色长袖水手服配藏青百褶裙`
-# （十月换冬服，用到开春）。十二月入冬要再换一版。
-# 换季时 `character/wardrobe.toml` 和这份骨架一起整份替换，两边的名字要对得上。
+# 这一版配的是冬季衣柜（东京十二月到二月，`character/wardrobe.toml`）。秋季版骨架与衣柜
+# 存档在 `character/seasons/2026-autumn/`。
+#
+#   上学           黑色西装外套配酒红领结和灰格纹百褶裙
+#   体育课         红色运动外套配白色体操衫和运动长裤（周四第五节）
+#   店里当班       三套轮换：
+#                    素色酒红和服配藏青袴与白围裙    周二、周四
+#                    黑色长袖长裙女仆装配白色长围裙  周三、周六
+#                    白色蕾丝领和服配红色腰带        周五、祝日店开（周日外拍也穿它）
+#   在家           燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙
+#   睡觉           浅雾蓝荷叶领长袖睡裙
+#   出门           酒红棒球外套（周六原宿）
+#                  驼色短大衣（周一和店长去超市、周五新宿、祝日上野）
+#                  奶白粗棒针开衫配深蓝牛仔长裙（祝日神乐坂）
+#
+# 振袖留给参拜，不进周表；要去参拜的那天从前端「生成指定日期日程」单独生成。
+# 换季时衣柜和这份骨架一起整份替换，两边的名字要对得上。
 #
 # ── 九张表 ──
 #
@@ -139,41 +171,41 @@ mood   = "悬着，等着到地方"
 manner = "你的注意力分了一半给周围，回话短，偶尔会断一下。"
 mood   = "轻快，有点分神"
 
-# ══════════════════════ 周一 · 上午三节，下午没课 + 店休 ══════════════════════
+# ══════════════════════ 周一 · 上午三节，下午和店长去超市 + 店休 ══════════════════════
 
 [[schedule_mon]]
 start = "02:00"
 end = "07:30"
 title = "睡眠"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "睡眠"
 
 [[schedule_mon]]
 start = "07:30"
 end = "08:45"
-title = "第三个闹钟才起，系好领巾赶电车"
+title = "第二个闹钟起床，系好领结出门坐电车"
 place = "三楼卧室 / 电车上"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "一个人"
 kind = "通勤"
 
 [[schedule_mon]]
 start = "08:45"
 end = "09:55"
-title = "在鞋柜前被 Niya 截住聊周末，第一节现代文轮到她念课文"
+title = "在鞋柜前和 Niya 聊周末，第一节现代文"
 place = "本馆一楼昇降口 / 本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya、同学"
 kind = "上学"
 
 [[schedule_mon]]
 start = "09:55"
 end = "11:05"
-title = "课间被前桌拉着对数学作业答案，第二节数学讲新单元"
+title = "课间和前桌对数学作业答案，第二节数学"
 place = "本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "前桌同学、同学"
 kind = "上学"
 
@@ -182,7 +214,7 @@ start = "11:05"
 end = "12:20"
 title = "课间去走廊尽头的饮料机买热饮，第三节英语分组练对话"
 place = "本馆三楼走廊 / 本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya、同学"
 kind = "上学"
 
@@ -191,52 +223,52 @@ start = "12:20"
 end = "13:10"
 title = "放学班会后坐电车回家"
 place = "电车上"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "一个人"
 kind = "通勤"
 
 [[schedule_mon]]
 start = "13:10"
-end = "15:30"
-title = "店休日和店长吃午饭，把这周的床品洗了晒上、收拾房间"
-place = "二楼家庭厨房 / 三楼卧室 / 三楼小露台"
-outfit = "奶白色水手领卫衣配浅灰短裤"
+end = "15:00"
+title = "店休日和店长吃午饭，把这周的床品洗了、收拾房间"
+place = "二楼家庭厨房 / 三楼卧室"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
 company = "Sweyn"
 kind = "自由"
 
 [[schedule_mon]]
-start = "15:30"
-end = "18:00"
-title = "去冰场练基础滑行和交叉步"
-place = "明治神宫外苑的冰场 / 电车上"
-outfit = "白色短款外套配浅樱粉滑冰练习裙"
-company = "一个人"
+start = "15:00"
+end = "17:30"
+title = "和店长坐电车去新宿的大超市，采购店里和家里一周要用的东西"
+place = "新宿的大超市 / 电车上"
+outfit = "驼色短大衣配奶白麻花毛衣和酒红百褶裙"
+company = "Sweyn"
 kind = "外出"
 
 [[schedule_mon]]
-start = "18:00"
-end = "18:45"
-title = "电车回家，路上回看自己录的滑行视频"
-place = "电车上"
-outfit = "白色短款外套配浅樱粉滑冰练习裙"
-company = "一个人"
+start = "17:30"
+end = "18:15"
+title = "两个人提着购物袋坐电车回家，把东西分到店里和家里"
+place = "电车上 / 一楼厨房 / 二楼家庭厨房"
+outfit = "驼色短大衣配奶白麻花毛衣和酒红百褶裙"
+company = "Sweyn"
 kind = "通勤"
 
 [[schedule_mon]]
-start = "18:45"
+start = "18:15"
 end = "20:30"
 title = "店休日，和店长一起做晚饭、吃饭"
 place = "二楼家庭厨房 / 二楼客厅"
-outfit = "有口袋的燕麦色针织背心裙"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
 company = "Sweyn"
 kind = "自由"
 
 [[schedule_mon]]
 start = "20:30"
 end = "22:00"
-title = "收回晒好的床品铺上，在工作间把这周的作业赶出来"
+title = "铺好洗过的床品，在工作间写这周的作业"
 place = "三楼卧室 / 三楼共用工作间"
-outfit = "奶白色水手领卫衣配浅灰短裤"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
 company = "一个人"
 kind = "自由"
 
@@ -245,82 +277,81 @@ start = "22:00"
 end = "23:00"
 title = "泡澡、梳开头发上护理"
 place = "二楼浴室 / 三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
 [[schedule_mon]]
 start = "23:00"
 end = "26:00"
-title = "在本子上画 Cos 服的改版草图，画完躺着看恋爱小说，说好只看一章"
+title = "躺着看恋爱小说，说好只看一章"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
-
-# ══════════════════════ 周二 · 上午三节 + 下午物理实验、情报 + 当班 ══════════════════════
+# ══════════════════════ 周二 · 全天课，放学去神保町 ══════════════════════
 
 [[schedule_tue]]
 start = "02:00"
 end = "07:30"
 title = "睡眠"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "睡眠"
 
 [[schedule_tue]]
 start = "07:30"
 end = "08:45"
-title = "洗漱、扎好头发，路上买了面包当早饭"
+title = "洗漱、扎好头发，路上买面包当早饭"
 place = "三楼卧室 / 电车上"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "一个人"
 kind = "通勤"
 
 [[schedule_tue]]
 start = "08:45"
 end = "09:55"
-title = "在鞋柜前碰上隔壁班的熟人，第一节化学发回实验报告"
+title = "进校换室内鞋，第一节化学"
 place = "本馆一楼昇降口 / 本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "同学"
 kind = "上学"
 
 [[schedule_tue]]
 start = "09:55"
 end = "11:05"
-title = "课间 Niya 来借英语作业对答案，第二节英语轮到她们这组对话"
+title = "课间 Niya 来对英语作业，第二节英语"
 place = "本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya、同学"
 kind = "上学"
 
 [[schedule_tue]]
 start = "11:05"
 end = "12:20"
-title = "课间替班里把日志送去职员室，第三节日本史讲到战国"
+title = "课间替班里把日志送去职员室，第三节日本史"
 place = "本馆一楼职员室 / 本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "老师、同学"
 kind = "上学"
 
 [[schedule_tue]]
 start = "12:20"
 end = "13:10"
-title = "午休，和 Niya 带便当上天台吃"
-place = "本馆屋顶天台"
-outfit = "白色长袖水手服配藏青百褶裙"
+title = "午休，和 Niya 把桌子拼起来吃便当"
+place = "本馆三楼 2年A班教室"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya"
 kind = "上学"
 
 [[schedule_tue]]
 start = "13:10"
 end = "14:20"
-title = "午休一结束赶去北馆，第五节物理实验四人一组测重力加速度"
+title = "去北馆，第五节物理实验四人一组"
 place = "北馆二楼物理实验室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya、同班组员"
 kind = "上学"
 
@@ -329,61 +360,52 @@ start = "14:20"
 end = "15:30"
 title = "课间收好器材，第六节情报课在电脑室写小程序"
 place = "北馆三楼电脑室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "同学"
 kind = "上学"
 
 [[schedule_tue]]
 start = "15:30"
 end = "17:00"
-title = "打扫完教室去图书室还书，和 Niya 一起坐电车回店里"
-place = "北馆四楼图书室 / 电车上"
-outfit = "白色长袖水手服配藏青百褶裙"
+title = "打扫完教室，和 Niya 去旧书店街翻小说和设计资料"
+place = "神保町旧书店街"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
+company = "Niya"
+kind = "外出"
+
+[[schedule_tue]]
+start = "17:00"
+end = "18:00"
+title = "和 Niya 坐电车回店，上楼放下书包"
+place = "电车上 / 三楼卧室"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya"
 kind = "通勤"
 
 [[schedule_tue]]
-start = "17:00"
-end = "19:00"
-title = "换上女仆装，接住放学后那波客人"
-place = "一楼营业区 / 一楼员工更衣空间"
-outfit = "黑白女仆装"
-company = "客人、Sweyn、Niya"
-kind = "工作"
-
-[[schedule_tue]]
-start = "19:00"
+start = "18:00"
 end = "21:00"
-title = "晚市，守在吧台后面做甜点和饮品"
-place = "一楼吧台"
-outfit = "黑白女仆装"
+title = "换上袴和围裙当班，在吧台做甜点和饮品"
+place = "一楼营业区 / 一楼吧台 / 一楼员工更衣空间"
+outfit = "素色酒红和服配藏青袴与白围裙"
 company = "客人、Sweyn、Niya"
 kind = "工作"
 
 [[schedule_tue]]
 start = "21:00"
 end = "22:00"
-title = "打烊，做员工餐，三个人一起吃"
+title = "打烊后做员工餐，三个人一起吃"
 place = "一楼厨房 / 一楼营业区"
-outfit = "黑白女仆装"
+outfit = "素色酒红和服配藏青袴与白围裙"
 company = "Sweyn、Niya"
-kind = "工作"
-
-[[schedule_tue]]
-start = "22:00"
-end = "23:00"
-title = "上楼洗澡、吹干长发"
-place = "二楼浴室 / 三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
-company = "一个人"
 kind = "自由"
 
 [[schedule_tue]]
-start = "23:00"
+start = "22:00"
 end = "24:00"
-title = "写今天的作业，先把数学做完"
-place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+title = "上楼洗澡、吹干长发，把今天的作业写完"
+place = "二楼浴室 / 三楼卧室"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
@@ -392,304 +414,292 @@ start = "24:00"
 end = "26:00"
 title = "陪店长在客厅坐着，说学校的事"
 place = "二楼客厅"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "Sweyn"
 kind = "自由"
 
-
-# ══════════════════════ 周三 · 上午三节，下午没课留校 + 当班 ══════════════════════
+# ══════════════════════ 周三 · 上午三节，下午秋叶原 ══════════════════════
 
 [[schedule_wed]]
 start = "02:00"
 end = "07:30"
 title = "睡眠"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "睡眠"
 
 [[schedule_wed]]
 start = "07:30"
 end = "08:45"
-title = "起晚了，头发随手一扎就出门"
+title = "第二个闹钟起床，扎好头发出门坐电车"
 place = "三楼卧室 / 电车上"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "一个人"
 kind = "通勤"
 
 [[schedule_wed]]
 start = "08:45"
 end = "09:55"
-title = "早到的教室里被 Niya 拉着看昨晚拍的片子，第一节数学发回小测"
+title = "早到的教室里和 Niya 看她拍的片子，第一节数学"
 place = "本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya、同学"
 kind = "上学"
 
 [[schedule_wed]]
 start = "09:55"
 end = "11:05"
-title = "课间去购买部买纸盒牛奶，第二节古典轮读和歌"
+title = "课间去购买部买纸盒牛奶，第二节古典"
 place = "本馆一楼购买部 / 本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "同学"
 kind = "上学"
 
 [[schedule_wed]]
 start = "11:05"
 end = "12:20"
-title = "课间去职员室交课题，第三节世界史讲到她喜欢的那段"
+title = "课间去职员室交课题，第三节世界史"
 place = "本馆一楼职员室 / 本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "老师、同学"
 kind = "上学"
 
 [[schedule_wed]]
 start = "12:20"
-end = "15:40"
-title = "放学班会后留校，和 Niya 在中庭吃完便当，去图书室写作业"
-place = "中庭 / 北馆四楼图书室"
-outfit = "白色长袖水手服配藏青百褶裙"
-company = "Niya"
-kind = "自由"
-
-[[schedule_wed]]
-start = "15:40"
-end = "16:30"
-title = "和 Niya 绕去旧书店街，再一起坐电车回店"
-place = "神保町旧书店街 / 电车上"
-outfit = "白色长袖水手服配藏青百褶裙"
+end = "13:10"
+title = "放学班会后和 Niya 在教室吃完便当，一起坐电车去秋叶原"
+place = "本馆三楼 2年A班教室 / 电车上"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya"
 kind = "通勤"
 
 [[schedule_wed]]
-start = "16:30"
-end = "19:00"
-title = "换上女仆装，接住放学后那波客人"
-place = "一楼营业区 / 一楼员工更衣空间"
-outfit = "黑白女仆装"
-company = "客人、Sweyn、Niya"
-kind = "工作"
+start = "13:10"
+end = "16:00"
+title = "在秋叶原逛动画周边店看立牌，再去书店翻新出的漫画"
+place = "秋叶原的动画周边店 / 秋叶原的书店"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
+company = "Niya"
+kind = "外出"
 
 [[schedule_wed]]
-start = "19:00"
+start = "16:00"
+end = "16:45"
+title = "电车回家"
+place = "电车上"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
+company = "Niya"
+kind = "通勤"
+
+[[schedule_wed]]
+start = "16:45"
+end = "18:00"
+title = "在工作间修 Niya 拍的照片"
+place = "三楼共用工作间"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
+company = "一个人"
+kind = "自由"
+
+[[schedule_wed]]
+start = "18:00"
 end = "21:00"
-title = "晚市，季节限定点的人不少"
-place = "一楼营业区"
-outfit = "黑白女仆装"
+title = "换上女仆装当班，在前厅接待、点单"
+place = "一楼营业区 / 一楼吧台 / 一楼员工更衣空间"
+outfit = "黑色长袖长裙女仆装配白色长围裙"
 company = "客人、Sweyn、Niya"
 kind = "工作"
 
 [[schedule_wed]]
 start = "21:00"
 end = "22:00"
-title = "最后点单后做员工餐，三个人一起吃"
+title = "打烊后做员工餐，三个人一起吃"
 place = "一楼厨房 / 一楼营业区"
-outfit = "黑白女仆装"
+outfit = "黑色长袖长裙女仆装配白色长围裙"
 company = "Sweyn、Niya"
-kind = "工作"
-
-[[schedule_wed]]
-start = "22:00"
-end = "23:00"
-title = "洗澡、护发、涂身体乳"
-place = "二楼浴室 / 三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
-company = "一个人"
 kind = "自由"
 
 [[schedule_wed]]
-start = "23:00"
+start = "22:00"
 end = "24:00"
-title = "在家庭厨房试新的甜点配方，让店长试吃"
-place = "二楼家庭厨房"
-outfit = "浅蓝细棉长袖睡衣"
+title = "洗澡、护发，在家庭厨房试新的甜点配方让店长试吃"
+place = "二楼浴室 / 二楼家庭厨房"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "Sweyn"
 kind = "自由"
 
 [[schedule_wed]]
 start = "24:00"
 end = "26:00"
-title = "开电脑修照片，越修越细"
-place = "三楼共用工作间"
-outfit = "浅蓝细棉长袖睡衣"
+title = "回房间写作业，写完看两话番"
+place = "三楼卧室"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
-
-# ══════════════════════ 周四 · 上午三节 + 下午体育、班会 + 当班 ══════════════════════
+# ══════════════════════ 周四 · 全天课，放学卡拉 OK + 买菜 ══════════════════════
 
 [[schedule_thu]]
 start = "02:00"
 end = "07:30"
 title = "睡眠"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "睡眠"
 
 [[schedule_thu]]
 start = "07:30"
 end = "08:45"
-title = "起床后赶着装好两人份的便当才出门"
+title = "起床装好两人份的便当才出门"
 place = "二楼家庭厨房 / 电车上"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "一个人"
 kind = "通勤"
 
 [[schedule_thu]]
 start = "08:45"
 end = "09:55"
-title = "早班会前被同学围着问昨天的数学作业，第一节英语被点名朗读课文"
+title = "早班会前和同学对昨天的数学作业，第一节英语"
 place = "本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "同学、Niya"
 kind = "上学"
 
 [[schedule_thu]]
 start = "09:55"
 end = "11:05"
-title = "课间在走廊窗边和 Niya 晒太阳，第二节物理讲新单元"
+title = "课间在走廊窗边和 Niya 说话，第二节物理"
 place = "本馆三楼走廊 / 本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya"
 kind = "上学"
 
 [[schedule_thu]]
 start = "11:05"
 end = "12:20"
-title = "课间数学笔记被隔壁班的人借走，第三节数学被叫上黑板解题"
-place = "本馆三楼 2年A班教室 / 本馆三楼走廊"
-outfit = "白色长袖水手服配藏青百褶裙"
-company = "隔壁班同学、同学"
+title = "课间整理上一节的笔记，第三节数学"
+place = "本馆三楼 2年A班教室"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
+company = "同学"
 kind = "上学"
 
 [[schedule_thu]]
 start = "12:20"
 end = "13:10"
-title = "午休，和 Niya 坐在中庭长椅上分早上做的便当"
-place = "中庭"
-outfit = "白色长袖水手服配藏青百褶裙"
+title = "午休，和 Niya 分早上做的便当"
+place = "本馆三楼 2年A班教室"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya"
 kind = "上学"
 
 [[schedule_thu]]
 start = "13:10"
 end = "14:20"
-title = "午休一结束去体育馆换衣服，第五节体育分组打羽毛球"
+title = "去体育馆换运动服，第五节体育分组打羽毛球"
 place = "体育馆"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "红色运动外套配白色体操衫和运动长裤"
 company = "Niya、同学"
 kind = "上学"
 
 [[schedule_thu]]
 start = "14:20"
 end = "15:30"
-title = "课间换回制服，第六节班会被推上讲台记板书"
+title = "换回制服，第六节班会"
 place = "本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "同学、班主任"
 kind = "上学"
 
 [[schedule_thu]]
 start = "15:30"
 end = "17:00"
-title = "放学留下来做值日，晚了一班车"
-place = "本馆三楼 2年A班教室 / 电车上"
-outfit = "白色长袖水手服配藏青百褶裙"
+title = "做完值日，和 Niya 去水道桥的卡拉 OK 唱一个半小时"
+place = "水道桥的卡拉 OK"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya"
-kind = "通勤"
+kind = "外出"
 
 [[schedule_thu]]
 start = "17:00"
-end = "19:00"
-title = "晚班前半场，在前厅接待、点单"
-place = "一楼营业区 / 一楼员工更衣空间"
-outfit = "黑白女仆装"
-company = "客人、Sweyn、Niya"
-kind = "工作"
+end = "18:00"
+title = "电车回荒木町，在超市买这几天的食材"
+place = "电车上 / 荒木町的超市"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
+company = "Niya"
+kind = "自由"
 
 [[schedule_thu]]
-start = "19:00"
+start = "18:00"
 end = "21:00"
-title = "晚市，熟客陆续进来"
-place = "一楼营业区"
-outfit = "黑白女仆装"
+title = "换上袴和围裙当班，前厅和吧台两头跑"
+place = "一楼营业区 / 一楼吧台 / 一楼员工更衣空间"
+outfit = "素色酒红和服配藏青袴与白围裙"
 company = "客人、Sweyn、Niya"
 kind = "工作"
 
 [[schedule_thu]]
 start = "21:00"
 end = "22:00"
-title = "打烊、收银、清前厅"
-place = "一楼营业区 / 一楼吧台"
-outfit = "黑白女仆装"
+title = "打烊、收银，三个人一起吃员工餐"
+place = "一楼厨房 / 一楼营业区"
+outfit = "素色酒红和服配藏青袴与白围裙"
 company = "Sweyn、Niya"
-kind = "工作"
-
-[[schedule_thu]]
-start = "22:00"
-end = "23:00"
-title = "洗澡，把头发彻底吹干"
-place = "二楼浴室 / 三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
-company = "一个人"
 kind = "自由"
 
 [[schedule_thu]]
-start = "23:00"
+start = "22:00"
 end = "24:00"
-title = "在工作间给 Cos 服改腰线、缝配饰"
-place = "三楼共用工作间"
-outfit = "浅蓝细棉长袖睡衣"
+title = "洗澡、把头发彻底吹干，窝在被子里看小说"
+place = "二楼浴室 / 三楼卧室"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
 [[schedule_thu]]
 start = "24:00"
 end = "26:00"
-title = "追新番，偏偏停在最要紧的地方"
+title = "写完作业，躺着追新番"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
-
-# ══════════════════════ 周五 · 上午三节，下午没课回店 + 当班 ══════════════════════
+# ══════════════════════ 周五 · 上午三节，下午新宿 + 做 Cos 服 ══════════════════════
 
 [[schedule_fri]]
 start = "02:00"
 end = "07:30"
 title = "睡眠"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "睡眠"
 
 [[schedule_fri]]
 start = "07:30"
 end = "08:45"
-title = "压着点出门，早饭在路上买"
+title = "出门坐电车，早饭在路上买"
 place = "三楼卧室 / 电车上"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "一个人"
 kind = "通勤"
 
 [[schedule_fri]]
 start = "08:45"
 end = "09:55"
-title = "踩着预备铃从鞋柜跑上三楼，第一节化学实验报告被画了好几个问号"
+title = "进校换室内鞋，第一节化学"
 place = "本馆一楼昇降口 / 本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya、同学"
 kind = "上学"
 
 [[schedule_fri]]
 start = "09:55"
 end = "11:05"
-title = "课间和前桌聊昨晚的新番，第二节现代文"
+title = "课间和前桌聊这周的新番，第二节现代文"
 place = "本馆三楼 2年A班教室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "前桌同学"
 kind = "上学"
 
@@ -698,79 +708,70 @@ start = "11:05"
 end = "12:20"
 title = "课间抱着画具去北馆，第三节美术画静物"
 place = "北馆三楼美术室"
-outfit = "白色长袖水手服配藏青百褶裙"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "Niya、同学"
 kind = "上学"
 
 [[schedule_fri]]
 start = "12:20"
 end = "13:10"
-title = "放学班会后在购买部抢了个炒面面包，坐电车回店"
-place = "本馆一楼购买部 / 电车上"
-outfit = "白色长袖水手服配藏青百褶裙"
+title = "放学班会后坐电车回家"
+place = "电车上"
+outfit = "黑色西装外套配酒红领结和灰格纹百褶裙"
 company = "一个人"
 kind = "通勤"
 
 [[schedule_fri]]
 start = "13:10"
-end = "15:00"
-title = "换上女仆装，接住午市的尾巴"
-place = "一楼营业区 / 一楼员工更衣空间"
-outfit = "黑白女仆装"
-company = "客人、Sweyn"
-kind = "工作"
-
-[[schedule_fri]]
-start = "15:00"
-end = "17:00"
-title = "店里的空档，在厨房备放学高峰要用的甜点"
-place = "一楼厨房 / 一楼吧台"
-outfit = "黑白女仆装"
+end = "14:00"
+title = "和店长在家里吃午饭"
+place = "二楼家庭厨房"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
 company = "Sweyn"
-kind = "工作"
+kind = "自由"
 
 [[schedule_fri]]
-start = "17:00"
-end = "19:00"
-title = "周五的店，放学后的客人坐满了前厅"
-place = "一楼营业区"
-outfit = "黑白女仆装"
-company = "客人、Sweyn、Niya"
-kind = "工作"
+start = "14:00"
+end = "16:00"
+title = "去新宿的布料手艺店挑 Cos 用的布和辅料，再逛纪伊国屋书店"
+place = "新宿的布料手艺店 / 新宿纪伊国屋书店"
+outfit = "驼色短大衣配奶白麻花毛衣和酒红百褶裙"
+company = "一个人"
+kind = "外出"
 
 [[schedule_fri]]
-start = "19:00"
+start = "16:00"
+end = "18:00"
+title = "回家在工作间用缝纫机做 Cos 服"
+place = "电车上 / 三楼共用工作间"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
+company = "一个人"
+kind = "自由"
+
+[[schedule_fri]]
+start = "18:00"
 end = "21:00"
-title = "晚市，甜点单一张接一张"
-place = "一楼吧台 / 一楼厨房"
-outfit = "黑白女仆装"
+title = "换上白和服当班，在吧台做甜点和饮品"
+place = "一楼营业区 / 一楼吧台 / 一楼员工更衣空间"
+outfit = "白色蕾丝领和服配红色腰带"
 company = "客人、Sweyn、Niya"
 kind = "工作"
 
 [[schedule_fri]]
 start = "21:00"
 end = "22:00"
-title = "打烊，和 Niya 一起收前厅"
-place = "一楼营业区"
-outfit = "黑白女仆装"
+title = "打烊后和 Niya 收前厅，三个人一起吃员工餐"
+place = "一楼厨房 / 一楼营业区"
+outfit = "白色蕾丝领和服配红色腰带"
 company = "Sweyn、Niya"
-kind = "工作"
-
-[[schedule_fri]]
-start = "22:00"
-end = "23:00"
-title = "洗澡、护发，慢慢把头发吹干"
-place = "二楼浴室 / 三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
-company = "一个人"
 kind = "自由"
 
 [[schedule_fri]]
-start = "23:00"
+start = "22:00"
 end = "24:00"
-title = "陪店长打两局 Apex"
-place = "二楼客厅"
-outfit = "浅蓝细棉长袖睡衣"
+title = "洗澡、护发，下楼陪店长打两局 Apex"
+place = "二楼浴室 / 二楼客厅"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "Sweyn"
 kind = "自由"
 
@@ -779,112 +780,119 @@ start = "24:00"
 end = "26:00"
 title = "回房间开 Switch，在动森里收拾岛"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
-
-# ══════════════════════ 周六 · 不上课，下午起当班到打烊 ══════════════════════
+# ══════════════════════ 周六 · 原宿、表参道 + 傍晚当班 ══════════════════════
 
 [[schedule_sat]]
 start = "02:00"
 end = "09:00"
 title = "睡眠"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "睡眠"
 
 [[schedule_sat]]
 start = "09:00"
-end = "11:00"
+end = "10:30"
 title = "醒了不急着起，在被子里刷手机"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
 [[schedule_sat]]
-start = "11:00"
-end = "13:00"
-title = "下楼吃饭、烤今天要卖的甜点"
-place = "一楼厨房 / 一楼吧台"
-outfit = "有口袋的燕麦色针织背心裙"
+start = "10:30"
+end = "12:30"
+title = "下楼吃早午饭，帮店长烤周末要卖的甜点"
+place = "二楼家庭厨房 / 一楼厨房"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
 company = "Sweyn"
 kind = "自由"
 
 [[schedule_sat]]
-start = "13:00"
-end = "14:30"
-title = "把这周攒的作业一次做完"
-place = "三楼共用工作间"
-outfit = "奶白色水手领卫衣配浅灰短裤"
+start = "12:30"
+end = "15:00"
+title = "坐电车去原宿，从竹下通逛到表参道，看店、试衣服"
+place = "原宿街头 / 表参道"
+outfit = "酒红棒球外套配白色连帽卫衣和黑色百褶短裙"
 company = "一个人"
-kind = "自由"
+kind = "外出"
 
 [[schedule_sat]]
-start = "14:30"
-end = "15:30"
-title = "换装，把头发扎得比平时牢"
-place = "一楼员工更衣空间"
-outfit = "黑白女仆装"
+start = "15:00"
+end = "16:15"
+title = "在表参道常去的咖啡店歇脚，看带出来的小说"
+place = "表参道的一家咖啡店"
+outfit = "酒红棒球外套配白色连帽卫衣和黑色百褶短裙"
 company = "一个人"
-kind = "工作"
+kind = "外出"
 
 [[schedule_sat]]
-start = "15:30"
-end = "18:30"
-title = "周末的店，客人一直没断过"
-place = "一楼营业区"
-outfit = "黑白女仆装"
+start = "16:15"
+end = "17:00"
+title = "电车回店，上楼放下买的东西"
+place = "电车上 / 三楼卧室"
+outfit = "酒红棒球外套配白色连帽卫衣和黑色百褶短裙"
+company = "一个人"
+kind = "通勤"
+
+[[schedule_sat]]
+start = "17:00"
+end = "19:00"
+title = "换上女仆装当班，接住周六傍晚的客人"
+place = "一楼员工更衣空间 / 一楼营业区"
+outfit = "黑色长袖长裙女仆装配白色长围裙"
 company = "客人、Sweyn"
 kind = "工作"
 
 [[schedule_sat]]
-start = "18:30"
+start = "19:00"
 end = "21:00"
-title = "晚市，前厅和吧台两头跑"
-place = "一楼营业区 / 一楼吧台"
-outfit = "黑白女仆装"
+title = "周六晚市，在吧台做甜点和饮品"
+place = "一楼吧台 / 一楼厨房"
+outfit = "黑色长袖长裙女仆装配白色长围裙"
 company = "客人、Sweyn"
 kind = "工作"
 
 [[schedule_sat]]
 start = "21:00"
-end = "22:30"
-title = "打烊、做员工餐、清点剩下的甜点"
-place = "一楼吧台 / 一楼厨房"
-outfit = "黑白女仆装"
+end = "22:00"
+title = "打烊后做员工餐，和店长一起吃"
+place = "一楼厨房 / 一楼营业区"
+outfit = "黑色长袖长裙女仆装配白色长围裙"
 company = "Sweyn"
-kind = "工作"
+kind = "自由"
 
 [[schedule_sat]]
-start = "22:30"
-end = "24:00"
-title = "洗澡，写工作手账记今天的熟客"
+start = "22:00"
+end = "23:30"
+title = "洗澡、敷面膜，把今天买的东西拆开摆好，再写点作业"
 place = "二楼浴室 / 三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
 [[schedule_sat]]
-start = "24:00"
+start = "23:30"
 end = "26:00"
-title = "躺着和 Niya 发消息，你一句我一句"
+title = "躺着和 Niya 发消息"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
-
-# ══════════════════════ 周日 · 全休 ══════════════════════
+# ══════════════════════ 周日 · 新宿御苑外拍，不上班 ══════════════════════
 
 [[schedule_sun]]
 start = "02:00"
 end = "10:00"
 title = "睡眠"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "睡眠"
 
@@ -893,192 +901,191 @@ start = "10:00"
 end = "11:30"
 title = "慢慢醒，下楼做两人份的早午饭"
 place = "二楼家庭厨房 / 二楼客厅"
-outfit = "有口袋的燕麦色针织背心裙"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
 company = "Sweyn"
 kind = "自由"
 
 [[schedule_sun]]
 start = "11:30"
-end = "13:00"
-title = "对着全身镜搭配，整理开衫和领结"
+end = "12:30"
+title = "换上白和服、盘好丸子头，把外拍要带的东西装好"
 place = "三楼卧室"
-outfit = "浅樱粉短开衫配藏青细格百褶裙"
+outfit = "白色蕾丝领和服配红色腰带"
 company = "一个人"
 kind = "自由"
 
 [[schedule_sun]]
-start = "13:00"
+start = "12:30"
 end = "15:30"
-title = "从表参道一路逛到原宿，看店、试衣服"
-place = "原宿街头 / 表参道"
-outfit = "浅樱粉短开衫配藏青细格百褶裙"
-company = "一个人"
+title = "穿着和服和 Niya 在新宿御苑练外拍，她掌镜，自己看构图"
+place = "新宿御苑"
+outfit = "白色蕾丝领和服配红色腰带"
+company = "Niya"
 kind = "外出"
 
 [[schedule_sun]]
 start = "15:30"
 end = "17:30"
-title = "找家咖啡店坐下看小说，被人拦下拍街拍"
-place = "原宿的一家咖啡店"
-outfit = "浅樱粉短开衫配藏青细格百褶裙"
-company = "陌生人"
+title = "去新宿三丁目的喫茶店，和 Niya 一张张选片"
+place = "新宿三丁目的一家喫茶店"
+outfit = "白色蕾丝领和服配红色腰带"
+company = "Niya"
 kind = "外出"
 
 [[schedule_sun]]
 start = "17:30"
 end = "19:00"
-title = "电车回家，路上回积压的消息"
-place = "电车上"
-outfit = "浅樱粉短开衫配藏青细格百褶裙"
+title = "电车回家，换下和服，把选好的片子导进电脑"
+place = "电车上 / 三楼共用工作间"
+outfit = "白色蕾丝领和服配红色腰带"
 company = "一个人"
-kind = "通勤"
+kind = "自由"
 
 [[schedule_sun]]
 start = "19:00"
 end = "21:00"
-title = "和店长一起吃晚饭，把今天买的东西摆出来给他看"
-place = "二楼家庭厨房 / 二楼客厅"
-outfit = "有口袋的燕麦色针织背心裙"
-company = "Sweyn"
-kind = "自由"
-
-[[schedule_sun]]
-start = "21:00"
-end = "22:30"
-title = "泡澡、护发、敷面膜"
-place = "二楼浴室 / 三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+title = "修今天的外拍照片，修好几张先发给 Niya"
+place = "三楼共用工作间"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
 company = "一个人"
 kind = "自由"
 
 [[schedule_sun]]
-start = "22:30"
+start = "21:00"
+end = "22:00"
+title = "店长打烊后两个人吃晚饭，顺手备好明天便当要用的菜"
+place = "二楼家庭厨房 / 二楼客厅"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
+company = "Sweyn"
+kind = "自由"
+
+[[schedule_sun]]
+start = "22:00"
 end = "24:00"
-title = "收拾书包，把做便当要用的菜备好"
-place = "三楼卧室 / 二楼家庭厨房"
-outfit = "浅蓝细棉长袖睡衣"
+title = "泡澡、护发、敷面膜，把明天的课本理好"
+place = "二楼浴室 / 三楼卧室"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
 [[schedule_sun]]
 start = "24:00"
 end = "26:00"
-title = "说好早睡，又看了两话"
+title = "说好早睡，躺着又看了两话"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
-
-# ══════════════ 祝日 · 学校休、店照开（周二~周日的祝日） ══════════════
-#
-# 形状接近周六，但有三处有意的不同：
-#   1. 祝日的客流比周六还满，Niya 也来当班；
-#   2. 上午多出两段真正空着的时间——学校不用去，班又要到下午才开始；
-#   3. 换装比周六早一小时，因为祝日从中午就开始忙。
+# ══════════════════════ 祝日 · 学校休、店照开（上野） ══════════════════════
 
 [[schedule_holiday_shift]]
 start = "02:00"
 end = "09:00"
 title = "睡眠"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "睡眠"
 
 [[schedule_holiday_shift]]
 start = "09:00"
 end = "10:30"
-title = "不用赶电车，在被子里把攒的漫画看了两本"
+title = "不用赶电车，在被子里看攒的漫画"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
 [[schedule_holiday_shift]]
 start = "10:30"
 end = "12:00"
-title = "下楼吃早午饭，顺手帮店长多烤一盘"
-place = "二楼家庭厨房 / 一楼厨房"
-outfit = "有口袋的燕麦色针织背心裙"
+title = "下楼吃早午饭"
+place = "二楼家庭厨房 / 二楼客厅"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
 company = "Sweyn"
 kind = "自由"
 
 [[schedule_holiday_shift]]
 start = "12:00"
-end = "13:30"
-title = "开工前把摊了一桌的作业做掉"
-place = "三楼共用工作间"
-outfit = "奶白色水手领卫衣配浅灰短裤"
+end = "12:45"
+title = "坐电车去上野"
+place = "电车上"
+outfit = "驼色短大衣配奶白麻花毛衣和酒红百褶裙"
 company = "一个人"
+kind = "通勤"
+
+[[schedule_holiday_shift]]
+start = "12:45"
+end = "15:30"
+title = "在国立博物馆看日本史的常设展，再在上野公园里走一圈"
+place = "上野的东京国立博物馆 / 上野公园"
+outfit = "驼色短大衣配奶白麻花毛衣和酒红百褶裙"
+company = "一个人"
+kind = "外出"
+
+[[schedule_holiday_shift]]
+start = "15:30"
+end = "16:30"
+title = "电车回家"
+place = "电车上"
+outfit = "驼色短大衣配奶白麻花毛衣和酒红百褶裙"
+company = "一个人"
+kind = "通勤"
+
+[[schedule_holiday_shift]]
+start = "16:30"
+end = "18:00"
+title = "帮店长补晚市要用的甜点"
+place = "一楼厨房"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
+company = "Sweyn"
 kind = "自由"
 
 [[schedule_holiday_shift]]
-start = "13:30"
-end = "14:30"
-title = "换装，和 Niya 互相整理背后的蝴蝶结"
-place = "一楼员工更衣空间"
-outfit = "黑白女仆装"
-company = "Niya"
-kind = "工作"
-
-[[schedule_holiday_shift]]
-start = "14:30"
-end = "17:30"
-title = "祝日的店，等位的人排到了门外"
-place = "一楼营业区"
-outfit = "黑白女仆装"
-company = "客人、Sweyn、Niya"
-kind = "工作"
-
-[[schedule_holiday_shift]]
-start = "17:30"
+start = "18:00"
 end = "21:00"
-title = "晚市接着满，甜点柜补了两回"
-place = "一楼营业区 / 一楼厨房"
-outfit = "黑白女仆装"
+title = "换上白和服当班，祝日晚市"
+place = "一楼营业区 / 一楼吧台 / 一楼员工更衣空间"
+outfit = "白色蕾丝领和服配红色腰带"
 company = "客人、Sweyn、Niya"
 kind = "工作"
 
 [[schedule_holiday_shift]]
 start = "21:00"
-end = "22:30"
+end = "22:00"
 title = "打烊、盘点，三个人一起吃员工餐"
-place = "一楼吧台 / 一楼厨房"
-outfit = "黑白女仆装"
+place = "一楼厨房 / 一楼营业区"
+outfit = "白色蕾丝领和服配红色腰带"
 company = "Sweyn、Niya"
-kind = "工作"
+kind = "自由"
 
 [[schedule_holiday_shift]]
-start = "22:30"
+start = "22:00"
 end = "24:00"
-title = "洗澡，在浴缸里多泡了一会儿"
+title = "洗澡，在浴缸里多泡一会儿，再写点作业"
 place = "二楼浴室 / 三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
 [[schedule_holiday_shift]]
 start = "24:00"
 end = "26:00"
-title = "趴在床上刷手机，和 Niya 互相吐槽今天的客人"
+title = "趴在床上和 Niya 发消息"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
-
-# ══════════════ 祝日 · 学校和店都休（祝日落在周一） ══════════════
-#
-# 一年里少数几天她真正整天空着。**不要和周日的全休撞车**：周日是她一个人
-# 去原宿逛店、被人拦下街拍；这一天店长也休，是两个人一起过的，去的是神乐坂。
+# ══════════════════════ 祝日 · 学校和店都休（神乐坂） ══════════════════════
 
 [[schedule_holiday_free]]
 start = "02:00"
 end = "10:00"
 title = "睡眠"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "睡眠"
 
@@ -1087,7 +1094,7 @@ start = "10:00"
 end = "11:30"
 title = "下楼时店里黑着灯，店长在客厅看报"
 place = "二楼客厅 / 二楼家庭厨房"
-outfit = "有口袋的燕麦色针织背心裙"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
 company = "Sweyn"
 kind = "自由"
 
@@ -1096,79 +1103,70 @@ start = "11:30"
 end = "13:00"
 title = "两个人做午饭，火候归她管"
 place = "二楼家庭厨房"
-outfit = "有口袋的燕麦色针织背心裙"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
 company = "Sweyn"
 kind = "自由"
 
 [[schedule_holiday_free]]
 start = "13:00"
-end = "14:30"
-title = "换衣服出门，难得两个人一起坐电车"
+end = "14:00"
+title = "换衣服出门，和店长一起坐电车"
 place = "电车上 / 曙桥站"
-outfit = "米白短风衣配酒红格纹百褶裙"
+outfit = "奶白粗棒针开衫配深蓝牛仔长裙"
 company = "Sweyn"
 kind = "通勤"
 
 [[schedule_holiday_free]]
-start = "14:30"
-end = "17:00"
-title = "在神乐坂的小巷里一家家逛，在杂货店挑了很久"
-place = "神乐坂的坡道 / 一家杂货店"
-outfit = "米白短风衣配酒红格纹百褶裙"
+start = "14:00"
+end = "16:30"
+title = "在神乐坂的小巷里一家家逛杂货店"
+place = "神乐坂的坡道 / 神乐坂的杂货店"
+outfit = "奶白粗棒针开衫配深蓝牛仔长裙"
 company = "Sweyn"
 kind = "外出"
 
 [[schedule_holiday_free]]
-start = "17:00"
-end = "18:30"
-title = "找家喫茶店坐下，把人家的甜点认真评了一遍"
+start = "16:30"
+end = "18:00"
+title = "在神乐坂的喫茶店坐下，吃人家的甜点"
 place = "神乐坂的一家喫茶店"
-outfit = "米白短风衣配酒红格纹百褶裙"
+outfit = "奶白粗棒针开衫配深蓝牛仔长裙"
 company = "Sweyn"
 kind = "外出"
 
 [[schedule_holiday_free]]
-start = "18:30"
-end = "19:30"
-title = "电车回家，手里多了一个纸袋"
+start = "18:00"
+end = "19:00"
+title = "电车回家"
 place = "电车上"
-outfit = "米白短风衣配酒红格纹百褶裙"
+outfit = "奶白粗棒针开衫配深蓝牛仔长裙"
 company = "Sweyn"
 kind = "通勤"
 
 [[schedule_holiday_free]]
-start = "19:30"
+start = "19:00"
 end = "21:00"
-title = "晚饭随便对付，两个人窝在客厅看电影"
+title = "晚饭简单做，两个人窝在客厅看电影"
 place = "二楼客厅"
-outfit = "有口袋的燕麦色针织背心裙"
+outfit = "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"
 company = "Sweyn"
 kind = "自由"
 
 [[schedule_holiday_free]]
 start = "21:00"
 end = "22:30"
-title = "洗澡、护发、敷面膜，一样不落"
+title = "洗澡、护发、敷面膜"
 place = "二楼浴室 / 三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 
 [[schedule_holiday_free]]
 start = "22:30"
-end = "24:00"
-title = "把攒着的作业翻出来做了一半"
-place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
-company = "一个人"
-kind = "自由"
-
-[[schedule_holiday_free]]
-start = "24:00"
 end = "26:00"
-title = "躺着补番，一话接一话"
+title = "把攒着的作业翻出来做一半，再躺着补番"
 place = "三楼卧室"
-outfit = "浅蓝细棉长袖睡衣"
+outfit = "浅雾蓝荷叶领长袖睡裙"
 company = "一个人"
 kind = "自由"
 

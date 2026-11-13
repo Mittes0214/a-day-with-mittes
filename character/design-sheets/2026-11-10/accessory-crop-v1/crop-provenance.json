@@ -1,0 +1,29 @@
+{
+  "method": "Paste an unscaled crop of the original blank background over the two accessories and their captions. No image generation.",
+  "source_sha256": "ff73aa6bbcad06da6193b2d05f741d255522cf651ebf6a92efdbb986f296a602",
+  "output_sha256": "7541f9b49a04967a6d8b8dfee997cc7f52d79efdddacf1a9334fd387e06307e4",
+  "source_matches_user_attachment_pixels": true,
+  "donor_xyxy": [
+    0,
+    790,
+    162,
+    1006
+  ],
+  "target_xyxy": [
+    1338,
+    150,
+    1500,
+    366
+  ],
+  "changed_bbox_xyxy": [
+    1338,
+    150,
+    1500,
+    366
+  ],
+  "outside_target_pixel_identical": true,
+  "size": [
+    1536,
+    1024
+  ]
+}
