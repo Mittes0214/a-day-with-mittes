@@ -82,6 +82,9 @@ def test_archived_season_outfits_resolve_only_for_looking_back():
     assert "黑白女仆装" not in wardrobe.names and wardrobe.get("黑白女仆装") is None
     assert wardrobe.get_any("黑白女仆装").parts["top"]
     assert wardrobe.get_any("黑色长袖长裙女仆装配白色长围裙") is wardrobe.get("黑色长袖长裙女仆装配白色长围裙")
+    # 冬季启用后换下的单套同样留在存档里
+    assert wardrobe.get("燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙") is None
+    assert "灯芯绒" in wardrobe.get_any("燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙").parts["bottom"]
 
 
 def test_share_option_keeps_the_outfit_archived_for_that_day():
@@ -104,7 +107,7 @@ def test_outfit_images_cover_current_and_archived_outfits():
     mapping = module._outfit_image_mapping(ROOT / "character")
     wardrobe = plugin_module.Wardrobe(ROOT / "character/wardrobe.toml", ROOT / "character/seasons")
     wardrobe.load()
-    for name in [*wardrobe.names, "黑白女仆装", "白色长袖水手服配藏青百褶裙"]:
+    for name in [*wardrobe.names, "黑白女仆装", "白色长袖水手服配藏青百褶裙", "燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙"]:
         assert (ROOT / "character" / mapping[name]).is_file()
 
 

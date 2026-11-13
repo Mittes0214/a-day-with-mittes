@@ -1,0 +1,33 @@
+[
+  {
+    "outfit": "白色蕾丝领和服配红色腰带",
+    "filename": "11_白色蕾丝领和服配红色腰带_外搭.png",
+    "references": [
+      "/home/mittes/Mittes-1.0.0-dev/mittes-dev/plugins/01_a_day_with_mittes/character/design-sheets/2026-11-14/winter-v1/11_白色蕾丝领和服配红色腰带_外搭.png"
+    ],
+    "reference_role": "edit source",
+    "prompt": "Edit this exact clothing reference sheet. Keep every other garment, label, color, layout, line style and the background exactly as they are. Only make this change: the large hair bow at the upper right is currently red-and-white gingham; make it a solid plain red satin bow of the same shape, size and position (no check pattern, no white), and change its label \"红白格纹大蝴蝶结\" to \"红色大蝴蝶结\". Keep the label line \"（发饰）\".",
+    "settings": {
+      "image_model": "gpt-image-2.5-sunburst",
+      "size": "1536x1024",
+      "quality": "high"
+    },
+    "seconds": 29,
+    "result": {
+      "usage": {
+        "input_tokens": 1660,
+        "input_tokens_details": {
+          "image_tokens": 1536,
+          "text_tokens": 124
+        },
+        "output_tokens": 1372,
+        "output_tokens_details": {
+          "image_tokens": 1372,
+          "text_tokens": 0
+        },
+        "total_tokens": 3032
+      },
+      "revised_prompt": ""
+    }
+  }
+]
