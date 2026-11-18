@@ -26,8 +26,8 @@ _logger = logging.getLogger("a_day_with_mittes.camera")
 PHOTO_DIMENSIONS = (1024, 1536)
 PHOTO_SIZE = "1024x1536"
 DEFAULTS = {
-    "enabled": False, "api_provider": "CLIProxyAPI", "director_model": "gpt-6.1-sol",
-    "image_model": "gpt-image-2.5-sunburst", "check_model": "gpt-6.1-sol",
+    "enabled": False, "api_provider": "CLIProxyAPI", "director_model": "gpt-6.2-sol",
+    "image_model": "gpt-image-2.5-sunburst", "check_model": "gpt-6.2-sol",
     "quality": "high", "timeout_seconds": 300,
 }
 

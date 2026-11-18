@@ -123,9 +123,9 @@ users = []
 enabled = false
 # 复用主程序 model_config.toml 的供应商地址与密钥；密钥不复制到插件和任务记录。
 api_provider = "CLIProxyAPI"
-director_model = "gpt-6.1-sol"
+director_model = "gpt-6.2-sol"
 image_model = "gpt-image-2.5-sunburst"
-check_model = "gpt-6.1-sol"
+check_model = "gpt-6.2-sol"
 # 照片尺寸由程序固定为竖版 2:3、1024x1536，不随参考图变化。
 quality = "high"
 timeout_seconds = 300
