@@ -37,6 +37,9 @@ DB_PATH = PROJECT_ROOT / "data" / "plugins" / "khiqwq.a-day-with-mittes" / "sche
 WARDROBE_PATH = PLUGIN_DIR / "character" / "wardrobe.toml"
 CONFIG_PATH = PLUGIN_DIR / "config.toml"
 WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
+# 每日分享与相机成品都在同一个插件数据目录，viewer 只读，操作走 admin_jobs 交给插件
+SHARE_DB_PATH = DB_PATH.parent / "daily_share" / "daily_share.db"
+CAMERA_DIR = DB_PATH.parent / "camera"
 
 # 祝日表跟插件共用同一份缓存：插件生成日程时下载，viewer 画日历时读。
 # 路径必须跟 schedule/holidays.py 的 ``data_dir / "holidays" / "JP"`` 对齐，
@@ -278,7 +281,62 @@ def _load_wardrobe(path: Path) -> dict[str, Any]:
     }
 
 
+def _share_settings(path: Path) -> dict[str, Any]:
+    """每日分享开着没有、几点生成。只给页面显示用，判断以插件运行时为准。"""
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        data = {}
+    share = data.get("daily_share") or {}
+    return {"enabled": bool(share.get("enabled", False)), "run_at": str(share.get("run_at", "00:00"))}
+
+
+def _load_share(db_path: Path, day: str) -> dict[str, Any] | None:
+    date.fromisoformat(day)
+    if not db_path.exists():
+        return None
+    with _connect(db_path) as conn:
+        row = conn.execute("SELECT record FROM posts WHERE day=?", (day,)).fetchone()
+    if row is None:
+        return None
+    record = json.loads(row["record"])
+    for key in ("pick_usage", "caption_usage"):
+        record.pop(key, None)
+    record["events"] = record.get("events", [])[-12:]
+    return record
+
+
+def _share_image(db_path: Path, camera_dir: Path, day: str) -> Path | None:
+    record = _load_share(db_path, day)
+    photo = (record or {}).get("photo") or {}
+    task, name = str(photo.get("task_id") or ""), str(photo.get("file") or "")
+    if not task.isalnum() or not name or "/" in name or "\\" in name or name.startswith("."):
+        return None
+    path = camera_dir / task / name
+    return path if path.is_file() else None
+
+
+def _check_caption(raw: Any) -> dict[str, Any]:
+    """面板改过的配文：粗查长度和格式，细的规矩由插件再查一遍。"""
+    if not isinstance(raw, dict):
+        raise ValueError("配文格式不正确")
+    title, body, tags = raw.get("title"), raw.get("body"), raw.get("tags")
+    if not isinstance(title, str) or not title.strip() or len(title.strip()) > 24:
+        raise ValueError("标题须为 1–24 字")
+    if not isinstance(body, str) or not 40 <= len(body.strip()) <= 400:
+        raise ValueError("正文须为 40–400 字")
+    if not isinstance(tags, list) or not 1 <= len(tags) <= 6 or not all(isinstance(t, str) and t.strip() for t in tags):
+        raise ValueError("话题须为 1–6 个")
+    return {"title": title.strip(), "body": body.strip(), "tags": [t.strip() for t in tags]}
+
+
 _ALLOWED_ACTIONS = {
+    "daily_share_generate",
+    "daily_share_recaption",
+    "daily_share_approve",
+    "daily_share_withdraw",
+    "daily_share_reject",
     "set_expression",
     "generate_day",
     "regenerate_day",
@@ -310,6 +368,13 @@ def _enqueue_job(conn: sqlite3.Connection, payload: dict[str, Any]) -> int:
         if exists is None:
             raise ValueError("这一天或时段不存在")
         body["manner"] = manner
+    if action == "daily_share_approve":
+        body["caption"] = _check_caption(payload.get("caption"))
+    if action == "daily_share_recaption":
+        note = str(payload.get("note") or "").strip()
+        if len(note) > 200:
+            raise ValueError("修改意见不能超过 200 字")
+        body["note"] = note
     cursor = conn.execute(
         "INSERT INTO admin_jobs (action, target_date, slot, payload) VALUES (?, ?, ?, ?)",
         (action, target, slot, json.dumps(body, ensure_ascii=False)),
@@ -334,6 +399,8 @@ def _load_job(conn: sqlite3.Connection, job_id: int) -> dict[str, Any] | None:
 class Handler(BaseHTTPRequestHandler):
     db_path: Path
     wardrobe_path: Path
+    share_db_path: Path = SHARE_DB_PATH
+    camera_dir: Path = CAMERA_DIR
 
     def do_GET(self) -> None:  # noqa: N802 —— BaseHTTPRequestHandler 的固定签名
         path = urlparse(self.path).path
@@ -370,6 +437,26 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "年份超出范围"}, status=400)
                 return
             self._send_json(_load_holidays(year))
+            return
+        if path.startswith("/api/daily-share/"):
+            day = path.rsplit("/", 1)[-1]
+            try:
+                record = _load_share(self.share_db_path, day)
+            except (ValueError, sqlite3.Error) as exc:
+                self._send_json({"error": f"读不了每日分享：{exc}"}, status=400)
+                return
+            self._send_json({"record": record, "settings": _share_settings(CONFIG_PATH)})
+            return
+        if path.startswith("/api/daily-share-image/"):
+            day = path.rsplit("/", 1)[-1]
+            try:
+                image = _share_image(self.share_db_path, self.camera_dir, day)
+            except (ValueError, sqlite3.Error):
+                image = None
+            if image is None:
+                self._send_json({"error": "这一天的分享还没有配图"}, status=404)
+                return
+            self._send(200, "image/png", image.read_bytes(), cache_control="private, max-age=300")
             return
         if path == "/api/days":
             with _connect(self.db_path) as conn:
@@ -887,6 +974,61 @@ button.action:disabled { opacity: .55; cursor: wait; }
 }
 #modal .part-switch .outfit.on { background: var(--accent); border-color: var(--accent); color: var(--band-ink); }
 
+
+/* ── 今日分享：宽屏时是最右边一栏，跟着页面固定；窄了挪到正文最上面 ── */
+#share {
+  border-left: 1px solid var(--line); background: var(--bg);
+  height: 100vh; position: sticky; top: 0; overflow-y: auto; padding: 22px 18px 32px;
+}
+#share .sec-head { margin-bottom: 12px; }
+#share .note-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+}
+#share .shot { display: block; position: relative; background: var(--badge); aspect-ratio: 2 / 3; }
+#share .shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+#share .shot .wait { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; padding: 16px; text-align: center; }
+#share .note-body { padding: 12px 14px 14px; }
+#share .note-title { font-weight: 600; font-size: 15.5px; line-height: 1.45; margin: 0 0 6px; }
+#share .note-text { white-space: pre-wrap; font-size: 13.5px; line-height: 1.7; margin: 0; }
+#share .note-tags { margin-top: 8px; font-size: 13px; color: var(--sat); word-break: break-all; }
+#share .meta { font-size: 12px; color: var(--muted); margin: 10px 0 0; line-height: 1.6; }
+#share .state { display: inline-block; font-size: 11.5px; padding: 0 8px; border-radius: 999px; background: var(--badge); color: var(--muted); margin-left: auto; }
+#share .state.wait { background: var(--accent); color: #fff; }
+#share .state.ok { background: var(--kind-idle); color: var(--band-ink); }
+#share .state.bad { background: var(--kind-busy); color: var(--band-ink); }
+#share .edit label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 3px; }
+#share .edit input, #share .edit textarea {
+  width: 100%; font: inherit; font-size: 13.5px; color: var(--text); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px;
+}
+#share .edit textarea { min-height: 190px; resize: vertical; line-height: 1.65; }
+#share .edit .count { float: right; font-size: 11px; }
+#share .edit .count.over { color: var(--accent); }
+#share .buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+#share .buttons .action { flex: 1 1 auto; }
+#share .warn { color: var(--accent); font-size: 13px; margin: 10px 0 0; }
+#share .steps { display: flex; gap: 4px; margin: 10px 0 0; font-size: 11.5px; color: var(--muted); }
+#share .steps span { flex: 1; text-align: center; border-top: 3px solid var(--line); padding-top: 4px; }
+#share .steps span.done { border-color: var(--kind-idle); }
+#share .steps span.on { border-color: var(--accent); color: var(--text); }
+#share details.log { margin-top: 14px; font-size: 12px; color: var(--muted); }
+#share details.log summary { cursor: pointer; }
+#share details.log ol { padding-left: 18px; margin: 6px 0 0; }
+#share .history { font-size: 12px; color: var(--muted); margin-top: 6px; }
+@media (min-width: 1501px) { body { grid-template-columns: 284px minmax(0, 1fr) 360px; } }
+@media (max-width: 1500px) {
+  body { grid-template-rows: auto 1fr; }
+  #rail { grid-row: 1 / span 2; }
+  #share { grid-column: 2; grid-row: 1; height: auto; position: static; border-left: 0;
+    border-bottom: 1px solid var(--line); padding: 18px 36px; }
+  main { grid-column: 2; grid-row: 2; }
+  #share .note-card { display: grid; grid-template-columns: 240px minmax(0, 1fr); max-width: 980px; }
+}
+@media (max-width: 860px) {
+  #share { padding: 14px 16px; }
+  #share .note-card { display: block; }
+}
+
 @media (max-width: 1280px) {
   .day-body { grid-template-columns: minmax(0, 1fr); }
   .outfits { position: static; }
@@ -930,6 +1072,7 @@ button.action:disabled { opacity: .55; cursor: wait; }
   </div>
 </aside>
 <main id="main"><p class="empty">加载中…</p></main>
+<aside id="share" aria-label="今日分享"></aside>
 <div id="modal"></div>
 <script>
 const WD = ['一','二','三','四','五','六','日'];
@@ -1203,6 +1346,7 @@ async function route() {
   const data = await api('/api/day/' + day);
   if (data.error) { document.getElementById('main').innerHTML = `<p class="empty">${esc(data.error)}</p>`; return; }
   render(day, data, await wardrobe());
+  renderShare(day);
   focusNow();
 }
 
@@ -1421,6 +1565,169 @@ async function resumeJobs() {
     paintJobs();
   } catch (error) { /* 旧版插件没有这个接口时不影响其他功能 */ }
 }
+
+
+// ── 每日分享 ──
+// 状态由插件的后台循环推进；这里只展示和递交审核操作。进行中时每 4 秒刷新一次。
+const SHARE_STEPS = [['picking', '选题'], ['shooting', '拍照'], ['captioning', '配文'], ['pending_review', '审核'], ['published', '发布']];
+const SHARE_STATE = {
+  picking: ['正在选题', 'wait'], shooting: ['正在拍照', 'wait'], captioning: ['正在写配文', 'wait'],
+  pending_review: ['待审核', 'wait'], approved: ['已通过，等待发布', 'ok'], publishing: ['正在发布', 'wait'],
+  published: ['已发布', 'ok'], rejected: ['未通过', ''], skipped: ['今天不分享', ''],
+  failed: ['生成失败', 'bad'], publish_failed: ['发布失败', 'bad'], publish_unknown: ['发布结果不明', 'bad'],
+};
+const SHARE_WORKING = new Set(['picking', 'shooting', 'captioning', 'publishing']);
+const SHARE_RETRY = new Set(['rejected', 'failed', 'skipped', 'publish_failed']);
+let shareTimer = null;
+let shareDay = '';
+let shareJob = null;
+
+function shareClock(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const t = new Intl.DateTimeFormat('zh-CN', {timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false}).format(d);
+  return t.replace('/', '月').replace(' ', '日 ');
+}
+
+function shareSteps(status) {
+  const order = SHARE_STEPS.map(s => s[0]);
+  let at = order.indexOf(status);
+  if (status === 'approved' || status === 'publishing') at = 4;
+  if (status === 'published') at = 5;
+  return `<div class="steps">${SHARE_STEPS.map(([key, label], i) =>
+    `<span class="${i < at ? 'done' : i === at ? 'on' : ''}">${label}</span>`).join('')}</div>`;
+}
+
+function shareNote(r, editable) {
+  const c = r.caption || {};
+  const img = r.photo
+    ? `<a class="shot" href="/api/daily-share-image/${r.day}?a=${r.attempt}" target="_blank" title="看原图"><img src="/api/daily-share-image/${r.day}?a=${r.attempt}" alt="${esc(r.photo.description || '分享配图')}"></a>`
+    : `<div class="shot"><span class="wait">${SHARE_WORKING.has(r.status) ? '配图还在拍…' : '没有配图'}</span></div>`;
+  let text = '';
+  if (editable) {
+    const tags = (c.tags || []).join(' ');
+    text = `<div class="edit">
+      <label for="share-title">标题<span class="count" data-for="share-title" data-max="20"></span></label>
+      <input id="share-title" maxlength="24" value="${esc(c.title || '')}">
+      <label for="share-body">正文<span class="count" data-for="share-body" data-max="400"></span></label>
+      <textarea id="share-body" maxlength="400">${esc(c.body || '')}</textarea>
+      <label for="share-tags">话题（空格分隔，不用写 #）</label>
+      <input id="share-tags" value="${esc(tags)}">
+      <label for="share-note">重写意见（可选，只给「重写文字」用）</label>
+      <input id="share-note" maxlength="200" placeholder="比如：短一点，少用 emoji">
+    </div>`;
+  } else if (r.caption) {
+    text = `<p class="note-title">${esc(c.title)}</p><p class="note-text">${esc(c.body)}</p>
+      <div class="note-tags">${(c.tags || []).map(t => '#' + esc(t)).join(' ')}</div>`;
+  }
+  const pick = r.pick && r.pick.slot
+    ? `<p class="meta">${esc(r.pick.time)} · ${esc(r.pick.title || r.pick.slot)}<br>${esc(r.pick.subject)}${r.photo ? `<br>${esc(r.photo.origin)}` : ''}</p>` : '';
+  return `<div class="note-card">${img}<div class="note-body">${text}${pick}</div></div>`;
+}
+
+function shareButtons(r) {
+  const b = (id, label, primary) => `<button class="action${primary ? ' primary' : ''}" data-share="${id}">${label}</button>`;
+  if (!r) return b('daily_share_generate', '生成分享', true);
+  if (r.status === 'pending_review') return b('daily_share_approve', '通过', true) + b('daily_share_recaption', '重写文字') + b('daily_share_generate', '重拍') + b('daily_share_reject', '不通过');
+  if (r.status === 'approved') return b('daily_share_withdraw', '撤回审核') + b('daily_share_reject', '不通过');
+  if (SHARE_RETRY.has(r.status)) return b('daily_share_generate', '重新生成', true);
+  return '';
+}
+
+async function renderShare(day) {
+  const box = document.getElementById('share');
+  if (!box || !day) return;
+  if (day !== shareDay) { shareDay = day; box.innerHTML = ''; }
+  let data;
+  try { data = await api('/api/daily-share/' + day); }
+  catch (error) { box.innerHTML = `<p class="empty">${esc(error.message)}</p>`; return; }
+  if (day !== shareDay) return;   // 等接口的时候切了日期
+  // 正在改文字时不整块重画，免得把输入冲掉
+  const editing = box.contains(document.activeElement) && document.activeElement.matches('input, textarea');
+  const r = data.record;
+  const isToday = jstNow().date === day;
+  const label = isToday ? '今日分享' : `${+day.slice(5, 7)} 月 ${+day.slice(8)} 日分享`;
+  const [stateText, stateCls] = r ? (SHARE_STATE[r.status] || [r.status, '']) : [data.settings.enabled ? `${esc(data.settings.run_at)} 自动生成` : '自动生成未开启', ''];
+  if (!editing) {
+    let body = '';
+    if (!r) {
+      body = `<p class="meta">这一天还没有分享。${data.settings.enabled ? `每天 ${esc(data.settings.run_at)} 会自动从当天日程挑一个瞬间拍照配文，` : ''}也可以现在手动生成。</p>`;
+    } else {
+      body = shareSteps(r.status) + `<div style="margin-top:12px">${shareNote(r, r.status === 'pending_review')}</div>`;
+      if (r.status === 'approved') body += `<p class="meta">定于 ${esc(shareClock(r.publish_at))} 发到 QQ 空间（所选时段结束后）。</p>`;
+      if (r.status === 'published') body += `<p class="meta">已于 ${esc(shareClock(r.published && r.published.at))} 发到 QQ 空间。</p>`;
+      if (r.status === 'publish_unknown') body += `<p class="warn">说说可能已经发出去了，请先去 QQ 空间核对；不会自动重发。</p>`;
+      if (r.status === 'skipped' && r.pick) body += `<p class="meta">${esc(r.pick.reason || '')}</p>`;
+      if (r.error && !['published', 'pending_review', 'approved'].includes(r.status)) body += `<p class="warn">${esc(r.error)}</p>`;
+      if ((r.history || []).length) body += `<p class="history">这是第 ${r.attempt} 版，之前 ${r.history.length} 版没有通过或没拍成。</p>`;
+      body += `<details class="log"><summary>过程记录</summary><ol>${(r.events || []).map(e =>
+        `<li>${esc(shareClock(e.at))} ${esc(e.text)}</li>`).join('')}</ol></details>`;
+    }
+    box.innerHTML = `<div class="sec-head"><h3>${label}</h3><span class="state ${stateCls}">${stateText}</span></div>
+      ${body}<div class="buttons">${shareButtons(r)}</div><div id="share-job-status" class="job-status"></div>`;
+    paintShareCounts();
+    paintShareJob();
+  }
+  clearTimeout(shareTimer);
+  if ((r && SHARE_WORKING.has(r.status)) || shareJob) shareTimer = setTimeout(() => renderShare(shareDay), 4000);
+}
+
+function paintShareCounts() {
+  document.querySelectorAll('#share .count').forEach(node => {
+    const field = document.getElementById(node.dataset.for);
+    const n = [...(field.value || '').trim()].length;
+    node.textContent = `${n}/${node.dataset.max}`;
+    node.classList.toggle('over', n > +node.dataset.max);
+  });
+}
+
+function paintShareJob() {
+  const status = document.getElementById('share-job-status');
+  const busy = shareJob && (shareJob.status === 'pending' || shareJob.status === 'running');
+  document.querySelectorAll('#share [data-share]').forEach(button => { button.disabled = !!busy; });
+  if (!status || !shareJob) return;
+  status.className = 'job-status' + (busy ? ' busy' : shareJob.status === 'failed' ? ' error' : ' done');
+  status.textContent = busy ? JOB_TEXT[shareJob.status] : shareJob.status === 'failed' ? (shareJob.error || '操作失败') : (shareJob.result || '已完成');
+}
+
+async function shareAction(action) {
+  const payload = {action, date: shareDay};
+  if (action === 'daily_share_approve') {
+    payload.caption = {
+      title: document.getElementById('share-title').value,
+      body: document.getElementById('share-body').value,
+      tags: document.getElementById('share-tags').value.split(/[\\s,，、]+/).map(t => t.replace(/^[#＃]/, '')).filter(Boolean),
+    };
+  }
+  if (action === 'daily_share_recaption') payload.note = document.getElementById('share-note').value;
+  if (action === 'daily_share_generate' && document.querySelector('#share .state.wait') && !confirm('放弃这一版，重新选题拍照？')) return;
+  if (action === 'daily_share_reject' && !confirm('这一版不发布？')) return;
+  shareJob = {status: 'pending'};
+  paintShareJob();
+  try {
+    const created = await api('/api/jobs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+    shareJob = {id: created.id, status: 'pending'};
+    while (shareJob.status === 'pending' || shareJob.status === 'running') {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      try { shareJob = await api('/api/job/' + shareJob.id); } catch (error) { /* 下一秒再试 */ }
+      paintShareJob();
+    }
+  } catch (error) {
+    shareJob = {status: 'failed', error: error.message};
+  }
+  const done = shareJob;
+  document.activeElement && document.activeElement.blur();
+  await renderShare(shareDay);
+  shareJob = done;
+  paintShareJob();
+  setTimeout(() => { if (shareJob === done) { shareJob = null; paintShareJob(); } }, 15000);
+}
+
+document.addEventListener('click', event => {
+  const button = event.target.closest('#share [data-share]');
+  if (button) shareAction(button.dataset.share);
+});
+document.addEventListener('input', event => { if (event.target.closest('#share .edit')) paintShareCounts(); });
 
 async function refreshDay(day) {
   await loadDays();

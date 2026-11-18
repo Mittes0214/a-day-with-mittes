@@ -44,6 +44,7 @@ from .camera.prompt_context import helpers_of
 from .camera.prompts import PENDING_GUIDANCE
 from .camera.service import PhotoService, pending_line, photo_origin
 from .camera.store import PhotoQuotaExceeded
+from .daily.service import DailyShareService
 from .character.outfit_images import (
     IMAGES_ARG,
     OutfitImages,
@@ -113,6 +114,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._private_topic_task: asyncio.Task[None] | None = None
         self._private_topic_waker: PrivateTopicWaker | None = None
         self._camera: PhotoService | None = None
+        self._daily_share: DailyShareService | None = None
         self._batch_lock = asyncio.Lock()
         # 后台任务的强引用；不持有的话事件循环可能把它当垃圾回收掉
         self._background: set[asyncio.Task[None]] = set()
@@ -185,6 +187,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._private_topic_task = asyncio.create_task(self._private_topic_loop())
         self._camera = PhotoService(self.ctx, self._plugin_dir, data_dir, self._get_config)
         await self._camera.start()
+        self._daily_share = DailyShareService(
+            self._camera, data_dir, self._get_config, self._daily_material, self._photo_snapshot_at,
+        )
+        await self._daily_share.start()
         _logger.info(
             "[私聊主动] enabled=%s users=%s；从下一个时段开始检查",
             await self._get_config("proactive_private.enabled", False),
@@ -193,6 +199,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         _logger.info("[加载] 骨架就绪，批量生成与前端管理守护已启动")
 
     async def on_unload(self) -> None:
+        if self._daily_share is not None:
+            await self._daily_share.close()
+            self._daily_share = None
         if self._camera is not None:
             await self._camera.close()
             self._camera = None
@@ -861,6 +870,18 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
     def _photo_snapshot(self) -> dict[str, Any]:
         moment, day, segment, state = self._current()
+        return self._build_snapshot(moment, day, segment, state, share_options=True)
+
+    def _photo_snapshot_at(self, moment: datetime) -> dict[str, Any]:
+        """每日分享用：某一时刻的拍照快照。拍的就是那一刻本身，不列可回看的旧时段。"""
+        store = self._require_store()
+        day, _minutes = store.resolve_moment(moment)
+        segment, state = store.state_at(moment)
+        return self._build_snapshot(moment, day, segment, state, share_options=False)
+
+    def _build_snapshot(self, moment: datetime, day: date, segment: Segment, state: SegmentState,
+                        *, share_options: bool) -> dict[str, Any]:
+        store = self._require_store()
         outfit = self._wardrobe.get(segment.outfit) if self._wardrobe is not None else None
         return {
             "captured_at": moment.isoformat(), "logical_day": day.isoformat(), "slot": segment.slot,
@@ -872,7 +893,24 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             "appearance": self._wardrobe.appearance if self._wardrobe is not None else {},
             "story": state.story, "topic": state.topic, "company": segment.company,
             "helpers": helpers_of(segment.company),
-            "share_options": self._share_options(day, self._require_store().resolve_moment(moment)[1]),
+            "share_options": self._share_options(day, store.resolve_moment(moment)[1]) if share_options else [],
+        }
+
+    def _daily_material(self, day: date) -> dict[str, Any] | None:
+        """每日分享选题用的全天日程：按归档里当天的骨架与生成结果，没生成过就是 None。"""
+        store = self._require_store()
+        cached = store.load_day_cache(day)
+        segments = store.archived_segments(day)
+        if cached is None or not segments:
+            return None
+        return {
+            "day": day.isoformat(), "weekday": "一二三四五六日"[day.weekday()],
+            "weather": self._day_weather(day), "outline": cached.outline,
+            "segments": [{
+                "slot": segment.slot, "title": segment.title, "place": segment.place, "kind": segment.kind,
+                "company": segment.company, "helpers": helpers_of(segment.company), "outfit": segment.outfit,
+                "story": state.story, "topic": state.topic, "mood": state.mood,
+            } for segment, state in segments],
         }
 
     @Tool(
@@ -2158,6 +2196,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             await self._private_topic_waker.tick(day, segment, state, users, include_initial=True, repeat=repeat)
             return "已检查当前时段的手动唤醒；逐用户结果见 private_topic_wakes.db（queued 不表示已回复）"
 
+        if action.startswith("daily_share_"):
+            return await self._daily_share_job(action, target, json.loads(str(job.get("payload") or "{}")))
+
         if action == "set_expression":
             payload = json.loads(str(job.get("payload") or "{}"))
             manner = str(payload.get("manner") or "").strip()
@@ -2198,6 +2239,28 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             return await self._expressions_text(target)
 
         raise ValueError(f"不支持的管理任务：{action}")
+
+    async def _daily_share_job(self, action: str, target: date, payload: dict[str, Any]) -> str:
+        """管理页的每日分享操作：只改状态，拍照、配文和发布由每日分享的后台循环接着做。"""
+        if self._daily_share is None:
+            raise RuntimeError("每日分享尚未就绪")
+        service = self._daily_share
+        if action == "daily_share_generate":
+            record = await service.generate(target, "管理页手动生成")
+            return f"已开始生成第 {record['attempt']} 版分享"
+        if action == "daily_share_recaption":
+            await service.recaption(target, str(payload.get("note") or "").strip()[:200])
+            return "正在重写配文"
+        if action == "daily_share_approve":
+            record = await service.approve(target, payload.get("caption") or {})
+            return f"已通过，定于 {record['publish_at'][5:16].replace('T', ' ')} 发布"
+        if action == "daily_share_withdraw":
+            await service.withdraw(target)
+            return "已撤回，回到待审核"
+        if action == "daily_share_reject":
+            await service.reject(target)
+            return "已标记不通过，不会发布"
+        raise ValueError(f"不支持的每日分享操作：{action}")
 
     def _require_store(self) -> ScheduleStore:
         if self._store is None:

@@ -85,6 +85,14 @@ def photo_origin(record: dict[str, Any]) -> str:
     return "是 Mittes 刚用手机拍的"
 
 
+DAILY_SHARE_STREAM = "daily-share"
+
+
+def quiet(record: dict[str, Any]) -> bool:
+    """本地预览和每日分享配图都不回到聊天：不发图、不回填、不触发 planner。"""
+    return bool(record.get("preview") or record.get("daily_share"))
+
+
 def pending_line(record: dict[str, Any]) -> str:
     return f"正在拍摄：{requester_label(record)}要的「{request_quote(record)}」（拍好会自动发出）"
 
@@ -200,13 +208,19 @@ class PhotoService:
             self.task = None
 
     async def submit(self, instruction: str, source_msg_id: str, stream_id: str,
-                     snapshot: dict[str, Any], *, preview: bool = False) -> dict[str, Any]:
+                     snapshot: dict[str, Any], *, preview: bool = False,
+                     daily_share: dict[str, Any] | None = None) -> dict[str, Any]:
+        """daily_share：每日分享配图。没有请求消息和提问人，按「发给其他人」的规矩拍，
+        检查通过后停在 daily_share 状态交给每日分享审核，不发到任何聊天，不占额度。"""
         settings = {key: await self.get_config(f"photo.{key}", default) for key, default in DEFAULTS.items()}
         settings["size"] = PHOTO_SIZE
         if not settings["enabled"]:
             raise ValueError("拍照功能尚未开启")
         if not instruction.strip() or len(instruction) > 2000:
             raise ValueError("instruction 必须是 1–2000 字的拍摄意图")
+        if daily_share is not None:
+            preview = False
+            stream_id = DAILY_SHARE_STREAM
         if not source_msg_id or (not preview and not stream_id):
             raise ValueError("缺少原会话或真实用户消息 ID")
         context = []
@@ -214,7 +228,7 @@ class PhotoService:
         requester_name = ""
         requester_persona = ""
         source_text = instruction
-        if not preview:
+        if not preview and daily_share is None:
             source = await self.ctx.message.get_by_id(source_msg_id, stream_id=stream_id)
             if not isinstance(source, dict) or source.get("session_id") != stream_id:
                 raise ValueError("源消息不属于当前会话或无法读取")
@@ -245,6 +259,7 @@ class PhotoService:
             "images": [], "references": [],
             "previous_photo": None,
             "requester": requester, "requester_name": requester_name, "requester_persona": requester_persona,
+            "daily_share": daily_share,
         })
 
     def _previous_photo(self, record: dict[str, Any]) -> dict[str, Any] | None:
@@ -281,7 +296,7 @@ class PhotoService:
                 status = "generation_unknown" if isinstance(exc, (GenerationUnknown, TimeoutError)) else "failed"
                 await self.event(record, status, f"{type(exc).__name__}: {str(exc)[:800]}")
                 _logger.exception("[相机] 任务失败 %s", record["id"])
-                if not record["preview"]:
+                if not quiet(record):
                     try:
                         await self.ctx.maisaka.proactive.trigger(
                             stream_id=record["stream_id"],
@@ -296,12 +311,13 @@ class PhotoService:
         settings = record["settings"]
         # 重载后恢复的旧排队任务也使用统一尺寸，参数与归档保持一致。
         settings["size"] = PHOTO_SIZE
-        if not record["preview"]:
+        if not quiet(record):
             # 上一张照片在开始处理时才取：队列串行，此刻前一张已经发完。
             # 提交时取会漏掉排在前面、尚未发出的那张（11-04 拍脚照拿到的是自拍而不是穿搭照）。
             record["previous_photo"] = await asyncio.to_thread(self._previous_photo, record)
         await self.event(record, "planning", "读取请求快照，设计手机取景")
-        record["earlier_photos"] = await asyncio.to_thread(self.store.earlier_photos, record)
+        # 每日分享是新拍的配图，不从旧照片里挑
+        record["earlier_photos"] = [] if record.get("daily_share") else await asyncio.to_thread(self.store.earlier_photos, record)
         base_url, key = await asyncio.to_thread(read_provider, settings["api_provider"])
         client = CameraTraceClient(self.client_factory(base_url, key, float(settings["timeout_seconds"])), record, self.store)
         try:
@@ -408,7 +424,9 @@ class PhotoService:
                     record["final_image"] = filename
                     record["description"] = check["description"]
                     await self.event(record, "ready", "检查通过，成品已保存")
-                    if record["preview"]:
+                    if record.get("daily_share"):
+                        await self.event(record, "daily_share", "交给每日分享，等待面板审核，不发到聊天")
+                    elif record["preview"]:
                         await self.event(record, "preview", "本地接口实测完成，未发送到聊天")
                     else:
                         await self._deliver(record, raw)
@@ -497,7 +515,7 @@ class PhotoService:
         reason = reason or DECLINE_REASONS[code]
         record["decline"] = {"reason_code": code, "reason": reason, "planner_guidance": guidance}
         await self.event(record, "declined", reason)
-        if record["preview"]:
+        if quiet(record):
             return
         try:
             result = await self.ctx.maisaka.proactive.trigger(
@@ -519,6 +537,8 @@ class PhotoService:
 
     async def _reuse(self, record: dict[str, Any], plan: dict[str, Any]) -> None:
         """把之前发过的一张没露脸的照片原样再发一次，不重新生成。"""
+        if record.get("daily_share"):
+            raise ValueError("每日分享配图不重发旧照片")
         reuse = plan.get("reuse") if isinstance(plan.get("reuse"), dict) else {}
         chosen = next((p for p in record["earlier_photos"] if p["id"] == reuse.get("photo_id")), None)
         if chosen is None:
@@ -538,7 +558,7 @@ class PhotoService:
 
     def _face_photos_left(self, record: dict[str, Any]) -> int | None:
         """今天还能给这位提问人几张别人帮拍的露脸照；None 表示不限。"""
-        if record["preview"] or record["requester_persona"] == "Sweyn":
+        if quiet(record) or record["requester_persona"] == "Sweyn":
             return None
         return max(0, FACE_DAILY_LIMIT - self.store.face_photos_today(record))
 

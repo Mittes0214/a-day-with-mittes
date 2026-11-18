@@ -101,9 +101,11 @@ class CameraStore:
             day = datetime.now(QUOTA_TIMEZONE).date().isoformat()
             requester = record.get("requester") or {}
             account = (str(requester.get("platform") or ""), str(requester.get("user_id") or ""))
-            if record.get("preview") is not True and not all(account):
+            daily_share = bool(record.get("daily_share"))
+            if record.get("preview") is not True and not daily_share and not all(account):
                 raise ValueError("缺少经真实消息验证的拍照用户身份")
-            exempt = record.get("preview") is True or record["requester_persona"] == "Sweyn"  # 店长不计额度
+            # 店长、本地预览和每日分享配图都不计额度
+            exempt = record.get("preview") is True or daily_share or record["requester_persona"] == "Sweyn"
             quota = {"day": day, "timezone": QUOTA_TIMEZONE.key, "limit": DAILY_LIMIT, "exempt": exempt}
             if not exempt:
                 row = con.execute("SELECT used FROM daily_usage WHERE platform=? AND user_id=? AND day=?",
@@ -224,7 +226,7 @@ class CameraStore:
     def recent_face_covers(self, limit: int = 6) -> list[str]:
         """最近几张已发出的人物照用过的遮脸方式（从新到旧），给取景分析器轮换用。"""
         with closing(sqlite3.connect(self.db)) as con:
-            rows = con.execute("SELECT record FROM tasks WHERE status IN ('sent','preview') ORDER BY updated_at DESC LIMIT 40").fetchall()
+            rows = con.execute("SELECT record FROM tasks WHERE status IN ('sent','preview','daily_share') ORDER BY updated_at DESC LIMIT 40").fetchall()
         out: list[str] = []
         for (raw,) in rows:
             method = ((json.loads(raw).get("plan") or {}).get("face_cover") or {}).get("method")
@@ -237,7 +239,7 @@ class CameraStore:
     def recent_candids(self, limit: int = 4) -> list[str]:
         """最近几张分享照用过的抓拍方式（从新到旧），给取景分析器轮换用。"""
         with closing(sqlite3.connect(self.db)) as con:
-            rows = con.execute("SELECT record FROM tasks WHERE status IN ('sent','preview') ORDER BY updated_at DESC LIMIT 40").fetchall()
+            rows = con.execute("SELECT record FROM tasks WHERE status IN ('sent','preview','daily_share') ORDER BY updated_at DESC LIMIT 40").fetchall()
         shares = [json.loads(raw).get("share") or {} for (raw,) in rows]
         return [s["candid"] for s in shares if "candid" in s][:limit]
 

@@ -130,6 +130,18 @@ check_model = "gpt-6.2-sol"
 quality = "high"
 timeout_seconds = 300
 
+[daily_share]
+# 每日分享：每天 run_at（东京时间）从当天日程挑一个瞬间，用相机流程拍配图、写小红书风格配文，
+# 在管理页「今日分享」栏审核；通过后到所选时段结束（再随机等 10–40 分钟）发到 QQ 空间。
+# 拍照用 [photo] 的模型与开关；配文和选题用 photo.director_model。
+enabled = false
+run_at = "00:00"
+# QQ 空间经 SnowLuma OneBot HTTP 的 send_qzone_msg 发布，与 02 插件同一通道
+snowluma_host = "127.0.0.1"
+snowluma_port = 3000
+snowluma_token = ""
+publish_timeout_seconds = 180.0
+
 [observability]
 # 每次 LLM 调用是否落盘到 WebUI 推理过程页。
 # 主程序的预览开关只管主程序自己写的记录，管不到插件，所以这里必须自带一个。
