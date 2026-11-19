@@ -52,7 +52,7 @@ def test_only_allowed_private_targets_and_planner_gets_topic(tmp_path):
         args = ctx.maisaka.proactive.trigger.await_args.kwargs
         assert args["stream_id"] == "real-private"
         assert current.topic in args["intent"]
-        assert "否则可以不回复" in args["intent"] and "reply_reference" in args["intent"]
+        assert "否则可以不回复" in args["intent"] and "chat_anlyze" in args["intent"]
         assert args["metadata"]["background_tool_result"] is True
         assert current.story == "原故事保持不变"
         assert statuses(tmp_path / "wakes.db")[0][-1] == "queued"

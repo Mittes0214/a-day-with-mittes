@@ -659,9 +659,8 @@ class ScheduleStore:
     def share_state(self, day: date, slot: str, session_id: str) -> tuple[int, str, int]:
         """取某条谈资在某会话的状态：(注入次数, 说出口时刻, 取材次数)。
 
-        注入次数和取材次数记的是两件事：注入是「材料摆到 replyer 面前」，
-        每轮都会发生；取材是「planner 主动调了 get_mittes_topic」，稀少得多。
-        上限 ``max_pitches`` 卡的是后者。
+        注入是「材料摆到 replyer 面前」，每轮都会发生。取材次数来自已删除的
+        get_mittes_topic 工具（2026-11-19 随开口通道一起移除），只保留历史数据，不再写入。
         """
         return self._shares.get((day.isoformat(), slot, session_id), (0, "", 0))
 
@@ -669,24 +668,11 @@ class ScheduleStore:
         """这条谈资在该会话是否已经说出口过。说过就不再注入，且不留任何痕迹。"""
         return bool(self.share_state(day, slot, session_id)[1])
 
-    def pitch_count(self, day: date, slot: str, session_id: str) -> int:
-        """planner 在该会话为这条谈资取过几次材。"""
-        return self.share_state(day, slot, session_id)[2]
-
     def mark_injected(self, day: date, slot: str, session_id: str) -> None:
         """记一次注入。"""
         injected, shared_at, pitched = self.share_state(day, slot, session_id)
         self._shares[(day.isoformat(), slot, session_id)] = (injected + 1, shared_at, pitched)
         self._db.upsert_share(day, slot, session_id, injected + 1, shared_at, pitched=pitched)
-
-    def mark_pitched(self, day: date, slot: str, session_id: str) -> None:
-        """记一次取材（planner 调了 get_mittes_topic）。
-
-        必须落库：``max_pitches`` 要在重启后继续有效，否则一次重启就把配额清零。
-        """
-        injected, shared_at, pitched = self.share_state(day, slot, session_id)
-        self._shares[(day.isoformat(), slot, session_id)] = (injected, shared_at, pitched + 1)
-        self._db.upsert_share(day, slot, session_id, injected, shared_at, pitched=pitched + 1)
 
     def mark_shared(
         self,

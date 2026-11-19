@@ -60,7 +60,6 @@ from .schedule.holidays import ScheduleGenerator
 from .schedule.negative_events import LEVEL_MILD, NegativeEntry, NegativeScheduler
 from .schedule.private_topics import PrivateTopicWaker
 from .schedule.store import (
-    JST,
     DayContext,
     ScheduleStore,
     parse_moment,
@@ -79,15 +78,12 @@ _logger = logging.getLogger("a_day_with_mittes")
 # （src/maisaka/chat_loop_service.py:776-780），我们插在它后面。
 _PLANNER_ANCHOR_PREFIX = "时间："
 
-# replyer 侧的兜底锚点：final user message 以「当前时间：」开头，位置固定必然存在。
-_REPLYER_FALLBACK_PREFIX = "当前时间："
+# replyer 侧的兜底锚点：单模板 user 消息里主程序固定写入的「当前时间：」一行。
+_REPLYER_FALLBACK_MARK = "当前时间："
 
 # 日历后缀的起首字样。既是拼接用的前缀，也是**幂等判据**——hook 万一在同一批 items
 # 上跑第二次（重试、或将来有别的链路复用），看到这两个字样之一就不再追加。
 _CALENDAR_MARKS = ("（日本祝日", "（连休")
-
-# 谈资工具名。planner hook 要按它从 tool_definitions 里摘工具，所以名字必须只有一处。
-_TOPIC_TOOL_NAME = "get_mittes_topic"
 
 _ROLE_BY_ITEM_TYPE = {
     "SystemMessageItem": "system",
@@ -125,7 +121,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         # session_id → (逻辑日, 时段)。planner 轮开头清、工具被调用时写、replyer 读，
         # 语义严格是「本轮 planner 取过材」。装的是已发生的事实，不是推断，
         # 所以不需要 TTL 去猜有效期。
-        self._topic_pitched: dict[str, tuple[date, str]] = {}
         # session_id → (逻辑日, 时段, 谈资原文)。replyer 请求前注入了谈资就写，
         # 收到 replyer 回复时取走，交给小模型判断这条回复有没有讲到这件事。
         self._topic_awaiting_judge: dict[str, tuple[date, str, str]] = {}
@@ -712,8 +707,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         **谈资不在这里了。** 早先这里有一段「她手上有一件今天发生、还没跟人说过的
         小事」，由 planner 决定要不要换题。那个设计被推翻：只要那句话在，planner 就
         倾向于用它，等于每轮下一道命令；而它又拿不到内容，只能写出「我碰上件挺巧的
-        小事，等我忙完再讲」这种预告（08-31 15:25 实际发生过）。现在谈资走
-        ``get_mittes_topic`` 工具——代码按窗口决定露不露，planner 自己决定调不调。
+        小事，等我忙完再讲」这种预告（08-31 15:25 实际发生过）。现在谈资只经 replyer
+        的接话版注入（``_topic_block_reply``），planner 这一层不出现。
         """
         store = self._require_store()
         trail = _render_trail(state)
@@ -740,25 +735,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             f"你今天遇到的一件小事：{topic}\n"
             "它能直接回答对方、或者能给你正在说的话当例子时，才提，而且只取用得上的那一点。\n"
             "别为了说它去转话题；聊的不是这个，就当没有这回事。"
-        )
-
-    @staticmethod
-    def _topic_block_pitch(topic: str) -> str:
-        """通道二：开口（planner 调过 get_mittes_topic 才注入）。
-
-        **不再写「整条回复只说这件事」。** 08-31 那五次一次都没执行——replyer 手上有
-        明确的目标消息和「请自然地回复」的收尾指令，这条约束要求它放弃本职任务，
-        必然落败；实际表现是"答一条、再贴一条"，中间垫一个胶水词。
-
-        所以改成管接缝：禁掉那四个词，并把形态从"叙述"压向"带情绪的半句"——
-        「早上那组黄得我难受，重修了一遍才顺眼」像憋不住说一句，
-        「我今天把早上那组照片重新裁了发到自己号上」像轮到我发言了。
-        """
-        return (
-            f"你今天遇到的一件小事：{topic}\n"
-            "这会儿刚好轮得到你说自己的事。从最想吐槽或最想分享的那一点开口，"
-            "一句话就够，不从头讲经过，也不说自己为什么想起它。\n"
-            "不要用「话说」「对了」「先不说X」「那个先不管」把它跟上一句缝起来。"
         )
 
     # ── Tool ──
@@ -1139,12 +1115,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             if not str(item.get("meta", {}).get("item_id", "")).startswith("mittes-outfit-reference-")
         ]
         reference = await self._outfit_reference_item(names)
-        expected = str(args.get("reply_reference") or "").strip()
-        if not expected and kwargs.get("reply_reason"):
-            expected = f"当前思考：\n{kwargs['reply_reason']}".strip()
+        expected = str(args.get("chat_anlyze") or "").strip() or str(kwargs.get("reply_reason") or "").strip()
         index = _find_item_index(updated, lambda text: bool(expected) and expected in text)
         if index < 0:
-            index = _find_item_index(updated, lambda text: text.startswith(_REPLYER_FALLBACK_PREFIX))
+            index = _find_item_index(updated, lambda text: _REPLYER_FALLBACK_MARK in text)
         if index < 0:
             raise ValueError("replyer 缺少服饰参考资料的插入锚点")
         updated.insert(index, reference)
@@ -1237,211 +1211,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
         _logger.info("[谈资] 判定已讲到 %s %s 会话=%s，这条谈资就此用掉：%s", day, slot, session_id, evidence)
 
-    # ── Tool：谈资 ──
-    @Tool(
-        _TOPIC_TOOL_NAME,
-        visibility="visible",
-        brief_description=(
-            "取一件她今天真实经历、可以说给人听的小事。"
-            "当群里在闲聊、没有正在进行的话题需要接、而且她刚好可以说说自己的事时调用；"
-            "她在忙，或者话题不是她能插的，就不要调用。"
-            "（问她「现在在干嘛」用 get_mittes_schedule，那是查日程；"
-            "这个是找一句她可以主动说的话头。）"
-        ),
-        parameters=[],
-    )
-    async def tool_get_topic(self, **kwargs: Any) -> dict[str, str]:
-        """把本时段那条谈资交给 planner，并记下"本轮取过材"。
-
-        **这里不重复判窗口。** 工具能被调用，说明 planner hook 已经放它进 schema 了；
-        两处各判一次只会制造不一致。
-
-        会话 id 从 ``stream_id`` / ``chat_id`` 取——主程序给插件工具的载荷里两个都有
-        （``component_query.py:_build_tool_context_payload``），值就是 session_id。
-        """
-        session_id = str(kwargs.get("stream_id") or kwargs.get("chat_id") or "")
-        moment, day, segment, state = self._current()
-        if not state.topic:
-            return {
-                "name": _TOPIC_TOOL_NAME,
-                "content": "她这会儿没有什么特别想说的事，别硬找话头。",
-            }
-        if session_id:
-            self._topic_pitched[session_id] = (day, segment.slot)
-            store = self._require_store()
-            store.mark_pitched(day, segment.slot, session_id)
-            # **取材即视为用掉。** 以前靠 topic_keys 在回复正文里找关键词判断"说没说
-            # 出口"，那套已经取消——它抽的是 story 的书面词，而她开口是口语，
-            # 实测 08-31 那条谈资 12 次注入一次都没命中，同一件事在同一个群说了三遍。
-            # 现在的判据是"planner 取过材"这个确定事实：代价是取了没说也算用掉，
-            # 少一次开口机会；收益是绝不会重复说，而两种错的代价是不对称的。
-            store.mark_shared(
-                day,
-                segment.slot,
-                session_id,
-                moment.isoformat(),
-                hit_key="工具调用",
-            )
-            _logger.info(
-                "[谈资] 取材 %s %s 会话=%s，这条谈资就此用掉",
-                day,
-                segment.slot,
-                session_id,
-            )
-        return {"name": _TOPIC_TOOL_NAME, "content": self._topic_tool_text(state.topic)}
-
-    @staticmethod
-    def _topic_tool_text(topic: str) -> str:
-        """工具返回给 planner 的正文。
-
-        末尾那句照 ``get_mittes_schedule`` 的写法。**「你不用复述」是关键**：
-        planner 一旦把 topic 压缩成一句概括写进 reply_reference，story 的质感就没了，
-        还会跟 replyer 手上的原文打架。
-        """
-        return (
-            "【今天可以说的一件小事】\n"
-            f"{topic}\n\n"
-            "她只在场子松、或者话正好赶到这儿的时候才会提起这件事。要用就在 "
-            "reply_reference 里写明这轮让她说这件事，并写上你判断合适的理由；"
-            "正文她那边有，你不用复述。"
-        )
-
-    # ── 谈资闸门 ──
-    async def _topic_gate(self, session_id: str) -> tuple[bool, str]:
-        """这一轮谈资工具露不露，返回 (露不露, 给人看的原因)。
-
-        五个条件全过才露：有 topic、没说出口过、取材次数没满、在窗口期内、
-        对方没有正在回应她。原因字符串只给 ``/status`` 和日志用。
-        """
-        if not session_id:
-            return False, "没有会话 id"
-        if not bool(await self._get_config("topic.enabled", True)):
-            return False, "谈资总开关关闭"
-        if not bool(await self._get_config("topic.pitch_channel.enabled", True)):
-            return False, "开口通道关闭"
-
-        store = self._require_store()
-        moment, day, segment, state = self._current()
-        if not state.topic:
-            return False, "这段没有 topic"
-        if await self._share_seen(day, segment.slot, session_id):
-            return False, "已经说出口过"
-
-        max_pitches = int(await self._get_config("topic.pitch_channel.max_pitches", 3))
-        pitched = store.pitch_count(day, segment.slot, session_id)
-        if pitched >= max_pitches:
-            return False, f"取材次数已满（{pitched}/{max_pitches}）"
-
-        return await self._topic_window(moment, day, segment, session_id)
-
-    async def _topic_window(
-        self,
-        moment: datetime,
-        day: date,
-        segment: Segment,
-        session_id: str,
-    ) -> tuple[bool, str]:
-        """窗口判定：新鲜期 / 断点期，外加「对方正在回应她」这一条否决。
-
-        两个窗口对应真人主动开口的两种许可（谈资设计文档 2.1）：**事情刚发生**，
-        以及**她刚从一段不能说话的时间里出来**。真人不会在事情过去两小时、
-        自己已经在群里说了半天话之后，突然插一句"我今天把照片重新裁了"——
-        08-31 那五次刺耳的抛出全部落在时段中段，就是这个原因。
-
-        否决那一条（C）读的是引用关系：对方用回复功能引了她的消息，说明球还在
-        她这边，这一轮不许换题。实测一周里这种消息只占别人发言的 1~2%，
-        所以它是个很窄的守卫，不是普遍封锁。**不包含 @ 她**——引用是对方接住了
-        她那条话，@ 是对方开了个新话头，后者归 planner 本职管。
-        """
-        store = self._require_store()
-        fresh_minutes = int(await self._get_config("topic.pitch_channel.fresh_minutes", 30))
-        break_minutes = int(await self._get_config("topic.pitch_channel.breakpoint_minutes", 60))
-        busy_kinds = set(await self._get_config("topic.pitch_channel.busy_kinds", []) or [])
-        idle_kinds = set(await self._get_config("topic.pitch_channel.idle_kinds", []) or [])
-        lookback = int(await self._get_config("topic.pitch_channel.lookback_minutes", 10))
-
-        # 逻辑日的分钟数，不能拿 datetime 直减：跨零点那段写成 24:00-26:00
-        _day, now_minutes = store.resolve_moment(moment)
-        elapsed = now_minutes - segment.start_minutes
-
-        fresh = 0 <= elapsed < fresh_minutes
-        _previous_day, previous = store.previous_segment(day, segment)
-        breakpoint_shape = (
-            0 <= elapsed < break_minutes
-            and previous.kind in busy_kinds
-            and segment.kind in idle_kinds
-        )
-        if not fresh and not breakpoint_shape:
-            return False, f"不在窗口（本段已过 {elapsed} 分钟）"
-
-        segment_start = datetime.combine(day, dt_time(0, 0), tzinfo=JST) + timedelta(
-            minutes=segment.start_minutes
-        )
-        # 往回至少看一小时：时段刚开始时 segment_start 就是此刻，那样一条消息都取不到，
-        # C 会永远判不成立；而且被引用的那条可能是她一小时前发的，窗口太窄就认不出来
-        since = min(segment_start, moment - timedelta(minutes=max(lookback, 60)))
-        mine, others = await self._recent_messages(session_id, since=since, moment=moment)
-
-        my_ids = {str(message.get("message_id")) for message in mine}
-        trigger = others[-1] if others else None
-        if trigger is not None and str(trigger.get("reply_to") or "") in my_ids:
-            trigger_at = _message_moment(trigger)
-            if trigger_at is None or moment - trigger_at <= timedelta(minutes=lookback):
-                return False, "对方正在回应她（引用了她的消息）"
-
-        if fresh:
-            return True, f"新鲜期（本段第 {elapsed} 分钟）"
-
-        # 断点期还要求她在本段里还没开过口——"回来的第一句"只有一次
-        spoke = [
-            message
-            for message in mine
-            if (_message_moment(message) or moment) >= segment_start
-        ]
-        if spoke:
-            return False, "断点期已经用掉（本段她说过话了）"
-        return True, f"断点期（上一段是{previous.kind}，已过 {elapsed} 分钟）"
-
-    async def _recent_messages(
-        self,
-        session_id: str,
-        *,
-        since: datetime,
-        moment: datetime,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """取最近的消息，拆成 (她自己的, 别人的)，各自按时间升序。
-
-        **拉两次是为了不用去查 bot 的账号。** ``filter_mai=True`` 那一次由主程序按
-        ``bot_platform_accounts`` 把她自己排除掉，两份做差就是她发的。插件自己判断
-        "哪条是她发的"要么得读主程序的表、要么得猜昵称，都比多一次本地查询脏。
-        窗口本来就稀有，这两次查询一天也跑不了几回。
-        """
-        start_time = since.timestamp()
-        # 终点往后放一分钟：触发消息的入库时刻和 now_jst() 之间可能有零点几秒的差
-        end_time = (moment + timedelta(minutes=1)).timestamp()
-        every = await self.ctx.message.get_by_time_in_chat(
-            chat_id=session_id,
-            start_time=start_time,
-            end_time=end_time,
-            limit=80,
-            limit_mode="latest",
-            filter_mai=False,
-        )
-        others = await self.ctx.message.get_by_time_in_chat(
-            chat_id=session_id,
-            start_time=start_time,
-            end_time=end_time,
-            limit=80,
-            limit_mode="latest",
-            filter_mai=True,
-        )
-        every = [item for item in (every or []) if isinstance(item, dict)]
-        others = [item for item in (others or []) if isinstance(item, dict)]
-        other_ids = {str(item.get("message_id")) for item in others}
-        mine = [item for item in every if str(item.get("message_id")) not in other_ids]
-        key = lambda item: _message_moment(item) or datetime.min.replace(tzinfo=JST)  # noqa: E731
-        return sorted(mine, key=key), sorted(others, key=key)
-
     # ── Hook：planner 状态层 ──
     @HookHandler(
         "maisaka.planner.before_request",
@@ -1456,38 +1225,10 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         items: list[Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """插入所在与心情，并决定这一轮谈资工具露不露。
-
-        两件事互不牵连：hook 的 ``error_policy`` 是 skip，整块跳过——谈资闸门
-        算错了不能把「所在/心情/行程表」一起带走，所以那段整个包在 try 里，
-        且异常方向一律是"不露"。
-        """
+        """插入所在与心情。"""
         session_id = str(kwargs.get("session_id") or "")
-        # 新一轮开始，先把上一轮的取材令牌清掉。清 → 写 → 读这个顺序让令牌的
-        # 语义严格等于"本轮"，不需要 TTL 去猜。
-        if session_id:
-            self._topic_pitched.pop(session_id, None)
-
-        extra: dict[str, Any] = {}
-        tool_definitions = kwargs.get("tool_definitions")
-        if isinstance(tool_definitions, list):
-            try:
-                visible, reason = await self._topic_gate(session_id)
-            except Exception:
-                _logger.warning("[谈资] 闸门判定失败，本轮不暴露工具", exc_info=True)
-                visible, reason = False, "判定异常"
-            if not visible:
-                # 摘而不是塞：工具始终是注册的，只是某些轮次不出现在 schema 里，
-                # 这样 /status、调用链路、权限判定都不用特判。
-                extra["tool_definitions"] = [
-                    item
-                    for item in tool_definitions
-                    if _tool_name_of(item) != _TOPIC_TOOL_NAME
-                ]
-                _logger.debug("[谈资] 本轮不暴露工具：%s", reason)
-
         if not items:
-            return _hook_response(items, kwargs, extra=extra or None)
+            return _hook_response(items, kwargs)
 
         moment, day, segment, state = self._current()
         block = self._planner_block(moment, segment, state)
@@ -1510,7 +1251,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         # 找不到锚点就挂在最后：状态层晚一点出现也比不出现好。
         # 这条路径下日历后缀一并丢失——它依附于那条锚点，没有别的合理落点。
         updated.insert(index + 1 if index >= 0 else len(updated), _new_user_item(block))
-        return _hook_response(updated, kwargs, extra=extra or None)
+        return _hook_response(updated, kwargs)
 
     def _with_calendar_suffix(self, item: Any, day: date) -> Any:
         """给「时间：」那条加上日历后缀，返回**新的** item；不该加时原样返回。
@@ -1557,17 +1298,14 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     ) -> dict[str, Any]:
         """把 A（表达方式）和 C（谈资）放到各自合适的位置。
 
-        A 是本轮的表达要求，仍紧贴 planner 的 reply_reference。C 只是
-        可能用得上的背景经历，放在 system item 之后、聊天记录之前；
-        后面的真实对话和目标消息会重新取得注意力，避免 C 和
-        reply_reference 挨在一起时被误读成必须执行的任务。
+        C 只是可能用得上的背景经历，放在 system item 之后、聊天记录之前；后面的
+        真实对话和目标消息会重新取得注意力，避免它被误读成必须执行的任务。
 
-        锚点从 hook 载荷算出来，不是猜位置：reference item 的正文由主程序按固定规则
-        拼装（maisaka_generator_base.py:574-594）——``reply_tool_args["reply_reference"]``
-        非空时正文就是它原样，否则是 ``当前思考：\\n{reply_reason}``。
-
-        用「包含」而不是「相等」来匹配，是因为 02_owner_auth_plugin 可能已经往
-        reference 首行合并过身份文案，两个插件的 hook 顺序不保证。
+        A 是本轮的表达要求，插在含 planner ``chat_anlyze`` 的那条 user item 之前。
+        主程序 1.4.6 起 replyer 只有一条 user 消息（单模板：对话记录、目标消息、
+        「对话局面与关键事实」、回复指引都在里面），所以这个位置实际就在整段模板之前；
+        A 现已关闭（``[manner] enabled = false``），重新打开前要先定位置。
+        ``chat_anlyze`` 为空时主程序用 ``reply_reason`` 代替，两者都按「包含」匹配。
         """
         if not items:
             return {"success": True, "action": "continue"}
@@ -1576,12 +1314,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         store = self._require_store()
         updated = list(items)
 
-        # A：表达方式。C：今天那件可说的小事，两条通道二选一——planner 本轮调过
-        # get_mittes_topic 就走"开口版"，否则走"接话版"。
         manner = state.manner.strip() if await self._manner_enabled() else ""
         topic = ""
-        pitched = self._topic_pitched.get(session_id)
-        is_pitch = bool(pitched and pitched == (day, segment.slot))
         stop_after_shared = bool(await self._get_config("topic.stop_after_shared", True))
         already_shared = await self._share_seen(day, segment.slot, session_id)
         topic_enabled = bool(await self._get_config("topic.enabled", True))
@@ -1590,56 +1324,32 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             state.topic
             and session_id
             and topic_enabled
+            and reply_channel
             and (not stop_after_shared or not already_shared)
-            and (is_pitch or reply_channel)
         ):
-            topic = (
-                self._topic_block_pitch(state.topic)
-                if is_pitch
-                else self._topic_block_reply(state.topic)
-            )
+            topic = self._topic_block_reply(state.topic)
         if topic:
-            # 两条通道最终都会把谈资放进 items（开口版锚点失配也会退回低位注入），
-            # 所以这里记下就等于"本次 replyer 看到了这件事"。
+            # 这里记下就等于"本次 replyer 看到了这件事"，回复后交给小模型判定有没有讲到。
             self._topic_awaiting_judge[session_id] = (day, segment.slot, state.topic)
         if not manner and not topic:
             return {"success": True, "action": "continue"}
 
         # 接话版是低优先级背景：紧跟 system，但放在所有聊天记录之前，
         # 后面的真实对话会重新取得注意力。不塞进 system 正文，那样权重反而更高。
-        if topic and not is_pitch:
+        if topic:
             system_index = _find_item_type_index(updated, "SystemMessageItem")
             updated.insert(system_index + 1 if system_index >= 0 else 0, _new_user_item(topic))
             store.mark_injected(day, segment.slot, session_id)
 
-        # A 仍是本轮要求：放在 reply_reference 之前。
-        reference = str((reply_tool_args or {}).get("reply_reference") or "").strip()
-        expected = reference or (f"当前思考：\n{reply_reason}".strip() if reply_reason else "")
-
-        # 开口版跟 A 一起放在这儿：planner 已经在 reference 里安排了这件事，
-        # 它是本轮的既定素材而不是背景材料，再压权重只会造成"指令在、材料弱"的割裂。
-        if manner or (topic and is_pitch):
-            index = -1
-            if expected:
-                index = _find_item_index(updated, lambda text: expected in text)
+        if manner:
+            expected = (
+                str((reply_tool_args or {}).get("chat_anlyze") or "").strip() or reply_reason.strip()
+            )
+            index = _find_item_index(updated, lambda text: bool(expected) and expected in text)
             if index < 0:
-                index = _find_item_index(updated, lambda text: text.startswith(_REPLYER_FALLBACK_PREFIX))
-            if index < 0:
-                _logger.warning("[replyer] 两个锚点都没匹配上，本次跳过表达方式注入")
-                # planner 已经安排了要说这件事，材料不能跟着丢，退回低位注入
-                if topic and is_pitch:
-                    system_index = _find_item_type_index(updated, "SystemMessageItem")
-                    updated.insert(
-                        system_index + 1 if system_index >= 0 else 0, _new_user_item(topic)
-                    )
-                    store.mark_injected(day, segment.slot, session_id)
+                _logger.warning("[replyer] 没找到含 chat_anlyze 的消息，本次跳过表达方式注入")
             else:
-                if topic and is_pitch:
-                    updated.insert(index, _new_user_item(topic))
-                    store.mark_injected(day, segment.slot, session_id)
-                    index += 1
-                if manner:
-                    updated.insert(index, _new_user_item(manner))
+                updated.insert(index, _new_user_item(manner))
 
         return _hook_response(
             updated,
@@ -1695,7 +1405,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def cmd_status_prompt(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
         moment, day, segment, state = self._current()
-        visible, reason = await self._topic_gate(stream_id)
         empty = "（这段没什么好说的，不注入）"
         suffix = _calendar_suffix(self._require_store().day_context(day))
         text = (
@@ -1706,18 +1415,12 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             "── planner 注入（插在「时间：」之后）──\n"
             f"{self._planner_block(moment, segment, state)}\n"
             "\n"
-            f"── 谈资工具 {_TOPIC_TOOL_NAME}：{'露出' if visible else '不露'}（{reason}）──\n"
-            + (self._topic_tool_text(state.topic) if state.topic else "（这段没有 topic）")
-            + "\n\n"
-            "── replyer A 表达方式（插在 reply_reference 之前）──\n"
+            "── replyer A 表达方式（插在含 chat_anlyze 的消息之前）──\n"
             + (state.manner if await self._manner_enabled() else "（表达方式功能已关闭，不注入）")
             + "\n"
             "\n"
             "── replyer C 谈资 · 接话版（system 之后、聊天记录之前）──\n"
             + (self._topic_block_reply(state.topic) if state.topic else empty)
-            + "\n\n"
-            "── replyer C 谈资 · 开口版（调过工具的那一轮，放在 A 之前）──\n"
-            + (self._topic_block_pitch(state.topic) if state.topic else empty)
         )
         await self.ctx.send.text(text, stream_id)
         return True, "已输出注入原文", True
@@ -1783,12 +1486,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
         seen = await self._share_seen(day, segment.slot, stream_id)
         lines.append(f"本会话算不算已说过：{'算' if seen else '不算'}")
-        max_pitches = int(await self._get_config("topic.pitch_channel.max_pitches", 3))
-        lines.append(
-            f"取材次数：{store.pitch_count(day, segment.slot, stream_id)}/{max_pitches}"
-        )
-        visible, reason = await self._topic_gate(stream_id)
-        lines.append(f"谈资工具：{'露出' if visible else '不露'}（{reason}）")
         lines.append("")
         rows = [r for r in store.db.shares_of_day(today) if r["slot"] == segment.slot]
         if not rows:
@@ -1796,8 +1493,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         for row in rows:
             mark = f"已说出口 {row['shared_at'][11:16]}" if row["shared_at"] else "还没说"
             lines.append(
-                f"- {row['session_id']}　注入 {row['injected']} 次　"
-                f"取材 {row.get('pitched', 0)} 次　{mark}"
+                f"- {row['session_id']}　注入 {row['injected']} 次　{mark}"
             )
         await self.ctx.send.text("\n".join(lines), stream_id)
         return True, "已输出谈资状态", True
@@ -2375,29 +2071,6 @@ def _new_user_item(text: str) -> dict[str, Any]:
         },
         "parts": [{"type": "text", "text": text}],
     }
-
-
-def _tool_name_of(definition: Any) -> str:
-    """从工具定义里取出名字。
-
-    主程序把工具序列化成 OpenAI function schema（``serialize_tool_definitions``
-    → ``to_openai_function_schema``），名字在 ``function.name`` 里；扁平结构也认一下，
-    免得上游换了序列化方式之后这里静默失效——静默失效的后果是工具永远摘不掉。
-    """
-    if not isinstance(definition, dict):
-        return ""
-    function = definition.get("function")
-    if isinstance(function, dict) and function.get("name"):
-        return str(function["name"])
-    return str(definition.get("name") or "")
-
-
-def _message_moment(message: dict[str, Any]) -> datetime | None:
-    """消息载荷里的时刻。主程序序列化成 epoch 秒的**字符串**，不是数字。"""
-    try:
-        return datetime.fromtimestamp(float(message.get("timestamp")), JST)
-    except (TypeError, ValueError):
-        return None
 
 
 def _hook_response(

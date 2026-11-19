@@ -128,7 +128,7 @@ def test_replyer_uses_user_image_before_reference_and_preserves_retry_snapshot(p
     from src.core.tooling import ToolExecutionContext, ToolInvocation
 
     tagged = run(plugin.handle_outfit_planner_response(
-        output_items=[call("get_mittes_outfit", "q1"), call("reply", "r1", reply_reference="回答服饰问题")],
+        output_items=[call("get_mittes_outfit", "q1"), call("reply", "r1", chat_anlyze="回答服饰问题")],
         session_id="group-a", item_schema_version=1,
     ))["modified_kwargs"]["output_items"]
     # 实际 host 协议必须接受附加的内部参数，并原样传入插件执行器。
@@ -203,7 +203,7 @@ def test_tool_result_cannot_register_forwardable_media(plugin):
     assert len(engine._runtime._chat_history) == 1
     assert isinstance(engine._runtime._chat_history[0], ToolResultMessage)
     # 按实际附件解析器验证：没有供 attach_pic 读取的图片源。
-    with pytest.raises(ValueError, match="没有找到消息"):
+    with pytest.raises(ValueError, match="没有找到工具媒体"):
         run(resolve_context_image(engine._runtime, "tool_result:q1:1"))
 
 

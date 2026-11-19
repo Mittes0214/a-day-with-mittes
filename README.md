@@ -144,22 +144,13 @@ enabled          = false            # 表达方式（replyer 的 A 块）总开�
                                     # 库里已有的 manner 原样保留，改回 true 就恢复
 
 [topic]
-enabled          = true             # 谈资总开关，关掉后两条通道都不注入、工具也不暴露
+enabled          = true             # 谈资总开关，关掉后接话通道不注入
 stop_after_shared = true            # false：用掉之后仍然每轮注入
 linked_groups    = []               # 例 [["1016077305","1059037995"]]：组内任一群说过就都算说过
 linked_platform  = "qq"
 
-[topic.reply_channel]               # 通道一：接话（常驻，只准接话不准转话题）
+[topic.reply_channel]               # 接话（常驻，只准接话不准转话题）
 enabled = true
-
-[topic.pitch_channel]               # 通道二：开口（get_mittes_topic，只在窗口期暴露）
-enabled            = true
-fresh_minutes      = 30             # 新鲜期：时段开始后 30 分钟内
-breakpoint_minutes = 60             # 断点期：从"下班/睡醒"起最多 60 分钟
-busy_kinds         = ["睡眠","工作","上学"]
-idle_kinds         = ["自由","外出","通勤"]
-lookback_minutes   = 10             # 「对方正在回应她」往回看多久
-max_pitches        = 3              # 每段每会话最多被取材几次
 
 [observability]
 report_group_id  = ""              # 批次结果报到哪个群，留空则不报
@@ -169,7 +160,6 @@ weather_location = "Tokyo"         # 生成时查天气预报用的地名
 [components]
 enable_get_mittes_schedule = true  # 关掉的 Tool 不会出现在 LLM 的工具列表里
 enable_get_mittes_outfit   = true
-enable_get_mittes_topic    = true
 enable_get_weather         = true
 ```
 
@@ -198,7 +188,7 @@ enable_get_weather         = true
 
 `get_mittes_outfit` 按查询时刻选择套装，成功结果只有 `【Mittes 的服饰参考资料】`。
 插件在 planner 请求前，于成功查询的结果之后单独补一条 `user` 多模态资料；
-在 replyer 请求前，于 `reply_reference` 之前补入相同图片。资料内容只有标题和原图，
+在 replyer 请求前，于含 `chat_anlyze` 的那条消息之前补入相同图片（主程序 1.4.6 起 replyer 只有一条单模板 user 消息，即整段模板之前）。资料内容只有标题和原图，
 不追加服装清单、时间或套装名。
 
 图片仅存在于模型请求，不通过 `content_items` 返回，不注册 `tool_result:…` 媒体索引，
@@ -238,7 +228,7 @@ LLM 只负责写"这些事实今天具体表现成什么样"，绝不回写骨�
 | `/status` | 当前时段的各字段、所在地点、时段边界 |
 | `/status day` | 今天各段的骨架 + 生成状态 |
 | `/status prompt` | 本时段实际注入的原文 |
-| `/status topic` | 当前时段的话题、用掉没有、取材次数、谈资工具露不露 |
+| `/status topic` | 当前时段的话题、用掉没有、各会话注入次数 |
 | `/status db` | 归档库覆盖范围、段数、文件大小 |
 | `/status batch [日期\|today]` | 立即跑一次批次，默认次日 |
 | `/status topics [日期]` | 只重跑第二轮（地点时段轴 + 话题） |
@@ -331,11 +321,11 @@ users = ["qq:923856490"]
 
 每 15 秒检查当前日程。有非空 topic 的时段到点后，向名单用户的私聊 planner
 递交一次日程事件，包含该时段的 topic。planner 根据聊天上下文和对方最近的反应
-决定是否调用 `reply`；选择回复时，通过 `reply_reference` 把选中的素材交给 replyer。
+决定是否调用 `reply`；选择回复时，通过 `chat_anlyze` 把选中的素材交给 replyer。
 不会强制发送消息，也不会自动生成照片。
 
 原有 topic 生成、replyer 注入、群聊关联和分享检测保持原样。
-新开关独立于 `[topic]` 的两条注入通道；原来的谈资工具无需开启。
+新开关独立于 `[topic]` 的接话注入。
 需要 SDK 2.12.0，以及 `chat.open_session`、`maisaka.proactive.trigger` 权限。
 
 每个逻辑日、时段、名单用户最多尝试唤醒一次，与是否真正回复分开记录。
@@ -352,7 +342,7 @@ users = ["qq:923856490"]
 任务本身的日期及时段仍必须匹配当前日程，事件保留原来的时段标注。
 
 唤醒时将 topic 作为事件背景，交给 planner 判断联系动机及最想分享的一点。
-`reply_reference` 仅同步必要事实、当前状态及核心态度，具体措辞交给 replyer。
+`chat_anlyze` 仅同步必要事实与当前状态，具体措辞交给 replyer。
 
 ## 按需拍照与相机记录
 

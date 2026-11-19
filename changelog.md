@@ -1,3 +1,13 @@
+# 3.15.0
+
+主要功能
+- 删除谈资工具 `get_mittes_topic` 与「开口」通道（2026-09-18 起已关闭）：去掉工具注册、窗口闸门、planner 侧按轮摘工具、replyer 开口版注入、`/status prompt` 与 `/status topic` 里的取材和工具状态，以及配置 `enable_get_mittes_topic`、`[topic.pitch_channel]`。谈资只剩接话通道，「用掉」仍由 `[topic.share_judge]` 判定。
+
+细节
+- 适配主程序 1.4.6/1.4.7：reply 参数 `reply_reference` 改名 `chat_anlyze`，穿搭参考图与表达方式（已关闭）改按 `chat_anlyze`（为空时 `reply_reason`）定位插入点；replyer 改为单模板一条 user 消息后，兜底锚点改为消息里包含「当前时间：」。私聊主动话题的提示同步改名。
+- 管理页时间条去掉新鲜期斜纹和断点标记，只按睡眠 / 忙 / 闲着色。
+- 库里 `pitched` 列保留，只为读得动历史数据，不再写入。
+
 # 3.14.0
 
 主要功能

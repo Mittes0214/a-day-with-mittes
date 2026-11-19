@@ -916,7 +916,6 @@ def test_planner_block_lists_photos_still_being_taken(setup, monkeypatch):
         monkeypatch.setattr(plugin, "_current", lambda: (None, None, None, None))
         monkeypatch.setattr(plugin, "_planner_block", lambda *args: "【Mittes 此刻】\n所在：厨房")
         monkeypatch.setattr(plugin, "_with_calendar_suffix", lambda item, day: item)
-        monkeypatch.setattr(plugin, "_topic_gate", AsyncMock(return_value=(True, "")))
         items = [{"item_type": "UserMessageItem", "meta": {}, "parts": [{"type": "text", "text": "时间：23:33"}]}]
 
         def injected(result):

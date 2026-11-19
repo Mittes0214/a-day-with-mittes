@@ -111,7 +111,6 @@ def _load_day(conn: sqlite3.Connection, day: str) -> dict[str, Any] | None:
     return {
         "meta": dict(meta),
         "segments": [dict(row) for row in segments],
-        "gate": _load_gate_config(CONFIG_PATH),
         "manner_enabled": _manner_enabled(CONFIG_PATH),
         "shares": grouped,
     }
@@ -210,28 +209,6 @@ def _manner_enabled(path: Path) -> bool:
     except (OSError, tomllib.TOMLDecodeError):
         return True
     return bool((data.get("manner") or {}).get("enabled", True))
-
-
-def _load_gate_config(path: Path) -> dict[str, Any]:
-    """读 config.toml 里的窗口参数，给前端那条时间条用。
-
-    **必须跟运行时同源。** 前端要是自己写死一份 30 分钟 / 六种 kind，
-    改了配置之后条上画的还是旧规则——看着对、实际不对，这种偏差比没有这条更糟。
-    读不到就退回内置默认值，和插件里 `_get_config` 的默认值保持一致。
-    """
-    defaults: dict[str, Any] = {
-        "fresh_minutes": 30,
-        "breakpoint_minutes": 60,
-        "busy_kinds": ["睡眠", "工作", "上学"],
-        "idle_kinds": ["自由", "外出", "通勤"],
-    }
-    try:
-        with path.open("rb") as handle:
-            data = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
-        return defaults
-    pitch = ((data.get("topic") or {}).get("pitch_channel")) or {}
-    return {key: pitch.get(key, value) for key, value in defaults.items()}
 
 
 def _outfit_images(wardrobe_path: Path, part: str = "outer") -> dict[str, Path]:
@@ -753,23 +730,9 @@ main { min-width: 0; padding: 26px 36px 72px; max-width: 1240px; width: 100%; }
   position: relative; z-index: 1; padding: 0 4px; display: block;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis;
 }
-/* 新鲜期：从这一段开头起的前 N 分钟，只画在有 topic 的段上 */
-.band-cell .fresh {
-  position: absolute; left: 0; top: 0; bottom: 0;
-  background: repeating-linear-gradient(135deg,
-    rgba(255,255,255,.85) 0 2px, transparent 2px 5px);
-}
-/* 断点的 ▼ 要露在条子上方，所以这一层不能放进 .band——那里 overflow:hidden 会裁掉它 */
+/* 「现在」标记放在条子外层，不受 .band 的 overflow:hidden 裁切 */
 .band-marks {
   position: absolute; left: 0; right: 0; top: 15px; height: 36px; pointer-events: none;
-}
-.band-marks .brk {
-  position: absolute; top: 0; bottom: 0; width: 0;
-  border-left: 2px solid var(--accent);
-}
-.band-marks .brk::after {
-  content: "▼"; position: absolute; top: -15px; left: -5px;
-  font-size: 10px; color: var(--accent); line-height: 1;
 }
 .band-marks .now {
   position: absolute; top: 0; bottom: 0; width: 0;
@@ -782,8 +745,6 @@ main { min-width: 0; padding: 26px 36px 72px; max-width: 1240px; width: 100%; }
   font-size: 12px; color: var(--muted); }
 .band-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
   margin-right: 5px; vertical-align: -1px; }
-.band-legend .hatch { background: repeating-linear-gradient(135deg,
-  var(--muted) 0 2px, transparent 2px 5px); border: 1px solid var(--line); }
 
 /* ── 正文：左边议程，右边当日穿搭（宽屏）；窄了穿搭挪到议程下面横排 ── */
 .day-body { display: grid; grid-template-columns: minmax(0, 1fr) 248px; gap: 28px; align-items: start; }
@@ -1076,6 +1037,8 @@ button.action:disabled { opacity: .55; cursor: wait; }
 <div id="modal"></div>
 <script>
 const WD = ['一','二','三','四','五','六','日'];
+// 时间条按「睡眠 / 忙 / 闲」三档着色；忙指不能玩手机的时段。
+const BUSY_KINDS = ['工作', '上学'];
 const esc = s => (s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 let knownDays = [];
@@ -1367,7 +1330,7 @@ function render(day, data, w) {
   const jst = jstNow();
   const isToday = jst.date === day;
   const nowSlot = isToday ? jst.minutes : -1;
-  const busy = (data.gate || {}).busy_kinds || [];
+  const busy = BUSY_KINDS;
   const shares = data.shares || {};
 
   const chips = [
@@ -1747,10 +1710,7 @@ function slotMinutes(slot) {
 function timeline(data, nowMin) {
   const segs = data.segments || [];
   if (!segs.length) return '';
-  const gate = data.gate || {};
-  const freshMinutes = +gate.fresh_minutes || 30;
-  const busy = gate.busy_kinds || [];
-  const idle = gate.idle_kinds || [];
+  const busy = BUSY_KINDS;
   const dayStart = slotMinutes(segs[0].slot)[0];
   const total = 1440;
 
@@ -1760,26 +1720,15 @@ function timeline(data, nowMin) {
     // 颜色只分三档：睡眠、忙（工作·上学）、闲（自由·外出·通勤）
     const cls = s.kind === '睡眠' ? 'sleep' : (busy.includes(s.kind) ? 'busy' : 'idle');
     const hasTopic = !!(s.topic || '').trim();
-    // 新鲜期只画在有 topic 的段上——没 topic 的段窗口本来就作废
-    const fresh = hasTopic
-      ? `<span class="fresh" style="width:${Math.min(100, freshMinutes / span * 100)}%"></span>`
-      : '';
     const used = ((data.shares || {})[s.slot] || []).some(r => r.shared_at);
     const tip = `${s.slot}　${s.title}（${s.kind}）${hasTopic ? (used ? '　可说的事已用掉' : '　有可说的事') : ''}`;
     // 格子里写 kind 不写标题：标题动辄十几个字，60 分钟的格子只有四十来像素，
     // 挤进去只能截成半截。kind 两个字一定放得下，完整标题留给 tooltip。
     return `<button class="band-cell ${cls}" style="flex:${span} 1 0" data-jump="${esc(s.slot)}"
-      title="${esc(tip)}">${fresh}<span class="label">${esc(s.kind)}</span></button>`;
+      title="${esc(tip)}"><span class="label">${esc(s.kind)}</span></button>`;
   }).join('');
 
-  // 断点：上一段"不能玩手机"、这一段"能"。首段的上一段属于前一天，
-  // 这个页面只有当天数据，所以 i=0 不画——实际首段是睡眠，本来也不构成断点。
-  const marks = segs.map((s, i) => {
-    if (i === 0) return '';
-    if (!(busy.includes(segs[i - 1].kind) && idle.includes(s.kind))) return '';
-    const left = (slotMinutes(s.slot)[0] - dayStart) / total * 100;
-    return `<i class="brk" style="left:${left}%" title="断点：上一段是${esc(segs[i - 1].kind)}"></i>`;
-  }).join('') + (nowMin >= 0
+  const marks = (nowMin >= 0
     ? `<i class="now" style="left:${(nowMin - dayStart) / total * 100}%" title="现在"></i>` : '');
 
   const axis = segs.map(s => {
@@ -1798,8 +1747,6 @@ function timeline(data, nowMin) {
       <span><i style="background:var(--kind-sleep)"></i>睡眠</span>
       <span><i style="background:var(--kind-busy)"></i>工作 · 上学</span>
       <span><i style="background:var(--kind-idle)"></i>自由 · 外出 · 通勤</span>
-      <span><i class="hatch"></i>新鲜期（有可说的事，前 ${freshMinutes} 分钟）</span>
-      <span style="color:var(--accent)">▼ 断点</span>
       ${nowMin >= 0 ? '<span>┆ 现在</span>' : ''}
     </div>
   </div>`;

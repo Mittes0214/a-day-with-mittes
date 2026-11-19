@@ -11,7 +11,6 @@ config_version = "3.8.0"
 # 关掉的 Tool 完全不会出现在 LLM 的 tool_definitions 里；改动需要重启 MaiBot 才生效
 enable_get_mittes_schedule = true
 enable_get_mittes_outfit = true
-enable_get_mittes_topic = true
 enable_get_weather = true
 enable_take_mittes_photo = false
 
@@ -67,7 +66,7 @@ negative_medium_ratio = 0.3
 enabled = true
 
 [topic]
-# 谈资总开关。关掉之后两条通道都不注入，工具也不暴露。
+# 谈资总开关。关掉之后接话通道不注入。
 enabled = true
 # true：同一会话检测到说出口后不再注入；false：仍然每轮注入，便于观察实际表现。
 # 无论是否停止注入，分享检测、回复原文和累计注入次数都会继续记录。
@@ -81,7 +80,7 @@ stop_after_shared = true
 linked_groups = []
 linked_platform = "qq"
 
-# ── 通道一：接话（常驻注入，不设闸门）──
+# ── 接话通道（常驻注入，不设闸门）──
 # 真人在群里"分享"绝大多数其实是接话——话题正好赶到那儿了，不需要许可。
 # 关掉之后她只剩窗口期那一条路，几乎不会再提起今天的事。
 [topic.reply_channel]
@@ -95,25 +94,8 @@ enabled = true
 # 主程序模型任务名（model_config.toml 的 model_task_config.<任务名>）
 task_name = "utils"
 
-# ── 通道二：开口（get_mittes_topic 工具，只在窗口期暴露）──
-[topic.pitch_channel]
-enabled = true
-# 新鲜期：时段开始后多少分钟内算"刚发生"，对应真人"憋不住说一句"那种开口
-fresh_minutes = 30
-# 断点期：从断点起最多延续多少分钟。她一开口就用掉了，这只是上限，
-# 免得"下班回来的第一句"一直挂到深夜
-breakpoint_minutes = 60
-# 断点的两侧：从 busy 切到 idle 才算断点（kind 取自骨架，共六种）
-busy_kinds = ["睡眠", "工作", "上学"]
-idle_kinds = ["自由", "外出", "通勤"]
-# 「对方正在回应她」往回看多久的消息；断点判定与它共用同一次拉取
-lookback_minutes = 10
-# 每时段每会话最多被取材几次，达到就摘掉工具。它同时是成本闸：
-# 窗口期内工具每轮可见，模型可能连续调用，每次调用都是一轮额外的 LLM 往返
-max_pitches = 3
-
 [proactive_private]
-# 独立于原有 topic 注入与工具通道。开启后，有 topic 的时段到点唤醒私聊 planner。
+# 独立于原有 topic 接话注入。开启后，有 topic 的时段到点唤醒私聊 planner。
 # 只交给 planner 判断，不强制回复，也不生成或发送照片。
 enabled = false
 # 格式：平台:用户 ID；例如 ["qq:923856490"]。只打开私聊会话。
