@@ -144,12 +144,12 @@ enabled          = false            # 表达方式（replyer 的 A 块）总开�
                                     # 库里已有的 manner 原样保留，改回 true 就恢复
 
 [topic]
-enabled          = true             # 谈资总开关，关掉后接话通道不注入
+enabled          = true             # 谈资总开关，关掉后 planner 不带谈资
 stop_after_shared = true            # false：用掉之后仍然每轮注入
 linked_groups    = []               # 例 [["1016077305","1059037995"]]：组内任一群说过就都算说过
 linked_platform  = "qq"
 
-[topic.reply_channel]               # 接话（常驻，只准接话不准转话题）
+[topic.reply_channel]               # 接话（常驻 planner【Mittes 此刻】心情之后，只准接话不准转话题）
 enabled = true
 
 [observability]
@@ -324,7 +324,7 @@ users = ["qq:923856490"]
 决定是否调用 `reply`；选择回复时，通过 `chat_anlyze` 把选中的素材交给 replyer。
 不会强制发送消息，也不会自动生成照片。
 
-原有 topic 生成、replyer 注入、群聊关联和分享检测保持原样。
+原有 topic 生成、planner 注入、群聊关联和分享检测保持原样。
 新开关独立于 `[topic]` 的接话注入。
 需要 SDK 2.12.0，以及 `chat.open_session`、`maisaka.proactive.trigger` 权限。
 

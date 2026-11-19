@@ -689,6 +689,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         moment: datetime,
         segment: Segment,
         state: SegmentState,
+        topic: str = "",
     ) -> str:
         """planner 注入文本（设计文档 3.1）。
 
@@ -704,11 +705,11 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         （5.14）。之所以仍然这么做：导演需要在决定怎么演之前就知道人在哪，
         而 Tool 是「该聊她在干嘛」时才调用的，那时候给已经晚了。观察项见设计文档 7。
 
-        **谈资不在这里了。** 早先这里有一段「她手上有一件今天发生、还没跟人说过的
-        小事」，由 planner 决定要不要换题。那个设计被推翻：只要那句话在，planner 就
-        倾向于用它，等于每轮下一道命令；而它又拿不到内容，只能写出「我碰上件挺巧的
-        小事，等我忙完再讲」这种预告（08-31 15:25 实际发生过）。现在谈资只经 replyer
-        的接话版注入（``_topic_block_reply``），planner 这一层不出现。
+        **谈资接在心情后面（2026-11-19 起）。** 主程序 1.4.6 起 replyer 单模板，
+        插件追加的 user 消息落在对话记录之前、和「现在，你说：」隔着整段模板；用户决定
+        改由 planner 看到这件事，需要时写进 ``chat_anlyze`` 交给 replyer。
+        早先（08-31）planner 版只有「她手上有一件小事」而没有内容，只能写出
+        「等我忙完再讲」这种预告；现在给的是完整内容和「只接话、不转话题」的约束。
         """
         store = self._require_store()
         trail = _render_trail(state)
@@ -719,12 +720,14 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             lines.append(f"行程表：{trail}")
         lines.append(f"所在：{store.place_at(moment, segment, state)}")
         lines.append(f"心情：{state.mood}")
+        if topic:
+            lines.append(topic)
         lines.append("可用get_mittes_schedule查询详情")
         return "\n".join(lines)
 
     @staticmethod
     def _topic_block_reply(topic: str) -> str:
-        """通道一：接话（常驻注入，不设闸门）。
+        """通道一：接话（常驻注入 planner【Mittes 此刻】的心情之后，不设闸门）。
 
         真人在群里主动讲自己今天干了什么是极少数，绝大多数"分享"其实是**接话**——
         话题正好赶到那儿了。接话不需要许可，所以这一版常驻。
@@ -1231,7 +1234,12 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             return _hook_response(items, kwargs)
 
         moment, day, segment, state = self._current()
-        block = self._planner_block(moment, segment, state)
+        topic = await self._topic_for_session(day, segment, state, session_id)
+        block = self._planner_block(moment, segment, state, topic)
+        if topic:
+            # 记一次注入；planner 看到了这件事，下一次 replyer 回复交给小模型判定有没有讲到。
+            self._require_store().mark_injected(day, segment.slot, session_id)
+            self._topic_awaiting_judge[session_id] = (day, segment.slot, state.topic)
         if session_id and self._camera is not None:
             # 已接下还没送达的照片每轮按队列现状写出来。拍照调用和回执可能被压缩或挤出窗口，
             # planner 不知道照片还在路上就会拒绝对方，随后照片照样发出（11-04 拍脚照）。
@@ -1252,6 +1260,21 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         # 这条路径下日历后缀一并丢失——它依附于那条锚点，没有别的合理落点。
         updated.insert(index + 1 if index >= 0 else len(updated), _new_user_item(block))
         return _hook_response(updated, kwargs)
+
+    async def _topic_for_session(
+        self, day: date, segment: Segment, state: SegmentState, session_id: str
+    ) -> str:
+        """本会话本轮要不要带谈资：有内容、开关开着、（默认）关联组里还没讲过。"""
+        if not session_id or not getattr(state, "topic", ""):
+            return ""
+        if not bool(await self._get_config("topic.enabled", True)):
+            return ""
+        if not bool(await self._get_config("topic.reply_channel.enabled", True)):
+            return ""
+        stop_after_shared = bool(await self._get_config("topic.stop_after_shared", True))
+        if stop_after_shared and await self._share_seen(day, segment.slot, session_id):
+            return ""
+        return self._topic_block_reply(state.topic)
 
     def _with_calendar_suffix(self, item: Any, day: date) -> Any:
         """给「时间：」那条加上日历后缀，返回**新的** item；不该加时原样返回。
@@ -1296,10 +1319,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         session_id: str = "",
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """把 A（表达方式）和 C（谈资）放到各自合适的位置。
-
-        C 只是可能用得上的背景经历，放在 system item 之后、聊天记录之前；后面的
-        真实对话和目标消息会重新取得注意力，避免它被误读成必须执行的任务。
+        """插入 A（表达方式）。C（谈资）2026-11-19 起改进 planner【Mittes 此刻】，这里不再注入。
 
         A 是本轮的表达要求，插在含 planner ``chat_anlyze`` 的那条 user item 之前。
         主程序 1.4.6 起 replyer 只有一条 user 消息（单模板：对话记录、目标消息、
@@ -1310,46 +1330,21 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         if not items:
             return {"success": True, "action": "continue"}
 
-        moment, day, segment, state = self._current()
-        store = self._require_store()
+        _moment, _day, _segment, state = self._current()
         updated = list(items)
 
         manner = state.manner.strip() if await self._manner_enabled() else ""
-        topic = ""
-        stop_after_shared = bool(await self._get_config("topic.stop_after_shared", True))
-        already_shared = await self._share_seen(day, segment.slot, session_id)
-        topic_enabled = bool(await self._get_config("topic.enabled", True))
-        reply_channel = bool(await self._get_config("topic.reply_channel.enabled", True))
-        if (
-            state.topic
-            and session_id
-            and topic_enabled
-            and reply_channel
-            and (not stop_after_shared or not already_shared)
-        ):
-            topic = self._topic_block_reply(state.topic)
-        if topic:
-            # 这里记下就等于"本次 replyer 看到了这件事"，回复后交给小模型判定有没有讲到。
-            self._topic_awaiting_judge[session_id] = (day, segment.slot, state.topic)
-        if not manner and not topic:
+        if not manner:
             return {"success": True, "action": "continue"}
 
-        # 接话版是低优先级背景：紧跟 system，但放在所有聊天记录之前，
-        # 后面的真实对话会重新取得注意力。不塞进 system 正文，那样权重反而更高。
-        if topic:
-            system_index = _find_item_type_index(updated, "SystemMessageItem")
-            updated.insert(system_index + 1 if system_index >= 0 else 0, _new_user_item(topic))
-            store.mark_injected(day, segment.slot, session_id)
-
-        if manner:
-            expected = (
-                str((reply_tool_args or {}).get("chat_anlyze") or "").strip() or reply_reason.strip()
-            )
-            index = _find_item_index(updated, lambda text: bool(expected) and expected in text)
-            if index < 0:
-                _logger.warning("[replyer] 没找到含 chat_anlyze 的消息，本次跳过表达方式注入")
-            else:
-                updated.insert(index, _new_user_item(manner))
+        expected = (
+            str((reply_tool_args or {}).get("chat_anlyze") or "").strip() or reply_reason.strip()
+        )
+        index = _find_item_index(updated, lambda text: bool(expected) and expected in text)
+        if index < 0:
+            _logger.warning("[replyer] 没找到含 chat_anlyze 的消息，本次跳过表达方式注入")
+        else:
+            updated.insert(index, _new_user_item(manner))
 
         return _hook_response(
             updated,
@@ -1405,22 +1400,17 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     async def cmd_status_prompt(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         del kwargs
         moment, day, segment, state = self._current()
-        empty = "（这段没什么好说的，不注入）"
         suffix = _calendar_suffix(self._require_store().day_context(day))
         text = (
             "── planner「时间：」那条的行尾后缀 ──\n"
             + (f"…{moment:%H:%M:%S}{suffix}" if suffix else "（今天既不是祝日也不在连休里，不加）")
             + "\n"
             "\n"
-            "── planner 注入（插在「时间：」之后）──\n"
-            f"{self._planner_block(moment, segment, state)}\n"
+            "── planner 注入（插在「时间：」之后；谈资接在心情后，本会话讲过就不带）──\n"
+            f"{self._planner_block(moment, segment, state, self._topic_block_reply(state.topic) if state.topic else '')}\n"
             "\n"
             "── replyer A 表达方式（插在含 chat_anlyze 的消息之前）──\n"
             + (state.manner if await self._manner_enabled() else "（表达方式功能已关闭，不注入）")
-            + "\n"
-            "\n"
-            "── replyer C 谈资 · 接话版（system 之后、聊天记录之前）──\n"
-            + (self._topic_block_reply(state.topic) if state.topic else empty)
         )
         await self.ctx.send.text(text, stream_id)
         return True, "已输出注入原文", True
