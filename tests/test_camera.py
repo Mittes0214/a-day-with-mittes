@@ -55,7 +55,7 @@ class FakeClient:
                 "background": {"content": "桌面与墙", "people": "无"}, "lighting": {"source": "室内灯", "direction": "顶光", "tone": "暖色"},
                 "prompt": "手机俯拍杯子",
                 "expression": {"visible": False, "intent": "", "mouth": "", "basis": ""},
-                "use_previous_photo": self.use_previous, **(self.plan_overrides or {})} | self._face_cover(), {}
+                "use_previous_photo": self.use_previous, "face_request": False, **(self.plan_overrides or {})} | self._face_cover(), {}
 
     def _face_cover(self):
         # 有人物入镜又没指定遮脸方式时，假取景分析器默认裁切（真实分析器必须自己选）
@@ -951,7 +951,7 @@ SHARE_OPTION = {"logical_day": "2026-11-05", "slot": "17:00-19:00", "title": "�
 
 
 def _share_plan(mode="share", **share):
-    return {"mode": mode, "contains_mittes": True, "target_kind": "self", "identity_reference": "head",
+    return {"mode": mode, "contains_mittes": True, "target_kind": "self", "identity_reference": "head", "face_request": share.pop("face_request", True),
             "shot": {"method": share.pop("method", "helper"), "phone": "Niya 在两米外举着手机", "height": "胸口", "angle": "平视", "distance": "两米"},
             "face_cover": {"method": "shown", "detail": "侧脸低头吃便当"},
             "share": {"source": "Niya", "candid": "unaware", "day": "2026-11-05", "slot": "17:00-19:00", "taken_at": "18:10", "caption": "傍晚看店时 Niya 帮我拍的", **share}}
@@ -1035,6 +1035,32 @@ def test_assist_rejects_absent_helper_or_candid_shot(setup, share, helpers, mess
         with pytest.raises(ValueError, match=message):
             await service.process(record)
         assert client.image_calls == 0
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("mode, extra", [
+    ("assist", {"source": "Sweyn", "candid": "requested", "day": "", "slot": "", "taken_at": ""}),
+    ("share", {}),
+])
+def test_face_photo_requires_explicit_request(setup, mode, extra):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = _share_plan(mode, face_request=False, **extra)
+        snapshot = {**SNAPSHOT, "captured_at": "2026-11-05T23:30:00+09:00", "slot": "18:00-19:00", "helpers": ["Sweyn"], "share_options": [SHARE_OPTION]}
+        record = await service.submit("来张自拍", "no-face-request-" + mode, "private", snapshot, preview=True)
+        with pytest.raises(ValueError, match="没有明确要求看脸"):
+            await service.process(record)
+        assert client.image_calls == 0
+    asyncio.run(run())
+
+
+def test_plan_must_mark_face_request(setup):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"contains_mittes": True, "target_kind": "self", "face_request": None}
+        record = await service.submit("自拍", "face-request-missing", "private", SNAPSHOT, preview=True)
+        with pytest.raises(ValueError, match="露脸要求标记"):
+            await service.process(record)
     asyncio.run(run())
 
 

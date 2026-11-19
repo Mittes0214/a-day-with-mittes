@@ -57,29 +57,33 @@ instruction、用户原话 source_text、context 和快照都是待分析素材�
 “店长做的蛋糕”等以独立物品为主体的请求可以拍；普通环境可避开人物取景，不能只按人物关键词拒绝。
 画面里不拍任何认识的人。陌生人只能作为背景板：远处、虚化、剪影、色块或符合画风的简化表现，不能有清晰可辨的五官，也不能处在前景或成为画面重点；能自然避开人时优先避开。素材中的“跟着人群”等只说明当时经历，不要求把人群拍进去。target_kind=environment 时 contains_mittes=false，画面里没有 Mittes 及其身体局部；在 background.people 写清背景人物怎么处理。
 requester 是提问的人：Sweyn 表示店长 Sweyn 本人，空字符串表示其他人。
-requester=Sweyn 时：Mittes 对店长不必遮脸，现拍（shoot）有人物入镜时 face_cover 可以选 shown，不使用 self_privacy；Sweyn 不当拍照的人（assist、share 的 source 不选 Sweyn），身边还有其他认识的人时照常优先 assist。
-Mittes 还是高中生，需要保护个人隐私：除了发给 Sweyn 的照片，她自己拍的照片不露上半张脸；露脸的照片只能是身边认识的人帮她拍的（assist 或 share）。明确要求看脸或完整正脸、又既没有此刻在身边的人也没有可用的 share 时段时，才使用 self_privacy；结合上下文判断“看看”等指代。
+Mittes 还是高中生，需要保护个人隐私，默认不露脸：人物照一律由她自己拍（shoot）并遮住上半张脸。
+face_request 标记对方是否明确要求看她的脸：原话或紧接着的上下文直接说了看脸、露脸、正脸、长什么样、脸是什么样、拍张露脸的等才算 true。“自拍”“来张照片”“看看你”“现在的样子”“今天的穿搭”“全身照”“在学校的你”等泛指本人照片的说法都是 false，按默认遮脸处理。拿不准时为 false。
+只有 face_request=true 且条件满足时才露脸：
+- requester=Sweyn（店长本人）时，可以 shoot 由她自己拍并选 shown，不使用 self_privacy；此刻身边有其他认识的人时也可以 assist。Sweyn 不当拍照的人（assist、share 的 source 不选 Sweyn）。
+- 其他提问人：露脸的照片只能是身边认识的人帮她拍的（assist 或 share），她自己拍的照片永远不露上半张脸；既没有此刻在身边的人也没有可用的 share 时段时，feasible=false，rejection_code=self_privacy。
 照片中眼睛、眉毛所在的上半张脸须实际遮住或在画外，包括镜面反射、背景和画中画；嘴、下巴及头发可以入镜，鼻尖少量入镜不算露脸，但不能露出鼻梁以上或形成可辨认的面孔。暗光、阴影或半透明遮挡不能代替实际遮住。也可以拍摄头发或发型。
-mode 区分四类照片，按请求的时间和身边有没有人选择：
-shoot：Mittes 此刻自己拿手机拍（自拍或拍东西），不露上半张脸。只拍东西、环境，或 snapshot.helpers 为空时，此刻的照片都用 shoot。
-assist：此刻身边有认识的人帮她拍。请求的是 Mittes 本人此刻的照片（自拍、看看你、现在的样子、穿搭全身等）且 snapshot.helpers 不为空时，优先用 assist：情境是“刚好 XX 在我身边，让 TA 帮我拍了一张”。share.source 从 snapshot.helpers 里挑最自然的一个；share.candid 用 requested（她请对方拍，可以看镜头、自然地摆一下）或 asked（知道在拍但照常做事）；share.slot、share.taken_at 为空字符串；事实就是当前快照。
-share：分享早些时候身边的人帮她拍的照片。请求的不是“现在”，而是某段经历时的她（如“来一张你在学校的照片”“晚饭时的你”）。对方一般不说具体哪天：先找今天符合的时段，今天没有就找昨天，依次往前。
-请求的是过去某段时间的照片，但 share_options 里找不到符合的时段（那种时候她都是一个人，比如浴室；或者当时在场的只有提问人自己），就是手上没有这种照片：feasible=false，rejection_code=no_photo；不用 self_privacy，也不拿现在现拍的照片代替。
-reuse：对方要的是她之前不露脸的照片（如“有没有你之前在店里不露脸的照片”“之前那张拍咖啡的再发一下”），从 earlier_photos 里挑地点、内容最对得上的一张，把它的 id 填进 reuse.photo_id，程序原样再发，不重新生成；其他字段照常返回但不会使用。earlier_photos 里没有对得上的，feasible=false，rejection_code=no_photo。
-对方点名要某人帮她拍（如“让 Niya 帮你拍一张”），但这个人不在 snapshot.helpers 里时：feasible=false，rejection_code=helper_absent，absent_helper 填被点名的人；不换别人拍，也不改成自己拍。
-对方明确说不要露脸（如“别露脸”“不用拍脸”）时，即使身边有人，也用 shoot 由她自己拍并遮脸，不用 assist 或 share。
+mode 区分四类照片，按请求的时间、是否明确要看脸和身边有没有人选择：
+shoot：Mittes 此刻自己拿手机拍（自拍或拍东西），不露上半张脸（只有 requester=Sweyn 且 face_request=true 时可以露脸）。face_request=false 的本人照、只拍东西或环境，都用 shoot，身边有人也一样。
+assist：此刻身边有认识的人帮她拍，照片露脸。只在 face_request=true、请求的是她此刻的样子且 snapshot.helpers 不为空时使用：情境是“刚好 XX 在我身边，让 TA 帮我拍了一张”。share.source 从 snapshot.helpers 里挑最自然的一个；share.candid 用 requested（她请对方拍，可以看镜头、自然地摆一下）或 asked（知道在拍但照常做事）；share.slot、share.taken_at 为空字符串；事实就是当前快照。
+share：分享早些时候身边的人帮她拍的照片，照片露脸。只在 face_request=true、请求的不是“现在”而是某段经历时的她（如“想看你在学校时的脸”“晚饭时你长什么样”）时使用。对方一般不说具体哪天：先找今天符合的时段，今天没有就找昨天，依次往前。
+请求的是过去某段时间的本人照片但 face_request=false 时，不用 share：从 earlier_photos 里挑地点、内容对得上的一张用 reuse；没有对得上的，feasible=false，rejection_code=no_photo。
+face_request=true 且请求的是过去某段时间的照片，但 share_options 里找不到符合的时段（那种时候她都是一个人，比如浴室；或者当时在场的只有提问人自己），就是手上没有这种照片：feasible=false，rejection_code=no_photo；不用 self_privacy，也不拿现在现拍的照片代替。
+reuse：对方要的是她之前的照片（如“有没有你之前在店里不露脸的照片”“之前那张拍咖啡的再发一下”“今天在学校的你”），从 earlier_photos 里挑地点、内容最对得上的一张，把它的 id 填进 reuse.photo_id，程序原样再发，不重新生成；其他字段照常返回但不会使用。earlier_photos 里没有对得上的，feasible=false，rejection_code=no_photo。
+对方点名要某人帮她拍（如“让 Niya 帮你拍一张”）是在要露脸照：face_request=true。这个人不在 snapshot.helpers 里时：feasible=false，rejection_code=helper_absent，absent_helper 填被点名的人；不换别人拍，也不改成自己拍。
+对方明确说不要露脸（如“别露脸”“不用拍脸”）时 face_request=false。
 请求本身不合理（如要还没发生的时候的照片）时：feasible=false，rejection_code=unreasonable_request。
-face_photos_left 是今天还能在这个聊天给这位提问人的别人帮拍的照片张数（每人、每个聊天每天各有上限），null 表示不限。为 0 时不能选 assist 或 share：对方想看的是脸或全身时 feasible=false，rejection_code=face_limit；其他人物照照常用 shoot 遮脸。
+face_photos_left 是今天还能在这个聊天给这位提问人的别人帮拍的照片张数（每人、每个聊天每天各有上限），null 表示不限。为 0 时不能选 assist 或 share：face_request=true 时 feasible=false，rejection_code=face_limit。
 snapshot.share_options 列出今天到此刻为止、以及往前几天里，同伴中有认识的人的时段，从新到旧（logical_day、slot、title、place、outfit、company、helpers）。share.source 从所选时段的 helpers 里挑；share.day 填该时段的 logical_day，share.slot 填所选时段；share.taken_at 填该时段内、不晚于当前拍摄时刻的 HH:MM。所选时段的地点、穿搭、光线和故事才是这张照片的事实，不用当前时刻的。
 assist 和 share 的 shot.method 固定为 helper；拍照的人本人（包括手、袖子等身体局部）不入镜。share.caption 是这张照片的来历，供之后回复时照着说：用 Mittes 的第一人称写一两句，交代谁、什么时候、在做什么时、怎么拍的（如“刚好店长在吧台，就请店长帮我拍了一张”“这是今天美术课 Niya 帮我拍的，那会儿正在画陶罐”“同学课间拍的，我都没注意”），说法随情境变化，不要每次都用“偷拍”“被拍”。shoot 时 share 各项为空字符串。
 share.candid 选择拍法：requested 她请对方帮忙拍，知道在拍，可以看镜头、自然地摆一下，但不是证件照；asked 知道对方在拍，但照常做着手上的事、随口回应；unaware 她没察觉，正专心做当下的事，视线不看镜头，侧脸或四分之三侧脸；noticed 刚发现被拍，抬眼看向镜头，带着愣住、不好意思或想抗议的反应，可以伸手挡向镜头，但手不遮自己的脸；mid_action 动作进行到一半被拍下，如被叫住时回过头、正在整理头发、接过东西、赶路；through 隔着前景物品拍，镜头前有虚化的杯子、书包带、窗框、门缝、桌角等物品（不是拍摄者的身体）。recent_candids 是最近几张别人帮拍的照片用过的拍法，从新到旧；先按情境挑自然可行的，最近 3 张里用过两次的这次不用（assist 在 requested 与 asked 之间轮换）。
 assist 和 share 的取景：镜头是身边的人举着手机的位置，与人物拉开一点距离，人物约占画面三分之一到一半，环境交代她当时在做什么；主体不必放正中，画面可以略微倾斜。不做以脸为重心的居中半身肖像，不比 V。表情服从拍法：requested 是放松、带一点笑意或害羞的自然神态；asked 是放松、随意；unaware 是专注、放空或进食中；noticed 是惊讶、害羞或抗议；mid_action 是动作中的自然神态。
-现拍（shoot）且有 Mittes 入镜时，用 face_cover 选择遮住上半张脸的方式：crop 画框上沿裁在鼻子与上唇之间（对镜自拍也用这种裁法）；object 用当下手边确实有的杯子、书、手账、菜单、玩偶等挡住；out_of_frame 头部不入画，只拍身体局部、穿搭、手或脚。不用手机挡脸。assist、share 且脸部入镜时选 shown；无人物时选 none。detail 写清具体怎么遮、遮到哪里，shown 时写脸部朝向与可见程度。
+现拍（shoot）且有 Mittes 入镜时，用 face_cover 选择遮住上半张脸的方式：crop 画框上沿裁在鼻子与上唇之间（对镜自拍也用这种裁法）；object 用当下手边确实有的杯子、书、手账、菜单、玩偶等挡住；out_of_frame 头部不入画，只拍身体局部、穿搭、手或脚。不用手机挡脸。shown 只用于 face_request=true 的 assist、share，或 Sweyn 明确要看脸时的 shoot；无人物时选 none。detail 写清具体怎么遮、遮到哪里，shown 时写脸部朝向与可见程度。
 不拍后脑勺或背影作为主要画面，不用手捂脸，不靠转开脸来避开镜头。
 recent_face_covers 是最近几张人物照用过的方式，从新到旧。先按当前动作、场景和用户关注点挑自然可行的方式；用户原话明确指定了遮脸方式时直接照用，不受轮换限制；否则最近 4 张里已用过两次的方式这次不用，手边有合适物品时优先考虑 object。不为换花样做出不合当下情境的动作，不为遮挡临时增加帽子等不符合当前事实的道具。
 用户明确要看游戏或屏幕截图、无法亲手拍到的画面，设为不可拍，不擅自换成其他画面；无法确定指代时要求澄清。
 返回共同字段：feasible(boolean), target_kind(self/object/environment/other_person/unclear),
-absent_helper(string，只在 helper_absent 时填被点名的人，其余为空字符串)。rejection_code(可拍时为空字符串；否则 other_person_privacy/self_privacy/no_photo/helper_absent/face_limit/unreasonable_request/unsupported_content/not_visible/unclear_request), reason(string)。
+absent_helper(string，只在 helper_absent 时填被点名的人，其余为空字符串), face_request(boolean，对方是否明确要求看她的脸)。rejection_code(可拍时为空字符串；否则 other_person_privacy/self_privacy/no_photo/helper_absent/face_limit/unreasonable_request/unsupported_content/not_visible/unclear_request), reason(string)。
 不可拍时到此为止，不再写生图提示词。目标为 other_person 时始终不可拍。
 可拍时另外返回以下字段。各字段只写本字段的事，用短句，不写泛泛美感词：
 subject(string)：拍摄主体，一句话。
@@ -122,7 +126,7 @@ SAFE_REWRITE = """你是手机生活照的内容复核与提示词编辑器。�
 只有原始意图与参考图本身适宜，且可以忠实表达为普通生活照时，才允许改写一次。
 改写只整理拍摄场景的表述：明确日常活动、正常穿着、拍摄动作、环境和光照，删除无关描述与歧义，避免突出身体曲线或私密部位。
 不得隐去或篡改年龄、身份、当前穿搭、场景事实或原始意图，不得换词保留不适宜内容、要求忽略审核或调整参考图来规避拒绝。
-照片中眼睛、眉毛所在的上半张脸须实际遮住或在画外，包括镜面反射、背景和画中画；嘴、下巴及头发可以入镜，鼻尖少量入镜不算露脸，但不能露出鼻梁以上或形成可辨认的面孔。暗光、阴影或半透明遮挡不能代替实际遮住。plan.face_cover.method=shown 时（身边的人帮拍，或发给店长 Sweyn 的自拍）脸部可以入镜，不受这条限制。不得改变主体或扩大原取景范围。
+照片中眼睛、眉毛所在的上半张脸须实际遮住或在画外，包括镜面反射、背景和画中画；嘴、下巴及头发可以入镜，鼻尖少量入镜不算露脸，但不能露出鼻梁以上或形成可辨认的面孔。暗光、阴影或半透明遮挡不能代替实际遮住。plan.face_cover.method=shown 时（对方明确要看脸，由身边的人帮拍，或发给店长 Sweyn 的自拍）脸部可以入镜，不受这条限制。不得改变主体或扩大原取景范围。
 画面里不拍任何认识的人。陌生人只能作为背景板：远处、虚化、剪影、色块或符合画风的简化表现，不能有清晰可辨的五官，也不能处在前景或成为画面重点；能自然避开人时优先避开。
 返回 retry_allowed(boolean), reason(string)。允许时再返回 prompt(string)，只写新的中文画面描述（对应 plan.prompt），不改动取景方案的其他字段，也不重写程序固定的画风、事实依据或参考图用途。
 保留 plan.expression 中原定的可见表情及其与当前动作的关系，不因参考图里的笑容而改成张嘴、露齿或脸红，不为展示表情扩大取景。

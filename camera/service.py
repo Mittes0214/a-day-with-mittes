@@ -116,6 +116,10 @@ def apply_share(record: dict[str, Any], plan: dict[str, Any]) -> None:
     share = plan.get("share") if isinstance(plan.get("share"), dict) else {}
     method = plan["shot"]["method"]
     requester = record["requester_persona"]
+    if not isinstance(plan.get("face_request"), bool):
+        raise ValueError("拍摄方案缺少露脸要求标记")
+    if not plan["face_request"] and (plan["mode"] != "shoot" or plan["face_cover"]["method"] == "shown"):
+        raise ValueError("对方没有明确要求看脸，不能露脸")
     if plan["mode"] == "shoot":
         if method == "helper":
             raise ValueError("现拍照片不能由别人拍")
