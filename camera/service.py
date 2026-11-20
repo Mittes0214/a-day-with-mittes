@@ -369,7 +369,7 @@ class PhotoService:
             validate_shot(plan)
             if plan.get("scene_type") not in {"indoor", "outdoor"} or not isinstance(plan.get("include_outfit"), bool):
                 raise ValueError("拍摄方案的场景类型或穿搭标记无效")
-            if plan.get("style_category") not in {"portrait", "food", "drink", "outdoor", "object"} or plan.get("identity_reference") not in {"none", "body", "head"}:
+            if plan.get("style_category") not in {"portrait", "food", "drink", "outdoor", "object"} or plan.get("identity_reference") not in {"none", "body"}:
                 raise ValueError("拍摄方案的参考图用途无效")
             if not isinstance(plan.get("contains_mittes"), bool):
                 raise ValueError("拍摄方案缺少人物入镜标记")

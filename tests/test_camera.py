@@ -85,7 +85,7 @@ def setup(tmp_path, monkeypatch):
     (refs / "scene.png").write_bytes(data)
     entries = [{"file": "style.png", "sha256": hashlib.sha256(data).hexdigest(), "category": category}
                for category in ["portrait"]]
-    identity = {key: {"file": "style.png", "sha256": hashlib.sha256(data).hexdigest()} for key in ["body", "head"]}
+    identity = {key: {"file": "style.png", "sha256": hashlib.sha256(data).hexdigest()} for key in ["body"]}
     scene = {"file": "scene.png", "sha256": hashlib.sha256(data).hexdigest()}
     supplements = []
     for category in ["street", "terrace", "train", "cafe", "night_desk", "classroom"]:
@@ -313,7 +313,7 @@ def test_expression_is_in_actual_image_request_and_checker_without_inventing_sna
         service, _, client, _ = setup
         expression = {"visible": True, "look": "刚坐定，等着发卷时有点放松",
                       "basis": "对话里已经确认她刚坐定，尚未拿到试卷"}
-        client.plan_overrides = {"contains_mittes": True, "target_kind": "self", "identity_reference": "head",
+        client.plan_overrides = {"contains_mittes": True, "target_kind": "self", "identity_reference": "body",
                                  "expression": expression}
         record = await service.submit("拍一张课前自拍", "expression", "private", dict(SNAPSHOT), preview=True)
         await service.process(record)
@@ -693,7 +693,7 @@ def test_other_unshootable_requests_return_explicit_decline(setup, code):
     ("outdoor", "none", False, False, ["style"]),
     ("object", "none", True, False, ["style", "outfit"]),
     ("portrait", "none", True, True, ["style", "outfit"]),
-    ("portrait", "head", True, True, ["style", "identity", "outfit"]),
+    ("portrait", "body", True, True, ["style", "identity", "outfit"]),
     ("object", "body", True, True, ["style", "identity", "outfit"]),
     ("food", "none", False, True, ["style"]),
     ("drink", "none", False, True, ["style"]),
@@ -718,7 +718,7 @@ def test_reference_roles_are_selected_by_visible_content(setup, category, identi
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("contains,identity", [(None, "none"), ("false", "none"), (False, "head")])
+@pytest.mark.parametrize("contains,identity", [(None, "none"), ("false", "none"), (False, "body")])
 def test_invalid_presence_decision_never_generates(setup, contains, identity):
     async def run():
         service, _, client, _ = setup
@@ -952,7 +952,7 @@ SHARE_OPTION = {"logical_day": "2026-11-05", "slot": "17:00-19:00", "title": "�
 
 
 def _share_plan(mode="share", **share):
-    return {"mode": mode, "contains_mittes": True, "target_kind": "self", "identity_reference": "head", "face_request": share.pop("face_request", True),
+    return {"mode": mode, "contains_mittes": True, "target_kind": "self", "identity_reference": "body", "face_request": share.pop("face_request", True),
             "shot": {"method": share.pop("method", "helper"), "phone": "Niya 在两米外举着手机", "height": "胸口", "angle": "平视", "distance": "两米"},
             "face_cover": {"method": "shown", "detail": "侧脸低头吃便当"},
             "share": {"source": "Niya", "candid": "unaware", "day": "2026-11-05", "slot": "17:00-19:00", "taken_at": "18:10", "caption": "傍晚看店时 Niya 帮我拍的", **share}}

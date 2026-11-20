@@ -82,7 +82,7 @@ absent_helper(string，只在 helper_absent 时填被点名的人，其余为空
 可拍时另外返回以下字段。各字段只写本字段的事，用短句，不写泛泛美感词：
 subject(string)：拍摄主体，一句话。
 scene_type(indoor/outdoor), style_category(portrait/food/drink/outdoor/object), scene_context(none/street/terrace/train/cafe/night_desk/classroom), clothing_context(none/socks/shoes),
-contains_mittes(boolean), include_outfit(boolean), identity_reference(none/body/head), use_previous_photo(boolean)。
+contains_mittes(boolean), include_outfit(boolean), identity_reference(none/body), use_previous_photo(boolean)。
 mode(shoot/assist/share/reuse)。reuse(object)：photo_id（不是 reuse 时为空字符串）。share(object)：source(拍照的人), candid(requested/asked/unaware/noticed/mid_action/through), day, slot, taken_at, caption（shoot 时全部为空字符串；assist 时 day、slot、taken_at 为空字符串）。
 shot(object)：method(front_selfie 前置自拍 / mirror_selfie 对镜自拍 / self_view 本人视角拍自己身上或手里 / timer 手机放着定时拍 / handheld 手持拍物品或环境 / helper 身边的人帮忙拍，只用于 assist 和 share), phone(手机在哪、朝哪、谁拿着), height(镜头相对身体或地面的高度), angle(平视/俯拍/仰拍及大致角度), distance(镜头到主体的距离)。
 frame(object)：top(画面上沿落在哪), bottom(下沿落在哪), sides(主体在左右的位置与留白), focus(画面重心与主体占画面的大致比例)。各项直接写位置，不重复“上沿”“下沿”等字样。
@@ -100,7 +100,7 @@ clothing_context 只在衣着穿在 Mittes 身上且是本次分享重点时选�
 先按用户想看的主体和自然拍摄动作确定取景，再标记是否有人物。普通景物可以双手持机，手在镜头后；只有持物展示等实际动作需要时才让手入镜，不为了分享感或证明拍摄者身份而硬加手。
 contains_mittes 仅按计划画面是否实际出现 Mittes 判断，出现手、腿、头发、身体或穿在身上的衣物等局部也为 true；纯食物、物件或环境为 false。
 放在桌上的衣服、脱下的鞋包等独立物品不算人物。不要为选择画风而额外加入人物或身体部位。
-identity_reference 在头发或可辨识身形入镜时选 body，头部/扎发根部/下半张脸为重点时选 head，其余包括仅手部、鞋子、食物或环境选 none。
+identity_reference 在 Mittes 的头发、脸部或可辨识身形入镜时选 body，其余包括仅手部、鞋子、食物或环境选 none。
 根据 snapshot 日程、精确所在地、拍摄时间、衣柜及 appearance 确定事实。时段故事不代表所有事情已在拍摄时刻发生。
 expression 固定返回 visible(boolean), look(string), basis(string)。依用户请求、相关对话、拍摄时刻已经发生的事情和当前动作设计自然神情，不从参考图复制表情。
 仅在取景原本包含嘴部时 visible=true；look 用十来个字的一句话写她此刻的神情和由来，带出情绪、分寸和当下在做的事，如“画得正专心，没什么表情”“停笔拍照时有点得意的浅笑”“发现忘带作业本，愣了一下”“被逗笑了，笑得有点收不住”；不写嘴唇、嘴角、牙齿、眉眼等部位怎么动，也不只写“微笑”“开心”这样一个词。basis 写依据。嘴部不入镜、仅身体局部或无人物时 visible=false，look 和 basis 为空字符串；不能为表现神情扩大取景，shoot 时也不能因此露出上半张脸。

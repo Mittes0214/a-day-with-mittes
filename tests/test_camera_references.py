@@ -33,7 +33,7 @@ def test_deployed_reference_manifest_matches_all_files():
         with Image.open(BytesIO(raw)) as image:
             assert image.format == "PNG"
             image.verify()
-    assert "d9be7298-4cb1-4923-bbc8-4d4e2154c6a2.png" in manifest["identity"]["head"]["source"]
+    assert set(manifest["identity"]) == {"body"}
     assert manifest["scene_reference"]["sha256"] == "a7883f7b5010742b02cc65ce08ff7367ec78157d09b479e8a347e991f66a9a5b"
 
 

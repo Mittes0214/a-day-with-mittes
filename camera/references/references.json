@@ -1,7 +1,7 @@
 {
   "version": "mittes-phone-photo-style-v6",
   "approved_on": "2026-10-28",
-  "status": "2026-10-28 用户确认替换人物主画风02；景物与可选衣着补充的分流及选择规则沿用v5。2026-11-14 换冬季衣柜时撤下 15 女仆装衣着补充：款式只以当季衣柜图为准。",
+  "status": "2026-10-28 用户确认替换人物主画风02；景物与可选衣着补充的分流及选择规则沿用v5。2026-11-14 换冬季衣柜时撤下 15 女仆装衣着补充：款式只以当季衣柜图为准。2026-11-21 撤下 08 头部轮廓外貌参考，外貌参考只用 07。",
   "runtime_integrated": true,
   "origin_style": "用户认可的 v4 人设画风及其跨场景测试",
   "references": [
@@ -21,11 +21,6 @@
       "file": "07_外貌参考_发色与身形.png",
       "source": "workspace:doc/Mittes人设图/a0370464-7db7-46f9-8555-6c3f46b5a832.png",
       "sha256": "a4566be97513df832dc345b3645c3b698d10c8ec00d9f7704924e5dcbb1262f0"
-    },
-    "head": {
-      "file": "08_外貌参考_头部轮廓.png",
-      "source": "workspace:doc/Mittes人设图/d9be7298-4cb1-4923-bbc8-4d4e2154c6a2.png",
-      "sha256": "4b7a970d58e3f87eec534b705218502bdc15737957266532ecef95bdb58d00ed"
     }
   },
   "scene_reference": {
