@@ -331,7 +331,6 @@ class PhotoService:
                 "face_photos_left": await asyncio.to_thread(self._face_photos_left, record),
                 "earlier_photos": record["earlier_photos"],
                 "previous_photo": record.get("previous_photo"),
-                "recent_face_covers": await asyncio.to_thread(self.store.recent_face_covers),
                 "recent_candids": await asyncio.to_thread(self.store.recent_candids),
             })
             record["plan"] = plan

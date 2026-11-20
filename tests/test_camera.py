@@ -1262,3 +1262,15 @@ def test_named_helper_absent_is_declined_with_their_name(setup):
         with pytest.raises(ValueError, match="其实在场"):
             await service.process(record)
     asyncio.run(run())
+
+
+def test_object_face_cover_is_no_longer_allowed(setup):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = {"contains_mittes": True, "target_kind": "self",
+                                 "face_cover": {"method": "object", "detail": "用调色盘挡住眉眼"}}
+        record = await service.submit("来张自拍", "object-cover", "private", dict(SNAPSHOT), preview=True)
+        with pytest.raises(ValueError, match="遮脸方式无效"):
+            await service.process(record)
+        assert client.image_calls == 0
+    asyncio.run(run())

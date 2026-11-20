@@ -47,7 +47,7 @@ SHOT_METHODS = {"front_selfie": "前置自拍", "mirror_selfie": "对镜自拍",
                 "helper": "身边的人帮忙拍"}
 CANDIDS = {"requested": "她请对方帮忙拍", "asked": "知道在拍但照常做事", "unaware": "她没察觉", "noticed": "刚发现被拍",
            "mid_action": "动作进行到一半", "through": "隔着前景物品偷拍"}
-FACE_COVERS = {"crop": "画框裁切", "object": "物品挡住", "out_of_frame": "头部不入画", "shown": "露脸", "none": "无人物"}
+FACE_COVERS = {"crop": "画框裁切", "out_of_frame": "头部不入画", "shown": "露脸", "none": "无人物"}
 _NOT_HELPERS = ("一个人", "客人", "陌生人", "路人", "老师", "班主任")
 
 

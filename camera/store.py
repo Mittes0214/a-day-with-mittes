@@ -223,19 +223,6 @@ class CameraStore:
                         "subject": plan.get("subject", ""), "description": other.get("description", "")})
         return out
 
-    def recent_face_covers(self, limit: int = 6) -> list[str]:
-        """最近几张已发出的人物照用过的遮脸方式（从新到旧），给取景分析器轮换用。"""
-        with closing(sqlite3.connect(self.db)) as con:
-            rows = con.execute("SELECT record FROM tasks WHERE status IN ('sent','preview','daily_share') ORDER BY updated_at DESC LIMIT 40").fetchall()
-        out: list[str] = []
-        for (raw,) in rows:
-            method = ((json.loads(raw).get("plan") or {}).get("face_cover") or {}).get("method")
-            if method and method != "none":
-                out.append(method)
-            if len(out) >= limit:
-                break
-        return out
-
     def recent_candids(self, limit: int = 4) -> list[str]:
         """最近几张分享照用过的抓拍方式（从新到旧），给取景分析器轮换用。"""
         with closing(sqlite3.connect(self.db)) as con:

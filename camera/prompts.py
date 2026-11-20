@@ -72,9 +72,9 @@ snapshot.share_options 列出今天到此刻为止、以及往前几天里，同
 assist 和 share 的 shot.method 固定为 helper；拍照的人本人（包括手、袖子等身体局部）不入镜。share.caption 是这张照片的来历，供之后回复时照着说：用 Mittes 的第一人称写一两句，交代谁、什么时候、在做什么时、怎么拍的（如“刚好店长在吧台，就请店长帮我拍了一张”“这是今天美术课 Niya 帮我拍的，那会儿正在画陶罐”“同学课间拍的，我都没注意”），说法随情境变化，不要每次都用“偷拍”“被拍”。shoot 时 share 各项为空字符串。
 share.candid 选择拍法：requested 她请对方帮忙拍，知道在拍，可以看镜头、自然地摆一下，但不是证件照；asked 知道对方在拍，但照常做着手上的事、随口回应；unaware 她没察觉，正专心做当下的事，视线不看镜头，侧脸或四分之三侧脸；noticed 刚发现被拍，抬眼看向镜头，带着愣住、不好意思或想抗议的反应，可以伸手挡向镜头，但手不遮自己的脸；mid_action 动作进行到一半被拍下，如被叫住时回过头、正在整理头发、接过东西、赶路；through 隔着前景物品拍，镜头前有虚化的杯子、书包带、窗框、门缝、桌角等物品（不是拍摄者的身体）。recent_candids 是最近几张别人帮拍的照片用过的拍法，从新到旧；先按情境挑自然可行的，最近 3 张里用过两次的这次不用（assist 在 requested 与 asked 之间轮换）。
 assist 和 share 的取景：镜头是身边的人举着手机的位置，与人物拉开一点距离，人物约占画面三分之一到一半，环境交代她当时在做什么；主体不必放正中，画面可以略微倾斜。不做以脸为重心的居中半身肖像，不比 V。表情服从拍法：requested 是放松、带一点笑意或害羞的自然神态；asked 是放松、随意；unaware 是专注、放空或进食中；noticed 是惊讶、害羞或抗议；mid_action 是动作中的自然神态。
-现拍（shoot）且有 Mittes 入镜时，用 face_cover 选择遮住上半张脸的方式：crop 画框上沿裁在鼻子与上唇之间（对镜自拍也用这种裁法）；object 用当下手边确实有的杯子、书、手账、菜单、玩偶等挡住；out_of_frame 头部不入画，只拍身体局部、穿搭、手或脚。不用手机挡脸。shown 只用于 face_request=true 的 assist、share，或 Sweyn 明确要看脸时的 shoot；无人物时选 none。detail 写清具体怎么遮、遮到哪里，shown 时写脸部朝向与可见程度。
+现拍（shoot）且有 Mittes 入镜时，用 face_cover 选择遮住上半张脸的方式：crop 画框上沿裁在鼻子与上唇之间（对镜自拍也用这种裁法）；out_of_frame 头部不入画，只拍身体局部、穿搭、手或脚。不用手机或手边物品挡脸。shown 只用于 face_request=true 的 assist、share，或 Sweyn 明确要看脸时的 shoot；无人物时选 none。detail 写清具体怎么遮、遮到哪里，shown 时写脸部朝向与可见程度。
 不拍后脑勺或背影作为主要画面，不用手捂脸，不靠转开脸来避开镜头。
-recent_face_covers 是最近几张人物照用过的方式，从新到旧。先按当前动作、场景和用户关注点挑自然可行的方式；用户原话明确指定了遮脸方式时直接照用，不受轮换限制；否则最近 4 张里已用过两次的方式这次不用，手边有合适物品时优先考虑 object。不为换花样做出不合当下情境的动作，不为遮挡临时增加帽子等不符合当前事实的道具。
+遮法按取景决定：嘴、下巴、表情或上半身要入镜时（自拍、看看你、表情、美照等）选 crop；重点是穿搭局部、手、脚或身体局部时（看鞋、看袖口、看睡衣下摆等）选 out_of_frame。用户原话明确指定了裁切或头不入画时直接照用；原话要用东西挡脸时改用 crop。不为遮挡临时增加帽子等不符合当前事实的道具。
 用户明确要看游戏或屏幕截图、无法亲手拍到的画面，设为不可拍，不擅自换成其他画面；无法确定指代时要求澄清。
 返回共同字段：feasible(boolean), target_kind(self/object/environment/other_person/unclear),
 absent_helper(string，只在 helper_absent 时填被点名的人，其余为空字符串), face_request(boolean，对方是否明确要求看她的脸)。rejection_code(可拍时为空字符串；否则 other_person_privacy/self_privacy/no_photo/helper_absent/face_limit/unreasonable_request/unsupported_content/not_visible/unclear_request), reason(string)。
@@ -86,7 +86,7 @@ contains_mittes(boolean), include_outfit(boolean), identity_reference(none/body)
 mode(shoot/assist/share/reuse)。reuse(object)：photo_id（不是 reuse 时为空字符串）。share(object)：source(拍照的人), candid(requested/asked/unaware/noticed/mid_action/through), day, slot, taken_at, caption（shoot 时全部为空字符串；assist 时 day、slot、taken_at 为空字符串）。
 shot(object)：method(front_selfie 前置自拍 / mirror_selfie 对镜自拍 / self_view 本人视角拍自己身上或手里 / timer 手机放着定时拍 / handheld 手持拍物品或环境 / helper 身边的人帮忙拍，只用于 assist 和 share), phone(手机在哪、朝哪、谁拿着), height(镜头相对身体或地面的高度), angle(平视/俯拍/仰拍及大致角度), distance(镜头到主体的距离)。
 frame(object)：top(画面上沿落在哪), bottom(下沿落在哪), sides(主体在左右的位置与留白), focus(画面重心与主体占画面的大致比例)。各项直接写位置，不重复“上沿”“下沿”等字样。
-face_cover(object)：method(crop/object/out_of_frame/shown/none), detail(string)。
+face_cover(object)：method(crop/out_of_frame/shown/none), detail(string)。
 pose(string)：人物的姿势与动作，无人物时为空字符串。
 visible(array of string)：画面里实际可见的主要内容，每项一个短语。
 background(object)：content(背景里有什么、在哪一侧), people(背景人物的处理：写“无”，或写明远处虚化、剪影等简化方式)。
