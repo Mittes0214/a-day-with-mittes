@@ -259,7 +259,7 @@ class PhotoService:
         return await asyncio.to_thread(self.store.create, {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v16",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v17",
             "images": [], "references": [],
             "previous_photo": None,
             "requester": requester, "requester_name": requester_name, "requester_persona": requester_persona,
@@ -391,13 +391,13 @@ class PhotoService:
             expression = plan.get("expression")
             if not isinstance(expression, dict) or not isinstance(expression.get("visible"), bool):
                 raise ValueError("拍摄方案缺少有效的表情可见性判断")
-            for field in ("intent", "mouth", "basis"):
+            for field in ("look", "basis"):
                 if not isinstance(expression.get(field), str):
                     raise ValueError(f"表情方案缺少有效的 {field}")
             if expression["visible"]:
-                if not plan["contains_mittes"] or not all(expression[field].strip() for field in ("intent", "mouth", "basis")):
-                    raise ValueError("可见表情需要人物入镜及完整的表情表现和依据")
-            elif any(expression[field].strip() for field in ("intent", "mouth", "basis")):
+                if not plan["contains_mittes"] or not all(expression[field].strip() for field in ("look", "basis")):
+                    raise ValueError("可见表情需要人物入镜及完整的神情和依据")
+            elif any(expression[field].strip() for field in ("look", "basis")):
                 raise ValueError("嘴部不入镜时不能安排表情")
             images = await asyncio.to_thread(self._references, record, plan)
             check_references = list(images)
@@ -449,11 +449,10 @@ class PhotoService:
         share = record.get("share")
         style = (PERSON_STYLE_SHARE if share else PERSON_STYLE) if record["plan"]["contains_mittes"] else SCENE_STYLE
         scene = shot_text(record["plan"])
-        # Archived plans may predate expression design. Preserve their framing;
-        # only an explicitly visible expression adds a current mouth description.
+        # 只有可见的神情才写进本次拍摄：一句话的神情和由来，不写嘴部动作，嘴型交给生图模型。
         expression = record["plan"].get("expression")
         if expression and expression["visible"]:
-            scene += "\n拍摄时的可见表情：" + expression["mouth"].strip()
+            scene += "\n此刻的神情：" + expression["look"].strip()
         if share:
             head = SHARE_STYLE.format(source=share["source"])
         else:
