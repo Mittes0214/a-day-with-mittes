@@ -251,7 +251,7 @@ class DailyShareService:
         snapshot = self.snapshot_at(moment)
         instruction = (f"每日分享：Mittes 要把今天的这一刻发到 QQ 空间，像小红书的生活笔记配图。"
                        f"想分享的画面：{pick['subject'].strip()}。拍摄时刻就是快照的 captured_at。"
-                       "这是公开发布的配图，不露脸：face_request=false，她自己拍并遮脸。")
+                       "画面是她本人时，和别人想看她本人一样，适合露脸就露脸。")
         camera_record = await self.camera.submit(
             instruction, f"daily-share:{record['day']}:{record['attempt']}", "", snapshot,
             daily_share={"day": record["day"], "attempt": record["attempt"]})

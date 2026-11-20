@@ -1216,15 +1216,3 @@ def test_face_shown_selfie_must_actually_show_the_face(setup):
             await service.process(record)
         assert client.image_calls == 0
     asyncio.run(run())
-
-
-def test_daily_share_photo_never_shows_the_face(setup):
-    async def run():
-        service, _, client, _ = setup
-        client.plan_overrides = _shown_selfie()
-        record = await service.submit("每日分享：拍一张", "daily-face", "", {**SNAPSHOT, "helpers": [], "share_options": []},
-                                      daily_share={"day": "2026-11-05", "attempt": 1})
-        with pytest.raises(ValueError, match="每日分享配图公开发布，不露脸"):
-            await service.process(record)
-        assert client.image_calls == 0
-    asyncio.run(run())

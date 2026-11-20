@@ -118,8 +118,6 @@ def apply_share(record: dict[str, Any], plan: dict[str, Any]) -> None:
     requester = record["requester_persona"]
     if not isinstance(plan.get("face_request"), bool):
         raise ValueError("拍摄方案缺少露脸要求标记")
-    if plan["face_request"] and record.get("daily_share"):
-        raise ValueError("每日分享配图公开发布，不露脸")
     if not plan["face_request"] and (plan["mode"] != "shoot" or plan["face_cover"]["method"] == "shown"):
         raise ValueError("这张没定为露脸，不能露脸或由别人帮拍")
     if plan["mode"] == "shoot":
