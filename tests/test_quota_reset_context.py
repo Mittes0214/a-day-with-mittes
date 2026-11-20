@@ -33,6 +33,6 @@ def test_photo_reset_context(result):
         assert args.args[1] == [{"type": "text", "data": args.kwargs["visible_text"]}]
         assert "/pik reset" in args.kwargs["visible_text"]
         assert "拍照次数重置了~" in args.kwargs["visible_text"]
-        assert "用户、聊天和露脸照" in args.kwargs["visible_text"]
+        assert "用户和聊天额度" in args.kwargs["visible_text"]
         assert "replyable" not in args.kwargs
     asyncio.run(run())

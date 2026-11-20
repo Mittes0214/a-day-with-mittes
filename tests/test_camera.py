@@ -656,25 +656,6 @@ def test_tool_repeated_declined_request_returns_guidance_not_pending_photo(setup
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("feasible", [False, True])
-def test_self_privacy_decline_uses_shared_reason_without_generation(setup, feasible):
-    async def run():
-        service, ctx, client, _ = setup
-        client.plan_overrides = {"feasible": feasible, "target_kind": "self", "rejection_code": "self_privacy"}
-        record = await service.submit("看看你的完整正脸和眼睛", "face", "private", SNAPSHOT)
-        await service.process(record)
-        assert record["status"] == "declined"
-        assert record["decline"]["reason_code"] == "self_privacy"
-        assert "高中生" in record["decline"]["reason"]
-        assert "眼睛等上半张脸或完整正脸" in record["decline"]["reason"]
-        assert client.image_calls == 0 and record["references"] == []
-        ctx.send.image.assert_not_awaited()
-        feedback = ctx.maisaka.proactive.trigger.await_args.kwargs
-        assert feedback["metadata"]["reason_code"] == "self_privacy"
-        assert "高中生" in feedback["intent"] and "不要重试" in feedback["intent"]
-    asyncio.run(run())
-
-
 @pytest.mark.parametrize("code", ["unsupported_content", "not_visible", "unclear_request"])
 def test_other_unshootable_requests_return_explicit_decline(setup, code):
     async def run():
@@ -1049,7 +1030,7 @@ def test_face_photo_requires_explicit_request(setup, mode, extra):
         client.plan_overrides = _share_plan(mode, face_request=False, **extra)
         snapshot = {**SNAPSHOT, "captured_at": "2026-11-05T23:30:00+09:00", "slot": "18:00-19:00", "helpers": ["Sweyn"], "share_options": [SHARE_OPTION]}
         record = await service.submit("来张自拍", "no-face-request-" + mode, "private", snapshot, preview=True)
-        with pytest.raises(ValueError, match="没有明确要求看脸"):
+        with pytest.raises(ValueError, match="没定为露脸"):
             await service.process(record)
         assert client.image_calls == 0
     asyncio.run(run())
@@ -1089,21 +1070,17 @@ def _shown_selfie():
     return plan
 
 
-@pytest.mark.parametrize("user, ok", [("923856490", True), ("guest", False)])
-def test_only_sweyn_gets_face_shown_selfie(setup, user, ok):
+@pytest.mark.parametrize("user, persona", [("923856490", "Sweyn"), ("guest", "")])
+def test_anyone_can_get_a_face_shown_selfie(setup, user, persona):
     async def run():
         service, ctx, client, _ = setup
         ctx.message.get_by_id.return_value["message_info"]["user_info"]["user_id"] = user
         client.plan_overrides = _shown_selfie()
         record = await service.submit("想看看你", "shown-" + user, "private", {**SNAPSHOT, "helpers": [], "share_options": []})
-        assert record["requester_persona"] == ("Sweyn" if ok else "")
-        if ok:
-            await service.process(record)
-            assert client.last_prompt.startswith(module.STYLE_FACE_SHOWN.split("\n")[0])
-            assert "这张是发给店长 Sweyn 的照片，脸部可以完整入镜" in client.last_prompt
-        else:
-            with pytest.raises(ValueError, match="只有发给 Sweyn"):
-                await service.process(record)
+        assert record["requester_persona"] == persona
+        await service.process(record)
+        assert client.last_prompt.startswith(module.STYLE_FACE_SHOWN.split("\n")[0])
+        assert "这张是露脸的自拍，脸部可以完整入镜" in client.last_prompt
     asyncio.run(run())
 
 
@@ -1116,17 +1093,6 @@ def test_requester_cannot_be_the_photographer(setup):
         with pytest.raises(ValueError, match="提问的人自己"):
             await service.process(record)
         assert client.image_calls == 0
-    asyncio.run(run())
-
-
-def test_sweyn_never_gets_self_privacy(setup):
-    async def run():
-        service, ctx, client, _ = setup
-        ctx.message.get_by_id.return_value["message_info"]["user_info"]["user_id"] = "923856490"
-        client.plan_overrides = {"feasible": False, "target_kind": "self", "rejection_code": "self_privacy", "reason": "隐私"}
-        record = await service.submit("想看脸", "sweyn-privacy", "private", SNAPSHOT)
-        with pytest.raises(ValueError, match="对 Sweyn 不使用 self_privacy"):
-            await service.process(record)
     asyncio.run(run())
 
 
@@ -1152,24 +1118,6 @@ def test_share_picks_an_earlier_day_when_today_has_none(setup):
         record = await service.submit("你在店里的照片", "share-yesterday", "private", snapshot, preview=True)
         await service.process(record)
         assert record["snapshot"]["captured_at"] == "2026-11-04T18:10:00+09:00" and record["snapshot"]["story"] == "昨天的晚班"
-    asyncio.run(run())
-
-
-def test_face_photo_daily_limit_per_requester(setup):
-    async def run():
-        service, _, client, _ = setup
-        snapshot = {**SNAPSHOT, "slot": "18:00-19:00", "helpers": ["Niya"], "share_options": []}
-        client.checks = [{"passed": True, "issues": [], "repairable": False, "description": "Niya 帮拍"}] * 2
-        for index in range(3):
-            client.plan_overrides = _share_plan("assist", source="Niya", candid="requested", day="", slot="", taken_at="")
-            record = await service.submit("想看看你", f"face-{index}", "private", snapshot)
-            if index < 2:
-                await service.process(record)
-                assert record["status"] == "sent"
-            else:
-                with pytest.raises(ValueError, match="露脸照已到上限"):
-                    await service.process(record)
-                assert client.planning_inputs["face_photos_left"] == 0
     asyncio.run(run())
 
 
@@ -1229,25 +1177,6 @@ def test_photo_origin_names_who_took_it():
     assert module.photo_origin({}) == "是 Mittes 刚用手机拍的"
 
 
-def test_face_photo_limit_also_counts_per_chat(setup):
-    async def run():
-        service, ctx, client, _ = setup
-        snapshot = {**SNAPSHOT, "slot": "18:00-19:00", "helpers": ["Niya"], "share_options": []}
-        client.checks = [{"passed": True, "issues": [], "repairable": False, "description": "Niya 帮拍"}] * 2
-        for index, user in enumerate(["a", "b", "c"]):
-            ctx.message.get_by_id.return_value["message_info"]["user_info"]["user_id"] = user
-            client.plan_overrides = _share_plan("assist", source="Niya", candid="requested", day="", slot="", taken_at="")
-            record = await service.submit("想看看你", f"chat-face-{index}", "private", snapshot)
-            if index < 2:
-                await service.process(record)
-                assert record["status"] == "sent"
-            else:
-                with pytest.raises(ValueError, match="露脸照已到上限"):
-                    await service.process(record)
-                assert client.planning_inputs["face_photos_left"] == 0
-    asyncio.run(run())
-
-
 def test_named_helper_absent_is_declined_with_their_name(setup):
     async def run():
         service, ctx, client, _ = setup
@@ -1271,6 +1200,31 @@ def test_object_face_cover_is_no_longer_allowed(setup):
                                  "face_cover": {"method": "object", "detail": "用调色盘挡住眉眼"}}
         record = await service.submit("来张自拍", "object-cover", "private", dict(SNAPSHOT), preview=True)
         with pytest.raises(ValueError, match="遮脸方式无效"):
+            await service.process(record)
+        assert client.image_calls == 0
+    asyncio.run(run())
+
+
+def test_face_shown_selfie_must_actually_show_the_face(setup):
+    async def run():
+        service, _, client, _ = setup
+        plan = _shown_selfie()
+        plan["face_cover"] = {"method": "crop", "detail": "裁到鼻子以下"}
+        client.plan_overrides = plan
+        record = await service.submit("来张美照", "face-but-crop", "private", {**SNAPSHOT, "helpers": [], "share_options": []})
+        with pytest.raises(ValueError, match="必须选 shown"):
+            await service.process(record)
+        assert client.image_calls == 0
+    asyncio.run(run())
+
+
+def test_daily_share_photo_never_shows_the_face(setup):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = _shown_selfie()
+        record = await service.submit("每日分享：拍一张", "daily-face", "", {**SNAPSHOT, "helpers": [], "share_options": []},
+                                      daily_share={"day": "2026-11-05", "attempt": 1})
+        with pytest.raises(ValueError, match="每日分享配图公开发布，不露脸"):
             await service.process(record)
         assert client.image_calls == 0
     asyncio.run(run())

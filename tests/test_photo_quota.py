@@ -178,7 +178,6 @@ def test_reset_survives_restart_and_stale_task_save(store):
     store.initialize()
     fresh = store.create(request(10))
     assert fresh["quota"]["used"] == 1
-    assert store.face_photos_today(fresh) == 0
     old[0]["status"] = "failed"
     store.save(old[0])
     assert store.get(old[0]["id"])["quota"]["reset"] is True

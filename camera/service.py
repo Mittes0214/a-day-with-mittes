@@ -18,7 +18,7 @@ from .client import CPAClient, GenerationRejected, GenerationUnknown, read_provi
 from .prompt_context import CANDIDS, FACE_COVERS, SHOT_METHODS, reference_roles_text, shot_text, snapshot_text
 from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, PERSON_STYLE, PERSON_STYLE_SHARE, SAFE_REWRITE, SCENE_STYLE, SHARE_STYLE, STYLE, STYLE_FACE_SHOWN
 from .reference_images import build_references
-from .store import FACE_DAILY_LIMIT, CameraStore, timestamp
+from .store import CameraStore, timestamp
 from .trace import CameraTraceClient
 
 
@@ -118,13 +118,15 @@ def apply_share(record: dict[str, Any], plan: dict[str, Any]) -> None:
     requester = record["requester_persona"]
     if not isinstance(plan.get("face_request"), bool):
         raise ValueError("拍摄方案缺少露脸要求标记")
+    if plan["face_request"] and record.get("daily_share"):
+        raise ValueError("每日分享配图公开发布，不露脸")
     if not plan["face_request"] and (plan["mode"] != "shoot" or plan["face_cover"]["method"] == "shown"):
-        raise ValueError("对方没有明确要求看脸，不能露脸")
+        raise ValueError("这张没定为露脸，不能露脸或由别人帮拍")
     if plan["mode"] == "shoot":
         if method == "helper":
             raise ValueError("现拍照片不能由别人拍")
-        if plan["face_cover"]["method"] == "shown" and requester != "Sweyn":
-            raise ValueError("现拍照片只有发给 Sweyn 时才能露脸")
+        if plan["face_request"] and plan["face_cover"]["method"] != "shown":
+            raise ValueError("定为露脸的自拍必须选 shown")
         return
     if method != "helper":
         raise ValueError("别人帮拍的照片拍法必须是 helper")
@@ -328,7 +330,6 @@ class PhotoService:
             plan, usage = await client.json(settings["director_model"], DIRECTOR, {
                 "instruction": record["instruction"], "source_text": record["source_text"],
                 "context": record["context"], "snapshot": record["snapshot"], "requester": record["requester_persona"],
-                "face_photos_left": await asyncio.to_thread(self._face_photos_left, record),
                 "earlier_photos": record["earlier_photos"],
                 "previous_photo": record.get("previous_photo"),
                 "recent_candids": await asyncio.to_thread(self.store.recent_candids),
@@ -339,11 +340,6 @@ class PhotoService:
                 raise ValueError("取景分析未返回有效的可拍判断与拍摄对象类型")
             if plan["target_kind"] == "other_person" or plan.get("rejection_code") == "other_person_privacy":
                 await self._decline(record, "other_person_privacy")
-                return
-            if plan.get("rejection_code") == "self_privacy":
-                if record["requester_persona"] == "Sweyn":
-                    raise ValueError("对 Sweyn 不使用 self_privacy")
-                await self._decline(record, "self_privacy")
                 return
             if plan["target_kind"] == "unclear":
                 await self._decline(record, "unclear_request")
@@ -381,8 +377,6 @@ class PhotoService:
             if plan["contains_mittes"] == (plan["face_cover"]["method"] == "none"):
                 raise ValueError("遮脸方式与人物入镜标记不一致")
             apply_share(record, plan)
-            if record.get("share") and await asyncio.to_thread(self._face_photos_left, record) == 0:
-                raise ValueError("今天给这位提问人的露脸照已到上限")
             if not plan["contains_mittes"] and plan["identity_reference"] != "none":
                 raise ValueError("无人物拍摄方案不能使用人物外貌参考")
             if not isinstance(plan.get("use_previous_photo"), bool):
@@ -557,12 +551,6 @@ class PhotoService:
             await self.event(record, "preview", "本地接口实测完成，未发送到聊天")
         else:
             await self._deliver(record, raw)
-
-    def _face_photos_left(self, record: dict[str, Any]) -> int | None:
-        """今天还能给这位提问人几张别人帮拍的露脸照；None 表示不限。"""
-        if quiet(record) or record["requester_persona"] == "Sweyn":
-            return None
-        return max(0, FACE_DAILY_LIMIT - self.store.face_photos_today(record))
 
     def _references(self, record: dict[str, Any], plan: dict[str, Any]) -> list[bytes]:
         return build_references(self.plugin_dir, self.store.root, record, plan)

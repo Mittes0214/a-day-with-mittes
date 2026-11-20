@@ -13,7 +13,6 @@ import uuid
 
 DAILY_LIMIT = 3
 CHAT_DAILY_LIMIT = 5  # 每个聊天（群）每天最多几张，Sweyn 的请求不计
-FACE_DAILY_LIMIT = 2  # 别人帮拍的露脸照，每个提问人、每个聊天每天各最多几张（Sweyn 和本地预览不限）
 QUOTA_TIMEZONE = ZoneInfo("Asia/Tokyo")
 # 入队时暂占名额以限制并发；只有确认发送成功后才永久计入额度。
 RESERVED_STATUSES = frozenset({
@@ -74,7 +73,7 @@ class CameraStore:
                             ((platform, user_id, day, used) for (platform, user_id, day), used in counts.items()))
 
     def reset_quota(self) -> None:
-        """释放今天所有用户、聊天和露脸照额度，保留任务与照片归档。"""
+        """释放今天所有用户和聊天额度，保留任务与照片归档。"""
         day = datetime.now(QUOTA_TIMEZONE).date().isoformat()
         with closing(sqlite3.connect(self.db)) as con, con:
             con.execute("BEGIN IMMEDIATE")
@@ -178,26 +177,6 @@ class CameraStore:
                            (stream_id, *sorted(RESERVED_STATUSES))).fetchall()
         records = [json.loads(raw) for (raw,) in rows]
         return [r for r in records if (r.get("quota") or {}).get("day") == day]
-
-    def face_photos_today(self, record: dict[str, Any]) -> int:
-        """今天（东京时间）已占用的别人帮拍露脸照张数，进行中的也算：同一提问人与同一聊天两者取多。"""
-        requester = record["requester"] or {}
-        day = datetime.now(QUOTA_TIMEZONE).date().isoformat()
-        since = (datetime.now(QUOTA_TIMEZONE) - timedelta(days=2)).astimezone(timezone.utc).isoformat()
-        with closing(sqlite3.connect(self.db)) as con:
-            rows = con.execute("SELECT id, status, record FROM tasks WHERE created_at >= ?", (since,)).fetchall()
-        by_person = by_chat = 0
-        for task_id, status, raw in rows:
-            other = json.loads(raw)
-            if (other.get("quota") or {}).get("reset"):
-                continue
-            if task_id == record["id"] or status not in RESERVED_STATUSES or not other.get("share"):
-                continue
-            if datetime.fromisoformat(other["created_at"]).astimezone(QUOTA_TIMEZONE).date().isoformat() != day:
-                continue
-            by_person += (other.get("requester") or {}) == requester
-            by_chat += other["stream_id"] == record["stream_id"]
-        return max(by_person, by_chat)
 
     def earlier_photos(self, record: dict[str, Any], days: int = 7) -> list[dict[str, Any]]:
         """最近几天已发出、没露脸的照片（别人帮拍的和露脸自拍不算），给「之前那张」类请求挑选。
