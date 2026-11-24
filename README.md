@@ -369,6 +369,27 @@ users = ["qq:923856490"]
 不随主体或参考图改变。接口参数与取景提示统一指定该规格，成品尺寸不符则不发送，不自动裁切或拉伸。模型和供应商需实际支持。
 组件开关 `enable_take_mittes_photo` 控制工具注册，`photo.enabled` 控制调用。
 
+## 认图：「这是你吗」与 QQ 头像
+
+`identify_self_image(msg_id, image_index)` 在别人针对一张图问「这是你吗」「像不像你」时调用，按顺序判断（`camera/identity.py`）：
+
+1. **她公开过的相机照片**：发到聊天里的成品（`sent`，重发副本以原件为准），加上已发到 QQ 空间的每日分享配图。
+   用 256 位差值哈希比，距离 ≤ 16 算同一张——QQ 转发会重新压缩缩放，字节摘要对不上；
+   实测压缩到 40% 后距离 ≤ 8，不同照片最近 25。命中后告诉 planner 东京时间几点、在哪、谁拍的、发在哪里。
+   哈希按成品 sha256 缓存在数据目录 `camera/photo_hashes.db`。
+2. **11 月以前的 5 张旧自拍**（原 02 插件 `send_self_image` 发过的形象照）：只存哈希与标题（`camera/legacy_selfies.json`），
+   没有拍摄时间地点记录，告诉 planner 不要编。
+3. **她现在的 QQ 头像**：每 10 分钟重新取一次 qlogo 头像比哈希。
+4. 都对不上，才用 `photo.check_model` 拿外貌参考（07 发色与身形、人物画风主基准）做视觉比对。
+   判据只有头发（银白渐浅樱粉、呆毛）、红瞳、脸三条；猫耳、猫尾、铃铛、丝带、发型、服装和画风都不算差异。
+   结论分 match / similar / not_match / uncertain，每档附一句说话要求，避免认了又改口或含糊认领。
+
+裁切过的图哈希会失效，交给第 4 步。同一张图的结论在内存里缓存 30 分钟。
+
+`view_qq_avatar(msg_id, qq_account)` 取 Mittes 自己（两项都留空）或会话里某人的 QQ 头像，只交给模型看，不发到聊天。
+
+两个工具于 3.19.0 从 02 插件移入；开关为 `[components]` 的 `enable_identify_self_image`、`enable_view_qq_avatar`（缺省开启）。
+
 ## 更多
 
 [DESIGN.md](DESIGN.md)：为什么这样设计、写生成类 prompt 的两条原则、常见问题。

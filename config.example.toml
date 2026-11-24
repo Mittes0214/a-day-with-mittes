@@ -13,6 +13,8 @@ enable_get_mittes_schedule = true
 enable_get_mittes_outfit = true
 enable_get_weather = true
 enable_take_mittes_photo = false
+enable_identify_self_image = true
+enable_view_qq_avatar = true
 
 [generation]
 # 每天几点跑批次（JST）。生成的是**次日**全天——12:00 才生成当天的话，

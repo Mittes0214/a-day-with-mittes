@@ -39,7 +39,9 @@ import uuid
 
 from maibot_sdk import API, Command, HookHandler, MaiBotPlugin, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
+import httpx
 
+from .camera.identity import IdentityService
 from .camera.prompt_context import helpers_of
 from .camera.prompts import PENDING_GUIDANCE
 from .camera.service import PhotoService, pending_line, photo_origin
@@ -111,6 +113,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         self._private_topic_waker: PrivateTopicWaker | None = None
         self._camera: PhotoService | None = None
         self._daily_share: DailyShareService | None = None
+        self._identity: IdentityService | None = None
         self._batch_lock = asyncio.Lock()
         # 后台任务的强引用；不持有的话事件循环可能把它当垃圾回收掉
         self._background: set[asyncio.Task[None]] = set()
@@ -186,6 +189,8 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             self._camera, data_dir, self._get_config, self._daily_material, self._photo_snapshot_at,
         )
         await self._daily_share.start()
+        self._identity = IdentityService(self.ctx, self._plugin_dir, data_dir, self._get_config)
+        await self._identity.start()
         _logger.info(
             "[私聊主动] enabled=%s users=%s；从下一个时段开始检查",
             await self._get_config("proactive_private.enabled", False),
@@ -811,6 +816,61 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             _logger.exception("[相机] 无法提交拍照请求")
             return {"success": False, "name": "take_mittes_photo",
                     "content": "这次没能拍成，没有具体原因可说，照片没拍也没发；不要替她编理由。选择 reply 回应对方，不要自动重试。"}
+
+    @Tool(
+        "identify_self_image",
+        brief_description=(
+            "判断用户所指图片里是不是 Mittes：先认是不是她发过的照片（能说出拍摄时间地点）或当前 QQ 头像，"
+            "认不出再按外貌比对；仅在用户针对一张图片问“这是你吗”“像不像你”“是不是本人”时调用。"
+        ),
+        parameters=[
+            ToolParameterInfo(name="msg_id", param_type=ToolParamType.STRING, required=True,
+                              description="当前会话中包含待判断图片的消息编号。"),
+            ToolParameterInfo(name="image_index", param_type=ToolParamType.INTEGER, required=False, default=0,
+                              description="目标消息中的图片序号，从 0 开始。"),
+        ],
+    )
+    async def tool_identify_self_image(self, msg_id: str = "", image_index: int = 0, stream_id: str = "",
+                                       **kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        try:
+            if self._identity is None:
+                raise RuntimeError("认图服务尚未就绪")
+            if not msg_id.strip():
+                raise ValueError("缺少包含待判断图片的消息编号")
+            return await self._identity.identify(stream_id, msg_id.strip(), int(image_index))
+        except (ValueError, OSError) as exc:
+            return {"success": False, "name": "identify_self_image", "content": f"没能判断这张图：{exc}"}
+        except Exception as exc:
+            _logger.exception("[认图] 判断失败")
+            return {"success": False, "name": "identify_self_image", "content": f"没能判断这张图：{type(exc).__name__}: {exc}"}
+
+    @Tool(
+        "view_qq_avatar",
+        brief_description=(
+            "查看 Mittes 自己或当前会话中某位用户的 QQ 头像，图片只返回给模型观察，"
+            "不会发送到聊天。查看别人时传入该用户一条消息的 msg_id；已知 QQ 号时也可直接传入 qq_account；"
+            "两者都留空则查看 Mittes 自己的头像。"
+        ),
+        parameters=[
+            ToolParameterInfo(name="msg_id", param_type=ToolParamType.STRING, required=False, default="",
+                              description="目标用户在当前会话中一条消息的编号；查看 Mittes 自己时留空。"),
+            ToolParameterInfo(name="qq_account", param_type=ToolParamType.STRING, required=False, default="",
+                              description="已知的目标 QQ 号；与 msg_id 二选一。"),
+        ],
+    )
+    async def tool_view_qq_avatar(self, msg_id: str = "", qq_account: str = "", stream_id: str = "",
+                                  **kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        try:
+            if self._identity is None:
+                raise RuntimeError("认图服务尚未就绪")
+            return await self._identity.view_avatar(stream_id, msg_id.strip(), qq_account.strip())
+        except (ValueError, OSError, httpx.HTTPError) as exc:
+            return {"success": False, "name": "view_qq_avatar", "content": f"QQ 头像查看失败：{exc}"}
+        except Exception as exc:
+            _logger.exception("[认图] 查看 QQ 头像失败")
+            return {"success": False, "name": "view_qq_avatar", "content": f"QQ 头像查看失败：{type(exc).__name__}: {exc}"}
 
     def _day_weather(self, day: date) -> str:
         return self._require_store().db.day_weather(day)

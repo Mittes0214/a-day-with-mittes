@@ -1,0 +1,35 @@
+{
+  "note": "11-07 前旧自拍功能（02 插件 send_self_image）发过的 5 张本人形象照，原图在 NAS photowall/自拍/ 与 doc/Mittes人设图/；只存哈希用于认图，没有拍摄时间地点记录。",
+  "photos": [
+    {
+      "title": "圆框眼镜·居家",
+      "file": "0631-20260707-102522_自拍_0.jpg",
+      "sha256": "be3ac1715322e3b56af404cf9fc79e4e1024878a33c47dd716a6f1afdbb5fb62",
+      "dhash": "1ce5bc61c8e54b52c952edc15864d8f4b9623ce3e690431a24f821b9a1faa776"
+    },
+    {
+      "title": "电车通学·校服",
+      "file": "0632-20260707-102522_自拍_0.jpg",
+      "sha256": "8f612df181825789f1314ca3cddabd7089dfe54afa36141921ce472712b759fd",
+      "dhash": "69fa8b9a6d1204c226fa276363b3fcf6edd8eb78b2f88b4cdb0639a471bdc1a7"
+    },
+    {
+      "title": "女仆装·户外",
+      "file": "0633-20260707-102522_自拍_0.png",
+      "sha256": "0b308ce30af8ae683aaeff9056aeccb16d3a93bbdac3b3fdcc7c637e54be4787",
+      "dhash": "61319f06ccce34c909469f06370c370c3f094f8872047064f15bf39bbaa92c30"
+    },
+    {
+      "title": "天台·水手服比耶",
+      "file": "0629-20260707-102522_自拍_0.jpg",
+      "sha256": "cf4b4eca4eb446cdb0a5f0c72421894f46ff7d5e18feb899d53ee1d6dec8aeac",
+      "dhash": "2cb82f322b0e6a66373373337f237e46661b4d390e24184c3835f198d018f01e"
+    },
+    {
+      "title": "居家·眼罩特写",
+      "file": "0630-20260707-102522_自拍_0.jpg",
+      "sha256": "612a9d84e4874abec2bd3419dc20a8e79a2b26f83d4c77a092ac4126d9cac652",
+      "dhash": "67867e066e0462c4cc74ece2e0f0f17cf9f878b1304c36cc4b68273868cd6c4d"
+    }
+  ]
+}

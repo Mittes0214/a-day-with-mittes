@@ -43,6 +43,10 @@ def read_provider(name: str, catalog_path: Path | None = None) -> tuple[str, str
     return base_url, key
 
 
+def _mime(image: bytes) -> str:
+    return "image/jpeg" if image.startswith(b"\xff\xd8\xff") else "image/png"
+
+
 class CPAClient:
     def __init__(self, base_url: str, key: str, timeout: float = 300) -> None:
         self._key = key
@@ -91,7 +95,7 @@ class CPAClient:
         content: Any = json.dumps(data, ensure_ascii=False)
         if images:
             content = [{"type": "text", "text": content}] + [
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(image).decode()}}
+                {"type": "image_url", "image_url": {"url": f"data:{_mime(image)};base64," + base64.b64encode(image).decode()}}
                 for image in images
             ]
         result = await self._post("chat/completions", json={
