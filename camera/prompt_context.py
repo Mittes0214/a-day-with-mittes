@@ -79,6 +79,9 @@ def shot_text(plan: dict[str, Any]) -> str:
         lines.append(f"遮脸：{FACE_COVERS[cover['method']]}——{c(cover['detail'])}。")
     if c(plan.get("pose", "")):
         lines.append(f"姿势与动作：{c(plan['pose'])}。")
+    pose = plan.get("pose_reference")
+    if isinstance(pose, dict) and c(pose.get("imitate", "")):
+        lines.append(f"模仿姿势参考图：{c(pose['imitate'])}。" + (f"按此刻持机与场景调整：{c(pose['adapt'])}。" if c(pose["adapt"]) else ""))
     if plan.get("visible"):
         lines.append("画面可见：" + "；".join(c(item) for item in plan["visible"]) + "。")
     lines.append(f"背景：{c(bg['content'])}。背景人物：{c(bg['people'])}。")

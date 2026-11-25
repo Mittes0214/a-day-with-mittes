@@ -1,11 +1,36 @@
 """按用途挑选和冻结相机参考，不让参考图取景覆盖当次拍摄方案。"""
 
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 import hashlib
 import json
 import tomllib
+
+from PIL import Image, ImageOps
+
+
+POSE_MAX_EDGE = 1536
+POSE_ROLE = ("姿势参考（用户发来的图）：只参考身体姿势、手势、手的位置与朝向、头部倾斜和动作；"
+             "不复制图中人物的长相、发色、发型、兽耳、身体比例（Q 版或大头比例也不沿用）、画风、衣服、配饰、背景、构图或表情")
+
+
+def pose_upload_name(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest() + ".png"
+
+
+def normalize_pose_image(raw: bytes) -> bytes:
+    """用户发来的姿势参考统一成 PNG：动图取第一帧，按 EXIF 转正，透明处铺白，长边不超过 1536。"""
+    with Image.open(BytesIO(raw)) as source:
+        source.seek(0)
+        image = ImageOps.exif_transpose(source).convert("RGBA")
+    image.thumbnail((POSE_MAX_EDGE, POSE_MAX_EDGE), Image.Resampling.LANCZOS)
+    flat = Image.new("RGBA", image.size, "white")
+    flat.alpha_composite(image)
+    output = BytesIO()
+    flat.convert("RGB").save(output, format="PNG")
+    return output.getvalue()
 
 
 def _outfit_image_mapping(character_dir: Path) -> dict[str, str]:
@@ -86,4 +111,19 @@ def build_references(plugin_dir: Path, camera_root: Path, record: dict[str, Any]
         if not target.is_relative_to(camera_root.resolve()):
             raise ValueError("旧照片路径越界")
         add(target.read_bytes(), "同一会话上一张照片：仅保持本次连续拍摄对象一致，不固定新机位", "previous")
+    pose = record.get("pose_reference")
+    if pose:
+        add(pose_image(camera_root, pose), POSE_ROLE, "pose", source=pose["file"], msg_id=pose["msg_id"])
     return images
+
+
+def pose_image(camera_root: Path, pose: dict[str, Any]) -> bytes:
+    """读取提交时保存的姿势参考，并核对摘要。"""
+    uploads = (camera_root / "uploads").resolve()
+    target = (uploads / pose["file"]).resolve()
+    if not target.is_relative_to(uploads):
+        raise ValueError("姿势参考路径越界")
+    raw = target.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != pose["sha256"]:
+        raise ValueError("姿势参考摘要不一致")
+    return raw

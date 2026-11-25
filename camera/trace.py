@@ -19,6 +19,8 @@ class CameraTraceClient:
 
     async def _begin(self, stage: str, model: str, payload: dict[str, Any], images: list[bytes] | None) -> dict[str, Any]:
         candidates = self.record["references"] + self.record["images"]
+        if self.record.get("pose_reference"):
+            candidates = candidates + [{"file": "pose.png", "sha256": self.record["pose_reference"]["sha256"]}]
         if stage == "checking":
             candidates = [self.record["images"][-1], *self.record["references"]]
         attachments = []

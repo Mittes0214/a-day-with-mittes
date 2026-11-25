@@ -43,10 +43,11 @@ class FakeClient:
             self.rewrite_calls += 1
             self.rewrite_inputs = (data, images)
             return dict(self.rewrite_result), {}
-        if images:
+        if system == module.CHECK:
             self.check_inputs = (data, images)
             return self.checks.pop(0), {}
         self.planning_inputs = data
+        self.planning_images = images
         return {"feasible": True, "target_kind": "object", "rejection_code": "", "reason": "", "subject": "杯子", "scene_type": "indoor", "include_outfit": False,
                 "style_category": "portrait", "identity_reference": "none", "contains_mittes": False, "scene_context": "none", "clothing_context": "none",
                 "shot": {"method": "handheld", "phone": "双手持机在桌面上方", "height": "胸口", "angle": "俯拍", "distance": "约四十厘米"},
@@ -1215,4 +1216,113 @@ def test_face_shown_selfie_must_actually_show_the_face(setup):
         with pytest.raises(ValueError, match="必须选 shown"):
             await service.process(record)
         assert client.image_calls == 0
+    asyncio.run(run())
+
+
+def _pose_message(image_bytes):
+    import base64
+    return {"session_id": "private", "platform": "qq", "message_info": {"user_info": {"user_id": "user"}},
+            "account_id": "bot", "processed_plain_text": "照这个姿势来张自拍",
+            "raw_message": [{"type": "text", "data": "照这个姿势来张自拍"},
+                            {"type": "image", "binary_data_base64": base64.b64encode(image_bytes).decode()}]}
+
+
+def _webp(size=(300, 200)):
+    output = BytesIO()
+    Image.new("RGBA", size, (0, 0, 255, 0)).save(output, format="WEBP")
+    return output.getvalue()
+
+
+def _pose_plan(**extra):
+    plan = _shown_selfie()
+    plan["pose"] = "左手伸向镜头持机，右手食指和中指并拢点在下唇边，头微微歪向右侧"
+    plan["pose_reference"] = {"imitate": "一只手两指并拢点在嘴边，头微歪", "adapt": "原图另一只手向下指，自拍时这只手拿手机"}
+    plan.update(extra)
+    return plan
+
+
+def test_pose_reference_is_saved_seen_by_director_and_used_last(setup):
+    async def run():
+        service, ctx, client, _ = setup
+        ctx.message.get_by_id.return_value = _pose_message(_webp())
+        client.plan_overrides = _pose_plan()
+        record = await service.submit("照这张图的姿势自拍", "pose-ok", "private",
+                                      {**SNAPSHOT, "helpers": [], "share_options": []}, pose_msg_id="pose-ok")
+        pose = record["pose_reference"]
+        saved = service.store.root / "uploads" / pose["file"]
+        assert saved.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+        assert Image.open(saved).size == (300, 200)
+        ctx.message.get_by_id.assert_any_await("pose-ok", chat_id="private", include_binary_data=True)
+        await service.process(record)
+        assert client.planning_inputs["pose_reference"] is True
+        assert client.planning_images == [saved.read_bytes()]
+        assert record["references"][-1]["kind"] == "pose" and record["references"][-1]["msg_id"] == "pose-ok"
+        assert client.last_refs[-1] == saved.read_bytes()
+        assert client.check_inputs[1][-1] == saved.read_bytes()
+        assert "模仿姿势参考图：一只手两指并拢点在嘴边，头微歪。按此刻持机与场景调整：原图另一只手向下指" in client.last_prompt
+        assert "只参考身体姿势、手势" in client.last_prompt
+        assert record["status"] == "sent"
+    asyncio.run(run())
+
+
+def test_without_pose_image_director_gets_no_image_and_no_pose_line(setup):
+    async def run():
+        service, _, client, _ = setup
+        record = await service.submit("拍杯子", "no-pose", "private", dict(SNAPSHOT), preview=True)
+        await service.process(record)
+        assert client.planning_inputs["pose_reference"] is False and client.planning_images is None
+        assert "模仿姿势参考图" not in client.last_prompt
+        assert all(ref["kind"] != "pose" for ref in record["references"])
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("extra, message", [
+    ({"pose_reference": {"imitate": "", "adapt": ""}}, "pose_reference.imitate"),
+    ({"mode": "assist"}, "只能是 Mittes 此刻自己拍"),
+])
+def test_pose_plan_must_be_her_own_shot_with_imitation(setup, extra, message):
+    async def run():
+        service, ctx, client, _ = setup
+        ctx.message.get_by_id.return_value = _pose_message(png())
+        plan = _pose_plan(**extra)
+        if extra.get("mode") == "assist":
+            plan["shot"]["method"] = "helper"
+            plan["share"] = {"source": "Niya", "candid": "requested", "day": "", "slot": "", "taken_at": "", "caption": "Niya 帮我拍的"}
+        client.plan_overrides = plan
+        record = await service.submit("照这个姿势拍", "pose-bad", "private",
+                                      {**SNAPSHOT, "helpers": ["Niya"], "share_options": [], "slot": "18:00-19:00"}, pose_msg_id="pose-bad")
+        with pytest.raises(ValueError, match=message):
+            await service.process(record)
+        assert client.image_calls == 0
+    asyncio.run(run())
+
+
+def test_pose_fields_without_pose_image_are_rejected(setup):
+    async def run():
+        service, _, client, _ = setup
+        client.plan_overrides = _pose_plan()
+        record = await service.submit("来张自拍", "pose-missing", "private", {**SNAPSHOT, "helpers": [], "share_options": []}, preview=True)
+        with pytest.raises(ValueError, match="没有姿势参考图"):
+            await service.process(record)
+        assert client.image_calls == 0
+    asyncio.run(run())
+
+
+def test_pose_message_without_image_creates_no_task(setup):
+    async def run():
+        service, _, _, _ = setup
+        with pytest.raises(module.PoseImageError, match="没有图片"):
+            await service.submit("照这个姿势拍", "pose-noimg", "private", dict(SNAPSHOT), pose_msg_id="pose-noimg")
+        assert service.store.next_queued() is None
+    asyncio.run(run())
+
+
+def test_unusable_pose_is_declined_without_generation(setup):
+    async def run():
+        service, ctx, client, _ = setup
+        ctx.message.get_by_id.return_value = _pose_message(png())
+        client.plan_overrides = {"feasible": False, "rejection_code": "pose_unusable"}
+        record = await service.submit("照这个姿势拍", "pose-unusable", "private", dict(SNAPSHOT), pose_msg_id="pose-unusable")
+        await service.process(record)
+        assert record["decline"]["reason_code"] == "pose_unusable" and client.image_calls == 0
     asyncio.run(run())

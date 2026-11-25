@@ -44,7 +44,7 @@ import httpx
 from .camera.identity import IdentityService
 from .camera.prompt_context import helpers_of
 from .camera.prompts import PENDING_GUIDANCE
-from .camera.service import PhotoService, pending_line, photo_origin
+from .camera.service import PhotoService, PoseImageError, pending_line, photo_origin
 from .camera.store import PhotoQuotaExceeded
 from .daily.service import DailyShareService
 from .character.outfit_images import (
@@ -774,7 +774,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     @Tool(
         "take_mittes_photo",
         visibility="visible",
-        brief_description="应用户看图请求，拍一张 Mittes 身边事物、环境或当前穿搭的二次元手机随拍。",
+        brief_description="应用户看图请求，拍一张 Mittes 身边事物、环境或当前穿搭的二次元手机随拍；也可以照用户发来的图摆同样的姿势或手势自拍。",
         description=(
             "根据用户看图请求和聊天上下文，结合 Mittes 当前日程，拍摄并分享身边环境、物件或自身穿搭。"
             "照片另行发送到原会话；不要重复调用查询进度。"
@@ -784,14 +784,20 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                               description="用一两句话说明用户想看什么，把‘看看’的指代展开，保留用户的明确要求；不编写完整生图提示词，不补造日程事实。"),
             ToolParameterInfo(name="source_msg_id", param_type=ToolParamType.STRING, required=True,
                               description="触发本次看图请求的真实用户消息 ID，用于关联原会话与避免重复生成。"),
+            ToolParameterInfo(name="pose_msg_id", param_type=ToolParamType.STRING, required=False, default="",
+                              description="用户要 Mittes 照着某张图的姿势或手势拍时，填那张图所在的消息 ID（可以是请求消息本身，也可以是它引用的消息）；其他情况留空。"),
+            ToolParameterInfo(name="pose_image_index", param_type=ToolParamType.INTEGER, required=False, default=0,
+                              description="pose_msg_id 那条消息里第几张图，从 0 开始。"),
         ],
     )
-    async def tool_take_photo(self, instruction: str = "", source_msg_id: str = "", stream_id: str = "", **kwargs: Any) -> dict[str, Any]:
+    async def tool_take_photo(self, instruction: str = "", source_msg_id: str = "", stream_id: str = "",
+                              pose_msg_id: str = "", pose_image_index: int = 0, **kwargs: Any) -> dict[str, Any]:
         del kwargs
         try:
             if self._camera is None:
                 raise RuntimeError("相机尚未就绪")
-            record = await self._camera.submit(instruction, source_msg_id, stream_id, self._photo_snapshot())
+            record = await self._camera.submit(instruction, source_msg_id, stream_id, self._photo_snapshot(),
+                                               pose_msg_id=pose_msg_id.strip(), pose_image_index=int(pose_image_index))
             if record["status"] == "declined":
                 return {"success": False, "name": "take_mittes_photo", "status": "declined",
                         "content": record["decline"]["reason"] + " " + record["decline"]["planner_guidance"],
@@ -805,6 +811,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
                 "content": PENDING_GUIDANCE,
                 "metadata": {"background_task": True, "background_task_id": record["id"]},
             }
+        except PoseImageError as exc:
+            return {"success": False, "name": "take_mittes_photo", "status": "pose_image_unavailable",
+                    "content": f"没取到要照着摆姿势的那张图（{exc}），这次没有拍。确认 pose_msg_id 是含那张图的消息；找不到就选择 reply 问对方是哪张图。"}
         except PhotoQuotaExceeded as exc:
             return {
                 "success": False, "name": "take_mittes_photo", "status": "quota_exceeded",

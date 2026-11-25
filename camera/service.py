@@ -17,7 +17,8 @@ from PIL import Image
 from .client import CPAClient, GenerationRejected, GenerationUnknown, read_provider
 from .prompt_context import CANDIDS, FACE_COVERS, SHOT_METHODS, reference_roles_text, shot_text, snapshot_text
 from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, PERSON_STYLE, PERSON_STYLE_SHARE, SAFE_REWRITE, SCENE_STYLE, SHARE_STYLE, STYLE, STYLE_FACE_SHOWN
-from .reference_images import build_references
+from .identity import message_image
+from .reference_images import build_references, normalize_pose_image, pose_image, pose_upload_name
 from .store import CameraStore, timestamp
 from .trace import CameraTraceClient
 
@@ -36,6 +37,10 @@ def message_text(message: dict[str, Any]) -> str:
     return str(message.get("processed_plain_text") or "").strip() or " ".join(
         str(part.get("data", "")) for part in message.get("raw_message", []) if part.get("type") == "text"
     )
+
+
+class PoseImageError(ValueError):
+    """用户指的姿势参考图取不到：消息不对、没有图或图打不开。"""
 
 
 def write_image(path: Path, data: bytes) -> dict[str, Any]:
@@ -170,6 +175,20 @@ def apply_share(record: dict[str, Any], plan: dict[str, Any]) -> None:
                        "taken_at": taken, "caption": caption}
 
 
+def validate_pose(record: dict[str, Any], plan: dict[str, Any]) -> None:
+    """有姿势参考时：只能是她此刻自己拍、本人入镜，方案写清模仿什么、因持机或场景改了什么。"""
+    pose = plan.get("pose_reference")
+    if not record.get("pose_reference"):
+        if isinstance(pose, dict) and any(str(value).strip() for value in pose.values()):
+            raise ValueError("没有姿势参考图，方案却写了姿势参考")
+        return
+    _text_fields(pose, ("imitate", "adapt"), "pose_reference", allow_empty=("adapt",))
+    if plan["mode"] != "shoot" or not plan["contains_mittes"]:
+        raise ValueError("模仿姿势的照片只能是 Mittes 此刻自己拍、本人入镜")
+    if not plan["pose"].strip():
+        raise ValueError("模仿姿势的照片缺少姿势与动作")
+
+
 def validate_shot(plan: dict[str, Any]) -> None:
     """结构化取景方案：每个字段各管一件事，程序按固定顺序排成拍摄说明。"""
     _text_fields(plan, ("subject", "prompt"), "plan", allow_empty=("prompt",))
@@ -213,9 +232,11 @@ class PhotoService:
 
     async def submit(self, instruction: str, source_msg_id: str, stream_id: str,
                      snapshot: dict[str, Any], *, preview: bool = False,
-                     daily_share: dict[str, Any] | None = None) -> dict[str, Any]:
+                     daily_share: dict[str, Any] | None = None,
+                     pose_msg_id: str = "", pose_image_index: int = 0) -> dict[str, Any]:
         """daily_share：每日分享配图。没有请求消息和提问人，按「发给其他人」的规矩拍，
-        检查通过后停在 daily_share 状态交给每日分享审核，不发到任何聊天，不占额度。"""
+        检查通过后停在 daily_share 状态交给每日分享审核，不发到任何聊天，不占额度。
+        pose_msg_id：用户要她模仿某张图的姿势时，那张图所在的消息；图转成 PNG 存进 uploads/，生图时作姿势参考。"""
         settings = {key: await self.get_config(f"photo.{key}", default) for key, default in DEFAULTS.items()}
         settings["size"] = PHOTO_SIZE
         if not settings["enabled"]:
@@ -256,6 +277,11 @@ class PhotoService:
                 text = message_text(message)
                 if text:
                     context.append({"text": text[:1200], "user_id": str(message.get("message_info", {}).get("user_info", {}).get("user_id", ""))})
+        pose_reference = None
+        if pose_msg_id:
+            if daily_share is not None or preview:
+                raise ValueError("姿势参考只用于聊天里的拍照请求")
+            pose_reference = await self._save_pose(stream_id, pose_msg_id, pose_image_index)
         return await asyncio.to_thread(self.store.create, {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
@@ -263,8 +289,22 @@ class PhotoService:
             "images": [], "references": [],
             "previous_photo": None,
             "requester": requester, "requester_name": requester_name, "requester_persona": requester_persona,
-            "daily_share": daily_share,
+            "daily_share": daily_share, "pose_reference": pose_reference,
         })
+
+    async def _save_pose(self, stream_id: str, msg_id: str, image_index: int) -> dict[str, Any]:
+        message = await self.ctx.message.get_by_id(msg_id, chat_id=stream_id, include_binary_data=True)
+        if not isinstance(message, dict) or str(message.get("session_id") or "") not in {"", stream_id}:
+            raise PoseImageError(f"消息 {msg_id} 不在当前会话里或无法读取")
+        try:
+            raw = await asyncio.to_thread(normalize_pose_image, message_image(message, image_index))
+        except (ValueError, OSError) as exc:
+            raise PoseImageError(str(exc)) from exc
+        name = pose_upload_name(raw)
+        target = self.store.root / "uploads" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(target.write_bytes, raw)
+        return {"file": name, "sha256": hashlib.sha256(raw).hexdigest(), "msg_id": msg_id, "image_index": image_index}
 
     def _previous_photo(self, record: dict[str, Any]) -> dict[str, Any] | None:
         previous = self.store.latest_sent(record["stream_id"])
@@ -322,6 +362,13 @@ class PhotoService:
         await self.event(record, "planning", "读取请求快照，设计手机取景")
         # 每日分享是新拍的配图，不从旧照片里挑
         record["earlier_photos"] = [] if record.get("daily_share") else await asyncio.to_thread(self.store.earlier_photos, record)
+        pose_images = None
+        if record.get("pose_reference"):
+            # 取景器先看这张图；任务目录里留一份 pose.png，流程日志按文件名指到它
+            raw_pose = await asyncio.to_thread(pose_image, self.store.root, record["pose_reference"])
+            await asyncio.to_thread((self.store.root / record["id"]).mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread((self.store.root / record["id"] / "pose.png").write_bytes, raw_pose)
+            pose_images = [raw_pose]
         base_url, key = await asyncio.to_thread(read_provider, settings["api_provider"])
         client = CameraTraceClient(self.client_factory(base_url, key, float(settings["timeout_seconds"])), record, self.store)
         try:
@@ -331,7 +378,8 @@ class PhotoService:
                 "earlier_photos": record["earlier_photos"],
                 "previous_photo": record.get("previous_photo"),
                 "recent_candids": await asyncio.to_thread(self.store.recent_candids),
-            })
+                "pose_reference": bool(record.get("pose_reference")),
+            }, images=pose_images)
             record["plan"] = plan
             record["planning_usage"] = usage
             if not isinstance(plan.get("feasible"), bool) or plan.get("target_kind") not in {"self", "object", "environment", "other_person", "unclear"}:
@@ -357,6 +405,8 @@ class PhotoService:
             if plan.get("rejection_code") != "":
                 raise ValueError("可拍判断与拒绝原因不一致")
             if plan.get("mode") == "reuse":
+                if record.get("pose_reference"):
+                    raise ValueError("模仿姿势的请求不能重发旧照片")
                 await self._reuse(record, plan)
                 return
             validate_shot(plan)
@@ -375,6 +425,7 @@ class PhotoService:
             if plan["contains_mittes"] == (plan["face_cover"]["method"] == "none"):
                 raise ValueError("遮脸方式与人物入镜标记不一致")
             apply_share(record, plan)
+            validate_pose(record, plan)
             if not plan["contains_mittes"] and plan["identity_reference"] != "none":
                 raise ValueError("无人物拍摄方案不能使用人物外貌参考")
             if not isinstance(plan.get("use_previous_photo"), bool):
