@@ -8,11 +8,12 @@ import re
 
 
 def snapshot_text(snapshot: dict[str, Any]) -> str:
+    """生图的事实依据：只给画对人物需要的事实。故事里的事、配饰取舍由取景方案交代。"""
     lines = []
     if snapshot.get("captured_at"):
         moment = datetime.fromisoformat(snapshot["captured_at"]).astimezone(ZoneInfo("Asia/Tokyo"))
         lines.append(f"拍摄时间：{moment:%Y年%m月%d日 %H:%M:%S}，日本时间。")
-    for key, label in [("slot", "当前时段"), ("title", "日程主题"), ("place", "拍摄时所在地"), ("outfit", "当前穿搭")]:
+    for key, label in [("slot", "当前时段"), ("place", "拍摄时所在地"), ("outfit", "当前穿搭")]:
         if snapshot.get(key):
             lines.append(f"{label}：{snapshot[key]}。")
     for key, label in [("hair", "当前发型"), ("top", "上装"), ("bottom", "下装"),
@@ -20,16 +21,10 @@ def snapshot_text(snapshot: dict[str, Any]) -> str:
         value = snapshot.get("outfit_details", {}).get(key)
         if value:
             lines.append(f"{label}：{value.rstrip('。')}。")
-    if snapshot.get("outfit_optional"):
-        lines.append("可选衣着或配饰：" + snapshot["outfit_optional"])
     for key, label in [("hair_base", "头发外貌"), ("nails", "指甲")]:
         value = snapshot.get("appearance", {}).get(key)
         if value:
             lines.append(f"{label}：{value.rstrip('。')}。")
-    if snapshot.get("story"):
-        lines.extend(["", "本时段的日程故事（涵盖整个时段，不代表拍摄时刻已经全部发生）：", snapshot["story"]])
-    if snapshot.get("topic"):
-        lines.extend(["", "当前话题：" + snapshot["topic"]])
     return "\n".join(lines)
 
 

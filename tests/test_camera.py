@@ -43,7 +43,7 @@ class FakeClient:
     check_inputs = None
     rewrite_calls = 0
     rewrite_result = {"retry_allowed": True, "reason": "普通生活照，整理场景表述", "prompt": "手机拍摄桌上的杯子，室内自然光。"}
-    review_result = {"allowed": True, "moment": "在家写作业", "acting": ""}
+    review_result = {"decision": "allow", "decline_code": "", "moment": "在家写作业", "acting": ""}
     review_inputs = None
     review_calls = 0
 
@@ -61,22 +61,32 @@ class FakeClient:
             return self.checks.pop(0), {}
         self.planning_inputs = data
         self.planning_images = images
-        return {"feasible": True, "target_kind": "object", "rejection_code": "", "reason": "", "subject": "杯子", "scene_type": "indoor", "include_outfit": False,
-                "style_category": "portrait", "identity_reference": "none", "contains_mittes": False, "scene_context": "none", "clothing_context": "none",
+        return {"feasible": True, "rejection_code": "", "subject": "杯子", "must_show": [], "fact_changes": [],
+                "photo_kind": "casual", "asked_for": "casual", "card": "c_table", "mode": "shoot", "include_outfit": False,
+                "identity_reference": "none", "contains_mittes": False, "scene_context": "none", "clothing_context": "none",
                 "shot": {"method": "handheld", "phone": "双手持机在桌面上方", "height": "胸口", "angle": "俯拍", "distance": "约四十厘米"},
                 "frame": {"top": "杯子上方留白", "bottom": "桌面边缘", "sides": "杯子居中", "focus": "杯子占画面三分之一"},
                 "face_cover": {"method": "none", "detail": ""}, "pose": "", "visible": ["杯子", "木桌面"],
                 "background": {"content": "桌面与墙", "people": "无"}, "lighting": {"source": "室内灯", "direction": "顶光", "tone": "暖色"},
                 "prompt": "手机俯拍杯子",
                 "expression": {"visible": False, "look": "", "basis": ""},
-                "use_previous_photo": self.use_previous, "face_request": False, **(self.plan_overrides or {})} | self._face_cover(), {}
+                "use_previous_photo": self.use_previous, **(self.plan_overrides or {})} | self._person_defaults(), {}
 
-    def _face_cover(self):
-        # 有人物入镜又没指定遮脸方式时，假取景分析器默认裁切（真实分析器必须自己选）
+    def _person_defaults(self):
+        # 有人物入镜又没指定照片种类时，假取景器默认拍不露脸自拍（真实取景器必须自己选）
         overrides = self.plan_overrides or {}
-        if overrides.get("contains_mittes") and "face_cover" not in overrides:
-            return {"face_cover": {"method": "crop", "detail": "画框上沿在鼻子与上唇之间"}}
-        return {}
+        if not overrides.get("contains_mittes"):
+            return {}
+        out = {}
+        if "face_cover" not in overrides:
+            out["face_cover"] = {"method": "crop", "detail": "画框上沿在鼻子与上唇之间"}
+        if "photo_kind" not in overrides:
+            cover = (overrides.get("face_cover") or out["face_cover"])["method"]
+            kind = {"crop": "selfie", "shown": "face", "out_of_frame": "casual"}[cover]
+            out |= {"photo_kind": kind, "asked_for": kind, "card": "c_outfit" if kind == "casual" else "s_arm"}
+            if overrides.get("mode") == "assist":
+                out["card"] = ""
+        return out
 
     async def image(self, settings, prompt, images):
         self.image_calls += 1
@@ -112,7 +122,8 @@ def setup(tmp_path, monkeypatch):
         (refs / filename).write_bytes(data)
         clothing.append({"file": filename, "category": category, "sha256": hashlib.sha256(data).hexdigest()})
     (refs / "references.json").write_text(json.dumps({"version": "v5", "references": entries, "identity": identity,
-                                                     "scene_reference": scene, "scene_supplements": supplements, "clothing_supplements": clothing}))
+                                                     "scene_reference": scene, "scene_supplements": supplements, "clothing_supplements": clothing,
+                                                     "composition": {}}))
     character = plugin / "character"
     character.mkdir()
     (character / "outfit.png").write_bytes(data)
@@ -128,6 +139,8 @@ def setup(tmp_path, monkeypatch):
                                 proactive=SimpleNamespace(trigger=AsyncMock(return_value={"success": True}))),
     )
     monkeypatch.setattr(module, "read_provider", lambda *args: ("http://test/v1", "secret-not-in-record"))
+    # 不露脸自拍的抽签固定为抽中；抽不中的情况在额度测试里单独测
+    monkeypatch.setattr(module.random, "random", lambda: 0.0)
     client = FakeClient()
     client.checks = [{"passed": True, "issues": [], "repairable": False, "description": "桌上的杯子"}]
     service = module.PhotoService(ctx, plugin, tmp_path / "data", AsyncMock(side_effect=lambda key, default: True if key == "photo.enabled" else default), client_factory=lambda *args: client)
@@ -260,7 +273,7 @@ def test_failed_check_repairs_only_once_then_does_not_send(setup):
 def test_passed_person_photo_with_hair_uses_first_image(setup, preview):
     async def run():
         service, ctx, client, _ = setup
-        client.plan_overrides = {"contains_mittes": True, "target_kind": "self"}
+        client.plan_overrides = {"contains_mittes": True}
         # Legacy/extra checker metadata must not trigger the removed fixed hair pass.
         client.checks = [{"passed": True, "issues": [], "repairable": False,
                           "description": "双马尾自然垂在肩侧", "hair_visible": True,
@@ -280,7 +293,7 @@ def test_passed_person_photo_with_hair_uses_first_image(setup, preview):
 def test_hair_structure_error_still_uses_regular_single_repair(setup):
     async def run():
         service, ctx, client, _ = setup
-        client.plan_overrides = {"contains_mittes": True, "target_kind": "self"}
+        client.plan_overrides = {"contains_mittes": True}
         client.checks = [
             {"passed": False, "issues": ["右侧发束穿过衣袖"], "repairable": True, "description": "初稿"},
             {"passed": True, "issues": [], "repairable": False, "description": "发束自然垂落"},
@@ -294,30 +307,36 @@ def test_hair_structure_error_still_uses_regular_single_repair(setup):
     asyncio.run(run())
 
 
-def test_image_prompt_is_readable_but_planning_and_check_keep_full_snapshot(setup):
+def test_each_stage_gets_only_the_facts_it_needs(setup):
     async def run():
         service, _, client, _ = setup
-        client.plan_overrides = {"contains_mittes": True, "target_kind": "self", "include_outfit": True}
+        client.plan_overrides = {"contains_mittes": True, "include_outfit": True}
         snapshot = {
             **SNAPSHOT, "logical_day": "2026-10-17", "slot": "18:00-20:00", "title": "休息",
-            "places": [{"from": "19:00", "to": "20:00", "place": "之后才到的地点"}],
-            "outfit_details": {"hair": "松束双马尾", "top": "浅蓝睡衣"},
+            "places": [{"from": "19:00", "to": "20:00", "place": "之后才到的地点"}], "skeleton_place": "家",
+            "outfit_details": {"hair": "松束双马尾", "top": "浅蓝睡衣"}, "outfit_optional": "",
             "appearance": {"hair_base": "银白浅樱粉", "props": "仅归档的道具设定"},
-            "story": "整个时段的日程内容",
+            "story": "整个时段的日程内容", "topic": "话题", "helpers": [], "share_options": [{"slot": "旧时段"}],
         }
         record = await service.submit("拍一张自拍", "text-prompt", "private", snapshot, preview=True)
         await service.process(record)
-        assert client.planning_inputs["snapshot"] == snapshot
-        assert client.check_inputs[0]["snapshot"] == snapshot
+        # 取景器：此刻的事实和故事，不要回看旧时段、话题、原始地点、整段地点表和空的可选配饰
+        planned = client.planning_inputs["snapshot"]
+        assert planned["story"] == "整个时段的日程内容" and planned["helpers"] == []
+        assert not {"share_options", "topic", "skeleton_place", "places", "logical_day", "outfit_optional"} & planned.keys()
+        assert "requester" not in client.planning_inputs and "earlier_photos" not in client.planning_inputs
+        assert client.planning_inputs["photo_options"] == record["photo_options"]
+        # 成品检查：只对照地点、穿搭和外貌，不看故事和用户原话
+        check = client.check_inputs[0]
+        assert check["facts"] == {"place": "家", "outfit": "校服", "outfit_details": snapshot["outfit_details"],
+                                  "appearance": snapshot["appearance"]}
+        assert not {"snapshot", "instruction", "source_text"} & check.keys()
+        # 生图：拍摄时间、穿搭和外貌，不带故事、话题、日程主题
         assert "拍摄时间：2026年10月17日 18:00:00，日本时间。" in client.last_prompt
         assert "当前发型：松束双马尾。" in client.last_prompt
-        assert "整个时段的日程内容" in client.last_prompt
         assert "图2（当前穿搭：校服）" in client.last_prompt
-        assert "所属日程日期" not in client.last_prompt
-        assert "之后才到的地点" not in client.last_prompt
-        assert "仅归档的道具设定" not in client.last_prompt
-        assert '"captured_at"' not in client.last_prompt
-        assert "sha256" not in client.last_prompt and "reference-1.png" not in client.last_prompt
+        for absent in ("整个时段的日程内容", "话题", "日程主题", "之后才到的地点", "仅归档的道具设定", '"captured_at"', "sha256", "reference-1.png"):
+            assert absent not in client.last_prompt
         assert record["references"][0]["sha256"]
     asyncio.run(run())
 
@@ -327,7 +346,7 @@ def test_expression_is_in_actual_image_request_and_checker_without_inventing_sna
         service, _, client, _ = setup
         expression = {"visible": True, "look": "刚坐定，等着发卷时有点放松",
                       "basis": "对话里已经确认她刚坐定，尚未拿到试卷"}
-        client.plan_overrides = {"contains_mittes": True, "target_kind": "self", "identity_reference": "body",
+        client.plan_overrides = {"contains_mittes": True, "identity_reference": "body",
                                  "expression": expression}
         record = await service.submit("拍一张课前自拍", "expression", "private", dict(SNAPSHOT), preview=True)
         await service.process(record)
@@ -345,7 +364,7 @@ def test_expression_is_preserved_through_safety_rewrite(setup):
     async def run():
         service, _, client, _ = setup
         look = "歇口气时有点放空"
-        client.plan_overrides = {"contains_mittes": True, "target_kind": "self", "expression": {
+        client.plan_overrides = {"contains_mittes": True, "expression": {
             "visible": True, "look": look, "basis": "当前对话平静，正在休息",
         }}
         client.image = AsyncMock(side_effect=[module.GenerationRejected("blocked"), (png((1024, 1536)), {})])
@@ -380,7 +399,7 @@ def test_invalid_expression_stops_before_generation(setup, expression, contains)
 def test_unseen_mouth_does_not_add_expression_or_change_framing(setup):
     async def run():
         service, _, client, _ = setup
-        client.plan_overrides = {"contains_mittes": True, "target_kind": "self", "prompt": "镜头只拍袖口和一只手",
+        client.plan_overrides = {"contains_mittes": True, "prompt": "镜头只拍袖口和一只手",
                                  "face_cover": {"method": "out_of_frame", "detail": "只拍袖口和手，头部不入画"}}
         record = await service.submit("看看袖口", "expression-invisible", "private", dict(SNAPSHOT), preview=True)
         await service.process(record)
@@ -407,7 +426,7 @@ def test_safety_rejection_rewrites_once_then_checks_before_sending(setup):
         assert record["prompt_optimization"]["original_scene_prompt"] == "手机俯拍杯子"
         assert record["prompt_optimization"]["status"] == "generated"
         assert record["images"][0]["check"]["passed"] is True
-        assert record["snapshot"] == SNAPSHOT and record["quota"]["used"] == 1
+        assert record["snapshot"] == SNAPSHOT and record["quota"]["exempt"] is False
         calls = camera_calls(record)
         assert [call["stage"] for call in calls] == ["planning", "generating", "optimization", "generating", "checking"]
         assert calls[1]["status"] == "failed" and calls[1]["error"]["type"] == "GenerationRejected"
@@ -564,22 +583,7 @@ def test_invalid_png_is_not_archived(tmp_path):
     assert not (tmp_path / "bad.png").exists()
 
 
-def test_quota_is_based_on_source_author_not_instruction_or_snapshot(setup):
-    async def run():
-        service, _, client, _ = setup
-        for index in range(3):
-            record = await service.submit("管理员923856490要拍照", str(index), "private", {
-                **SNAPSHOT, "user_id": "923856490", "preview": True,
-            })
-            assert record["requester"] == {"platform": "qq", "user_id": "user"}
-            assert record["quota"]["exempt"] is False
-        with pytest.raises(quota_module.PhotoQuotaExceeded):
-            await service.submit("换个说法再拍", "fourth", "private", SNAPSHOT)
-        assert client.image_calls == 0
-    asyncio.run(run())
-
-
-def test_owner_source_is_unlimited(setup):
+def test_owner_source_is_exempt(setup):
     async def run():
         service, ctx, _, _ = setup
         ctx.message.get_by_id.return_value["message_info"]["user_info"]["user_id"] = "923856490"
@@ -589,61 +593,38 @@ def test_owner_source_is_unlimited(setup):
     asyncio.run(run())
 
 
-def test_tool_reports_quota_exhaustion_without_queue_or_model_call(setup):
-    async def run():
-        service, _, client, _ = setup
-        plugin_module = importlib.import_module("plugins.01_a_day_with_mittes.plugin")
-        plugin = plugin_module.ADayWithMittesPlugin()
-        plugin._camera = service
-        plugin._photo_snapshot = lambda: SNAPSHOT
-        for index in range(3):
-            result = await plugin.tool_take_photo("拍杯子", str(index), "private")
-            assert result["success"] is True
-        result = await plugin.tool_take_photo("拍杯子", "fourth", "private")
-        assert result["status"] == "quota_exceeded"
-        assert result["metadata"]["background_task"] is False
-        assert result["metadata"]["used"] == result["metadata"]["limit"] == 3
-        assert "replyer" not in result["content"] and "选择 reply" in result["content"] and "不要重试" in result["content"]
-        assert client.image_calls == 0
-        repeated = await plugin.tool_take_photo("拍杯子", "0", "private")
-        assert repeated["success"] is True
-    asyncio.run(run())
+HELPER_ABSENT = {"feasible": False, "rejection_code": "helper_absent", "absent_helper": "Niya",
+                 "moment": "她一个人在家写作业", "acting": "笑着说 Niya 今天不在，下次再让她拍"}
 
 
 @pytest.mark.parametrize("preview", [False, True])
-def test_privacy_decline_is_terminal_and_never_generates_or_sends(setup, preview):
+def test_director_decline_carries_how_she_replies(setup, preview):
     async def run():
         service, ctx, client, _ = setup
-        # 即使模型的 feasible 自相矛盾，其他人物这个目标类型也必须拒绝。
-        client.plan_overrides = {"target_kind": "other_person", "feasible": True}
-        ctx.message.get_by_id.return_value["processed_plain_text"] = "拍店长的背影，不露脸"
-        record = await service.submit("拍一张店内环境", "privacy", "private", SNAPSHOT, preview=preview)
+        client.plan_overrides = dict(HELPER_ABSENT)
+        record = await service.submit("让 Niya 帮你拍一张", "helper", "private", {**SNAPSHOT, "helpers": []}, preview=preview)
         await service.process(record)
-        assert record["status"] == "declined"
-        assert record["decline"]["reason_code"] == "other_person_privacy"
-        assert "隐私" in record["decline"]["reason"]
+        assert record["status"] == "declined" and record["decline"]["reason_code"] == "helper_absent"
+        assert record["decline"]["reason"] == "Niya 现在不在 Mittes 身边。"
+        assert record["decline"]["planner_guidance"].startswith("怎么回：笑着说 Niya 今天不在")
+        assert "不要重试" in record["decline"]["planner_guidance"]
         assert client.image_calls == 0 and record["images"] == [] and record["references"] == []
-        assert service.store.next_queued() is None
         ctx.send.image.assert_not_awaited()
         if preview:
             ctx.maisaka.proactive.trigger.assert_not_awaited()
         else:
-            assert client.planning_inputs["source_text"] == "拍店长的背影，不露脸"
             feedback = ctx.maisaka.proactive.trigger.await_args.kwargs
-            assert feedback["metadata"]["background_tool_result"] is True
-            assert feedback["metadata"]["tool_success"] is False
-            assert feedback["reason"] == "camera_declined"
-            assert "replyer" not in feedback["intent"] and "选择 reply" in feedback["intent"] and "不要重试" in feedback["intent"]
-            assert "失败" not in feedback["intent"]
+            assert feedback["metadata"]["tool_success"] is False and feedback["reason"] == "camera_declined"
+            assert "怎么回：笑着说 Niya 今天不在" in feedback["intent"] and "选择 reply" in feedback["intent"]
     asyncio.run(run())
 
 
 def test_decline_feedback_failure_preserves_decision_without_generation(setup):
     async def run():
         service, ctx, client, _ = setup
-        client.plan_overrides = {"feasible": False, "target_kind": "other_person", "rejection_code": "other_person_privacy"}
+        client.plan_overrides = dict(HELPER_ABSENT)
         ctx.maisaka.proactive.trigger.side_effect = RuntimeError("unavailable")
-        record = await service.submit("看看店长", "privacy", "private", SNAPSHOT)
+        record = await service.submit("让 Niya 帮你拍", "helper", "private", {**SNAPSHOT, "helpers": []})
         await service.process(record)
         assert record["status"] == "declined"
         assert record["events"][-1]["stage"] == "feedback_warning"
@@ -654,30 +635,35 @@ def test_decline_feedback_failure_preserves_decision_without_generation(setup):
 
 def test_tool_repeated_declined_request_returns_guidance_not_pending_photo(setup):
     async def run():
-        service, ctx, client, _ = setup
-        client.plan_overrides = {"target_kind": "other_person"}
-        record = await service.submit("看看店长", "privacy", "private", SNAPSHOT)
-        await service.process(record)
+        service, _, client, _ = setup
+        client.review_result = {"decision": "decline", "decline_code": "other_person_privacy",
+                                "moment": "她在店里收拾", "acting": "说她不拍别人，但可以聊聊店长"}
         plugin_module = importlib.import_module("plugins.01_a_day_with_mittes.plugin")
         plugin = plugin_module.ADayWithMittesPlugin()
         plugin._camera = service
         plugin._photo_snapshot = lambda: SNAPSHOT
-        result = await plugin.tool_take_photo("看看店长", "privacy", "private")
-        assert result["status"] == "declined" and result["success"] is False
-        assert result["metadata"]["background_task"] is False
-        assert "隐私" in result["content"]
-        ctx.maisaka.proactive.trigger.assert_awaited_once()
+        first = await plugin.tool_take_photo("看看店长", "privacy", "private")
+        repeated = await plugin.tool_take_photo("看看店长", "privacy", "private")
+        for result in (first, repeated):
+            assert result["status"] == "declined" and result["success"] is False
+            assert result["metadata"]["background_task"] is False
+            assert "隐私" in result["content"] and "说她不拍别人" in result["content"]
+        assert client.review_calls == 1
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("code", ["unsupported_content", "not_visible", "unclear_request"])
-def test_other_unshootable_requests_return_explicit_decline(setup, code):
+@pytest.mark.parametrize("plan", [
+    {"feasible": False, "rejection_code": "other_person_privacy", "moment": "在家", "acting": "不拍"},
+    {"feasible": False, "rejection_code": "no_photo", "moment": "在家", "acting": "没有"},
+    {"feasible": False, "rejection_code": "pose_unusable", "moment": "在家", "acting": ""},
+])
+def test_director_only_declines_with_its_own_codes_and_a_reply(setup, plan):
     async def run():
         service, _, client, _ = setup
-        client.plan_overrides = {"feasible": False, "rejection_code": code}
-        record = await service.submit("看看", code, "private", SNAPSHOT, preview=True)
-        await service.process(record)
-        assert record["decline"]["reason_code"] == code
+        client.plan_overrides = plan
+        record = await service.submit("看看", "bad-decline", "private", SNAPSHOT, preview=True)
+        with pytest.raises(ValueError, match="取景器拒绝时"):
+            await service.process(record)
         assert client.image_calls == 0
     asyncio.run(run())
 
@@ -836,12 +822,10 @@ def test_original_context_reaches_director_for_pronoun_resolution(setup):
         service, ctx, client, _ = setup
         ctx.message.get_by_id.return_value["processed_plain_text"] = "看看她"
         ctx.message.get_recent.return_value = [{"processed_plain_text": "Niya在旁边", "message_info": {"user_info": {"user_id": "user"}}}]
-        client.plan_overrides = {"target_kind": "other_person"}
         record = await service.submit("看看", "pronoun", "private", SNAPSHOT)
         await service.process(record)
-        assert client.planning_inputs["source_text"] == "看看她"
-        assert client.planning_inputs["context"][0]["text"] == "Niya在旁边"
-        assert record["status"] == "declined"
+        assert client.review_inputs["source_text"] == client.planning_inputs["source_text"] == "看看她"
+        assert client.review_inputs["context"][0]["text"] == client.planning_inputs["context"][0]["text"] == "Niya在旁边"
     asyncio.run(run())
 
 
@@ -941,132 +925,96 @@ def test_provider_comes_from_shared_model_catalog(tmp_path, monkeypatch):
         client.shared_model_catalog_path()
 
 
-SHARE_OPTION = {"logical_day": "2026-11-05", "slot": "17:00-19:00", "title": "放学后的店", "place": "一楼营业区", "places": [],
-                "skeleton_place": "一楼营业区", "weather": "大雨", "outfit": "黑白女仆装", "outfit_details": {}, "outfit_optional": "",
-                "story": "和 Niya 一起看店", "topic": "", "company": "客人、Sweyn、Niya", "helpers": ["Sweyn", "Niya"]}
-
-
-def _share_plan(mode="share", **share):
-    return {"mode": mode, "contains_mittes": True, "target_kind": "self", "identity_reference": "body", "face_request": share.pop("face_request", True),
+def _assist_plan(**share):
+    plan = {"mode": "assist", "photo_kind": "face", "asked_for": "face", "card": share.pop("card", ""),
+            "contains_mittes": True, "identity_reference": "body",
             "shot": {"method": share.pop("method", "helper"), "phone": "Niya 在两米外举着手机", "height": "胸口", "angle": "平视", "distance": "两米"},
-            "face_cover": {"method": "shown", "detail": "侧脸低头吃便当"},
-            "share": {"source": "Niya", "candid": "unaware", "day": "2026-11-05", "slot": "17:00-19:00", "taken_at": "18:10", "caption": "傍晚看店时 Niya 帮我拍的", **share}}
-
-
-@pytest.mark.parametrize("share, message", [
-    ({"method": "front_selfie"}, "helper"),
-    ({"candid": "posed"}, "拍法无效"),
-    ({"slot": "09:00-10:00"}, "候选"),
-    ({"day": "2026-11-04"}, "候选"),
-    ({"taken_at": "16:00"}, "时段内"),
-    ({"source": "梧桐"}, "梧桐 不在场"),
-    ({"caption": " "}, "来历"),
-])
-def test_share_rejects_unavailable_sources(setup, share, message):
-    async def run():
-        service, _, client, _ = setup
-        client.plan_overrides = _share_plan(**share)
-        snapshot = {**SNAPSHOT, "captured_at": "2026-11-05T23:30:00+09:00", "helpers": [], "share_options": [SHARE_OPTION]}
-        record = await service.submit("想看脸", "share-bad-" + message, "private", snapshot, preview=True)
-        with pytest.raises(ValueError, match=message):
-            await service.process(record)
-        assert client.image_calls == 0
-    asyncio.run(run())
-
-
-def test_share_requires_helper_present(setup):
-    async def run():
-        service, _, client, _ = setup
-        client.plan_overrides = _share_plan()
-        snapshot = {**SNAPSHOT, "captured_at": "2026-11-05T23:30:00+09:00", "helpers": [], "share_options": [{**SHARE_OPTION, "helpers": ["Sweyn"]}]}
-        record = await service.submit("想看脸", "share-no-niya", "private", snapshot, preview=True)
-        with pytest.raises(ValueError, match="Niya 不在场"):
-            await service.process(record)
-        assert client.image_calls == 0
-    asyncio.run(run())
-
-
-def test_share_uses_selected_slot_and_notes_source(setup):
-    async def run():
-        service, _, client, _ = setup
-        client.plan_overrides = _share_plan()
-        snapshot = {**SNAPSHOT, "captured_at": "2026-11-05T23:30:00+09:00", "helpers": [], "share_options": [SHARE_OPTION]}
-        record = await service.submit("想看脸", "share-ok", "private", snapshot, preview=True)
-        await service.process(record)
-        assert record["snapshot"]["captured_at"] == "2026-11-05T18:10:00+09:00"
-        assert record["snapshot"]["outfit"] == "黑白女仆装" and record["request_snapshot"]["captured_at"].startswith("2026-11-05T23:30")
-        assert client.last_prompt.startswith("生成一张 Niya 给 Mittes 拍的二次元生活照")
-        assert "拍摄者：Niya。拍法：她没察觉" in client.last_prompt and "镜自拍等自然方式" not in client.last_prompt
-        assert record["share"] == {"kind": "share", "source": "Niya", "candid": "unaware", "day": "2026-11-05", "slot": "17:00-19:00", "taken_at": "18:10", "caption": "傍晚看店时 Niya 帮我拍的"}
-        assert "脸部：完整入镜" in client.last_prompt
-        note = module.delivery_note(record)
-        assert "Niya在 2026-11-05 18:10帮 Mittes 拍的" in note and "照片的来历（回复时照此说明）：傍晚看店时 Niya 帮我拍的" in note
-    asyncio.run(run())
+            "face_cover": {"method": "shown", "detail": "侧脸看向镜头"},
+            "share": {"source": "Niya", "candid": "requested", "caption": "刚好 Niya 在旁边，就请她帮我拍了一张", **share}}
+    if "photo_kind" in share:
+        plan["photo_kind"] = plan["asked_for"] = share.pop("photo_kind")
+    return plan
 
 
 def test_assist_uses_helper_beside_her_now(setup):
     async def run():
         service, _, client, _ = setup
-        client.plan_overrides = _share_plan("assist", source="Sweyn", candid="requested", day="", slot="", taken_at="", caption="刚好店长在旁边，就请店长帮我拍了一张")
-        snapshot = {**SNAPSHOT, "slot": "18:00-19:00", "helpers": ["Sweyn"], "share_options": []}
+        client.plan_overrides = _assist_plan()
+        snapshot = {**SNAPSHOT, "slot": "18:00-19:00", "helpers": ["Niya"]}
         record = await service.submit("想看看你", "assist-ok", "private", snapshot, preview=True)
         await service.process(record)
-        assert record["snapshot"]["captured_at"] == SNAPSHOT["captured_at"] and "request_snapshot" not in record
-        assert record["share"]["kind"] == "assist" and record["share"]["source"] == "Sweyn"
-        assert client.last_prompt.startswith("生成一张 Sweyn 给 Mittes 拍的二次元生活照")
-        assert "Sweyn刚刚帮 Mittes 拍的" in module.delivery_note(record)
+        assert record["snapshot"]["captured_at"] == SNAPSHOT["captured_at"]
+        assert record["share"] == {"kind": "assist", "source": "Niya", "candid": "requested", "slot": "18:00-19:00",
+                                   "taken_at": "", "caption": "刚好 Niya 在旁边，就请她帮我拍了一张"}
+        assert client.last_prompt.startswith("生成一张 Niya 给 Mittes 拍的二次元生活照")
+        assert "Niya刚刚帮 Mittes 拍的" in module.delivery_note(record)
+        assert module.photo_origin(record) == "是Niya帮 Mittes 拍的照片，来历：刚好 Niya 在旁边，就请她帮我拍了一张"
     asyncio.run(run())
 
 
 @pytest.mark.parametrize("share, helpers, message", [
-    ({"source": "Niya"}, ["Sweyn"], "此刻身边没有 Niya"),
-    ({"candid": "unaware"}, ["Sweyn"], "当场帮拍"),
+    ({"source": "Sweyn"}, ["Sweyn", "Niya"], "Sweyn 和提问的人"),
+    ({}, [], "此刻身边没有 Niya"),
+    ({"candid": "unaware"}, ["Niya"], "当场帮拍"),
+    ({"method": "front_selfie"}, ["Niya"], "helper"),
+    ({"caption": " "}, ["Niya"], "来历"),
+    ({"card": "s_arm"}, ["Niya"], "不用构图卡"),
+    ({"photo_kind": "selfie"}, ["Niya"], "只能是露脸照"),
 ])
-def test_assist_rejects_absent_helper_or_candid_shot(setup, share, helpers, message):
+def test_assist_rejects_invalid_helper_shot(setup, share, helpers, message):
     async def run():
         service, _, client, _ = setup
-        client.plan_overrides = _share_plan("assist", **{"source": "Sweyn", "candid": "requested", "slot": "", "taken_at": "", **share})
-        snapshot = {**SNAPSHOT, "slot": "18:00-19:00", "helpers": helpers, "share_options": []}
-        record = await service.submit("想看看你", "assist-bad-" + message, "private", snapshot, preview=True)
+        client.plan_overrides = _assist_plan(**share)
+        record = await service.submit("想看看你", "assist-bad-" + message, "private", {**SNAPSHOT, "helpers": helpers}, preview=True)
         with pytest.raises(ValueError, match=message):
             await service.process(record)
         assert client.image_calls == 0
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("mode, extra", [
-    ("assist", {"source": "Sweyn", "candid": "requested", "day": "", "slot": "", "taken_at": ""}),
-    ("share", {}),
+@pytest.mark.parametrize("kind, card, cover, message", [
+    ("selfie", "s_arm", "shown", "不露脸自拍的遮脸方式"),
+    ("face", "s_arm", "crop", "露脸照的遮脸方式"),
+    ("casual", "c_outfit", "crop", "日常分享的遮脸方式"),
 ])
-def test_face_photo_requires_explicit_request(setup, mode, extra):
+def test_photo_kind_and_face_cover_must_agree(setup, kind, card, cover, message):
     async def run():
         service, _, client, _ = setup
-        client.plan_overrides = _share_plan(mode, face_request=False, **extra)
-        snapshot = {**SNAPSHOT, "captured_at": "2026-11-05T23:30:00+09:00", "slot": "18:00-19:00", "helpers": ["Sweyn"], "share_options": [SHARE_OPTION]}
-        record = await service.submit("来张自拍", "no-face-request-" + mode, "private", snapshot, preview=True)
-        with pytest.raises(ValueError, match="没定为露脸"):
+        client.plan_overrides = {"contains_mittes": True, "photo_kind": kind, "asked_for": kind, "card": card,
+                                 "face_cover": {"method": cover, "detail": "按方案遮"}}
+        record = await service.submit("自拍", "kind-cover-" + kind, "private", SNAPSHOT, preview=True)
+        with pytest.raises(ValueError, match=message):
             await service.process(record)
         assert client.image_calls == 0
     asyncio.run(run())
 
 
-def test_plan_must_mark_face_request(setup):
+def test_own_shot_cannot_be_written_as_helper(setup):
     async def run():
         service, _, client, _ = setup
-        client.plan_overrides = {"contains_mittes": True, "target_kind": "self", "face_request": None}
-        record = await service.submit("自拍", "face-request-missing", "private", SNAPSHOT, preview=True)
-        with pytest.raises(ValueError, match="露脸要求标记"):
+        client.plan_overrides = {"contains_mittes": True,
+                                 "shot": {"method": "helper", "phone": "Niya 拿着", "height": "胸口", "angle": "平视", "distance": "两米"}}
+        record = await service.submit("自拍", "shoot-helper", "private", SNAPSHOT, preview=True)
+        with pytest.raises(ValueError, match="自己拍的照片不能写成别人帮拍"):
             await service.process(record)
     asyncio.run(run())
 
 
-def test_shoot_cannot_use_helper_or_show_face(setup):
+@pytest.mark.parametrize("plan, message", [
+    ({"contains_mittes": True, "photo_kind": "face", "asked_for": "face", "card": "s_arm",
+      "face_cover": {"method": "shown", "detail": "正脸"}}, "不可用的照片种类：face"),
+    ({"photo_kind": "casual", "card": "s_arm"}, "不属于日常分享"),
+    ({"asked_for": "portrait"}, "原本想要"),
+])
+def test_unavailable_kind_or_wrong_card_stops_before_generation(setup, plan, message):
     async def run():
         service, _, client, _ = setup
-        client.plan_overrides = _share_plan("shoot")
-        record = await service.submit("自拍", "shoot-helper", "private", {**SNAPSHOT, "helpers": [], "share_options": []}, preview=True)
-        with pytest.raises(ValueError, match="现拍照片不能"):
+        client.plan_overrides = plan
+        record = await service.submit("自拍", "kind-" + message, "private", SNAPSHOT, preview=True)
+        record["photo_options"] = {"casual": list(module.CASUAL_CARDS), "selfie": list(module.SELFIE_CARDS)}
+        with pytest.raises(ValueError, match=message):
             await service.process(record)
+        assert client.image_calls == 0
     asyncio.run(run())
 
 
@@ -1079,9 +1027,11 @@ def test_helpers_of_skips_strangers_and_alone():
 
 
 def _shown_selfie():
-    plan = _share_plan("shoot", source="", candid="", slot="", taken_at="", caption="")
-    plan["shot"]["method"] = "front_selfie"
-    return plan
+    return {"mode": "shoot", "photo_kind": "face", "asked_for": "face", "card": "s_arm", "contains_mittes": True,
+            "identity_reference": "body",
+            "shot": {"method": "front_selfie", "phone": "左手伸向镜头持机", "height": "略高于头", "angle": "微俯", "distance": "一臂"},
+            "face_cover": {"method": "shown", "detail": "正脸微侧"},
+            "share": {"source": "", "candid": "", "caption": ""}}
 
 
 @pytest.mark.parametrize("user, persona", [("923856490", "Sweyn"), ("guest", "")])
@@ -1090,7 +1040,7 @@ def test_anyone_can_get_a_face_shown_selfie(setup, user, persona):
         service, ctx, client, _ = setup
         ctx.message.get_by_id.return_value["message_info"]["user_info"]["user_id"] = user
         client.plan_overrides = _shown_selfie()
-        record = await service.submit("想看看你", "shown-" + user, "private", {**SNAPSHOT, "helpers": [], "share_options": []})
+        record = await service.submit("想看看你", "shown-" + user, "private", {**SNAPSHOT, "helpers": []})
         assert record["requester_persona"] == persona
         await service.process(record)
         assert client.last_prompt.startswith(module.STYLE_FACE_SHOWN.split("\n")[0])
@@ -1102,106 +1052,30 @@ def test_requester_cannot_be_the_photographer(setup):
     async def run():
         service, ctx, client, _ = setup
         ctx.message.get_by_id.return_value["message_info"]["user_info"]["user_id"] = "923856490"
-        client.plan_overrides = _share_plan("assist", source="Sweyn", candid="requested", slot="", taken_at="")
-        record = await service.submit("想看看你", "assist-self", "private", {**SNAPSHOT, "slot": "18:00-19:00", "helpers": ["Sweyn"], "share_options": []})
+        client.plan_overrides = _assist_plan(source="Sweyn")
+        record = await service.submit("想看看你", "assist-self", "private", {**SNAPSHOT, "slot": "18:00-19:00", "helpers": ["Sweyn"]})
         with pytest.raises(ValueError, match="提问的人自己"):
             await service.process(record)
         assert client.image_calls == 0
     asyncio.run(run())
 
 
-def test_no_photo_decline_just_says_there_is_none(setup):
-    async def run():
-        service, ctx, client, _ = setup
-        client.plan_overrides = {"feasible": False, "target_kind": "self", "rejection_code": "no_photo", "reason": "早上一个人在卧室"}
-        record = await service.submit("早上的你有照片吗", "no-photo", "private", SNAPSHOT)
-        await service.process(record)
-        assert record["decline"]["reason_code"] == "no_photo"
-        assert record["decline"]["reason"] == "Mittes 手上没有这种照片。"
-        assert "直接告诉对方没有那时候的照片" in record["decline"]["planner_guidance"]
-        assert client.image_calls == 0
-    asyncio.run(run())
-
-
-def test_share_picks_an_earlier_day_when_today_has_none(setup):
-    async def run():
-        service, _, client, _ = setup
-        yesterday = {**SHARE_OPTION, "logical_day": "2026-11-04", "slot": "17:00-19:00", "story": "昨天的晚班"}
-        client.plan_overrides = _share_plan(day="2026-11-04")
-        snapshot = {**SNAPSHOT, "captured_at": "2026-11-05T12:00:00+09:00", "helpers": [], "share_options": [yesterday]}
-        record = await service.submit("你在店里的照片", "share-yesterday", "private", snapshot, preview=True)
-        await service.process(record)
-        assert record["snapshot"]["captured_at"] == "2026-11-04T18:10:00+09:00" and record["snapshot"]["story"] == "昨天的晚班"
-    asyncio.run(run())
-
-
-def test_reuse_resends_an_earlier_unmasked_photo_without_generation(setup):
-    async def run():
-        service, ctx, client, _ = setup
-        first = await service.submit("拍杯子", "earlier-cup", "private", SNAPSHOT)
-        await service.process(first)
-        assert first["status"] == "sent" and client.image_calls == 1
-        client.plan_overrides = {"mode": "reuse", "reuse": {"photo_id": first["id"]}}
-        record = await service.submit("之前那张杯子再发一下", "reuse-cup", "private", SNAPSHOT)
-        await service.process(record)
-        assert [p["id"] for p in client.planning_inputs["earlier_photos"]] == [first["id"]]
-        assert record["status"] == "sent" and client.image_calls == 1
-        assert record["reuse"]["id"] == first["id"] and record["images"][0]["reused_from"] == first["id"]
-        assert (service.store.root / record["id"] / "attempt-1.png").read_bytes() == (service.store.root / first["id"] / first["final_image"]).read_bytes()
-        assert "之前" in module.delivery_note(record) and "拍过的照片，再发给" in module.delivery_note(record)
-    asyncio.run(run())
-
-
-def test_reuse_only_picks_from_listed_unmasked_photos(setup):
-    async def run():
-        service, _, client, _ = setup
-        face = await service.submit("想看看你", "face-photo", "private", {**SNAPSHOT, "slot": "18:00-19:00", "helpers": ["Niya"], "share_options": []})
-        client.plan_overrides = _share_plan("assist", source="Niya", candid="requested", day="", slot="", taken_at="")
-        client.checks = [{"passed": True, "issues": [], "repairable": False, "description": "Niya 帮拍"}]
-        await service.process(face)
-        assert face["status"] == "sent"
-        client.plan_overrides = {"mode": "reuse", "reuse": {"photo_id": face["id"]}}
-        record = await service.submit("之前那张再发一下", "reuse-face", "private", SNAPSHOT)
-        with pytest.raises(ValueError, match="不在候选里"):
-            await service.process(record)
-        assert client.planning_inputs["earlier_photos"] == []
-    asyncio.run(run())
-
-
-def test_chat_photo_limit_counts_everyone_but_sweyn(tmp_path):
-    store_module = importlib.import_module("plugins.01_a_day_with_mittes.camera.store")
-    store = store_module.CameraStore(tmp_path / "camera")
-    store.initialize()
-
-    def request(index, user, persona=""):
-        return {"stream_id": "group", "source_msg_id": f"m{index}", "requester": {"platform": "qq", "user_id": user},
-                "requester_persona": persona, "preview": False, "snapshot": {}}
-    for index in range(4):
-        store.create(request(index, "923856490", "Sweyn"))
-    for index, user in enumerate(["a", "a", "b", "b", "c"]):
-        store.create(request(10 + index, user))
-    with pytest.raises(store_module.PhotoQuotaExceeded, match="这个聊天今天的拍照名额已占满（5/5"):
-        store.create(request(20, "d"))
-    store.create(request(21, "923856490", "Sweyn"))
-
-
 def test_photo_origin_names_who_took_it():
     assert module.photo_origin({"share": {"source": "Niya", "caption": "美术课 Niya 帮我拍的。"}}) == "是Niya帮 Mittes 拍的照片，来历：美术课 Niya 帮我拍的"
-    assert "之前（2026-11-08 12:10，三楼卧室）拍过" in module.photo_origin({"reuse": {"taken_at": "2026-11-08 12:10", "place": "三楼卧室"}})
     assert module.photo_origin({}) == "是 Mittes 刚用手机拍的"
 
 
 def test_named_helper_absent_is_declined_with_their_name(setup):
     async def run():
         service, ctx, client, _ = setup
-        client.plan_overrides = {"feasible": False, "target_kind": "self", "rejection_code": "helper_absent", "absent_helper": "Niya", "reason": "不在"}
-        record = await service.submit("让 Niya 帮你拍一张", "absent-niya", "private", {**SNAPSHOT, "helpers": ["Sweyn"], "share_options": []})
+        client.plan_overrides = dict(HELPER_ABSENT)
+        record = await service.submit("让 Niya 帮你拍一张", "absent-niya", "private", {**SNAPSHOT, "helpers": ["Sweyn"]})
         await service.process(record)
-        assert record["decline"]["reason_code"] == "helper_absent" and record["decline"]["reason"] == "Niya 现在不在我身边。"
+        assert record["decline"]["reason_code"] == "helper_absent" and record["decline"]["reason"] == "Niya 现在不在 Mittes 身边。"
         intent = ctx.maisaka.proactive.trigger.call_args.kwargs["intent"]
-        assert "Niya 现在不在我身边。" in intent and client.image_calls == 0
-        client.plan_overrides["absent_helper"] = "Sweyn"
-        record = await service.submit("让 Sweyn 帮你拍一张", "absent-sweyn", "private", {**SNAPSHOT, "helpers": ["Sweyn"], "share_options": []})
+        assert "Niya 现在不在 Mittes 身边。" in intent and client.image_calls == 0
+        client.plan_overrides = {**HELPER_ABSENT, "absent_helper": "Sweyn"}
+        record = await service.submit("让 Sweyn 帮你拍一张", "absent-sweyn", "private", {**SNAPSHOT, "helpers": ["Sweyn"]})
         with pytest.raises(ValueError, match="其实在场"):
             await service.process(record)
     asyncio.run(run())
@@ -1210,23 +1084,10 @@ def test_named_helper_absent_is_declined_with_their_name(setup):
 def test_object_face_cover_is_no_longer_allowed(setup):
     async def run():
         service, _, client, _ = setup
-        client.plan_overrides = {"contains_mittes": True, "target_kind": "self",
+        client.plan_overrides = {"contains_mittes": True, "photo_kind": "selfie", "asked_for": "selfie", "card": "s_arm",
                                  "face_cover": {"method": "object", "detail": "用调色盘挡住眉眼"}}
         record = await service.submit("来张自拍", "object-cover", "private", dict(SNAPSHOT), preview=True)
         with pytest.raises(ValueError, match="遮脸方式无效"):
-            await service.process(record)
-        assert client.image_calls == 0
-    asyncio.run(run())
-
-
-def test_face_shown_selfie_must_actually_show_the_face(setup):
-    async def run():
-        service, _, client, _ = setup
-        plan = _shown_selfie()
-        plan["face_cover"] = {"method": "crop", "detail": "裁到鼻子以下"}
-        client.plan_overrides = plan
-        record = await service.submit("来张美照", "face-but-crop", "private", {**SNAPSHOT, "helpers": [], "share_options": []})
-        with pytest.raises(ValueError, match="必须选 shown"):
             await service.process(record)
         assert client.image_calls == 0
     asyncio.run(run())
@@ -1283,7 +1144,7 @@ def test_without_pose_image_director_gets_no_image_and_no_pose_line(setup):
         service, _, client, _ = setup
         record = await service.submit("拍杯子", "no-pose", "private", dict(SNAPSHOT), preview=True)
         await service.process(record)
-        assert client.planning_inputs["pose_reference"] is False and client.planning_images is None
+        assert "pose_reference" not in client.planning_inputs and client.planning_images is None
         assert "模仿姿势参考图" not in client.last_prompt
         assert all(ref["kind"] != "pose" for ref in record["references"])
     asyncio.run(run())
@@ -1300,7 +1161,8 @@ def test_pose_plan_must_be_her_own_shot_with_imitation(setup, extra, message):
         plan = _pose_plan(**extra)
         if extra.get("mode") == "assist":
             plan["shot"]["method"] = "helper"
-            plan["share"] = {"source": "Niya", "candid": "requested", "day": "", "slot": "", "taken_at": "", "caption": "Niya 帮我拍的"}
+            plan["card"] = ""
+            plan["share"] = {"source": "Niya", "candid": "requested", "caption": "Niya 帮我拍的"}
         client.plan_overrides = plan
         record = await service.submit("照这个姿势拍", "pose-bad", "private",
                                       {**SNAPSHOT, "helpers": ["Niya"], "share_options": [], "slot": "18:00-19:00"}, pose_msg_id="pose-bad")
@@ -1334,41 +1196,60 @@ def test_unusable_pose_is_declined_without_generation(setup):
     async def run():
         service, ctx, client, _ = setup
         ctx.message.get_by_id.return_value = _pose_message(png())
-        client.plan_overrides = {"feasible": False, "rejection_code": "pose_unusable"}
+        client.plan_overrides = {"feasible": False, "rejection_code": "pose_unusable", "moment": "她在家",
+                                 "acting": "说这张图里看不出是什么姿势，问对方想让她摆哪个"}
         record = await service.submit("照这个姿势拍", "pose-unusable", "private", dict(SNAPSHOT), pose_msg_id="pose-unusable")
         await service.process(record)
         assert record["decline"]["reason_code"] == "pose_unusable" and client.image_calls == 0
     asyncio.run(run())
 
 
+NOT_NOW = {"decision": "decline", "decline_code": "not_now", "moment": "正在上第二节物理课",
+           "acting": "偷偷看了眼手机，回得很短，说在上课。"}
+
+
 def test_review_declines_synchronously_without_queue_or_quota(setup):
     async def run():
         service, ctx, client, _ = setup
-        client.review_result = {"allowed": False, "moment": "正在上第二节物理课", "acting": "偷偷看了眼手机，回得很短，说在上课。"}
+        client.review_result = dict(NOT_NOW)
         record = await service.submit("拍一张现在的自己", "source", "private", dict(SNAPSHOT))
         assert record["status"] == "declined"
         assert record["decline"]["reason_code"] == "not_now"
         assert "正在上第二节物理课" in record["decline"]["reason"]
-        assert "说在上课" in record["decline"]["planner_guidance"]
+        assert record["decline"]["planner_guidance"].startswith("怎么回：偷偷看了眼手机")
         assert record["model_calls"][0]["stage"] == "review"
-        assert record["model_calls"][0]["output"]["result"]["allowed"] is False
+        assert record["model_calls"][0]["output"]["result"]["decision"] == "decline"
         assert service.store.next_queued() is None
         assert client.review_inputs["story"] == SNAPSHOT["story"] and client.review_inputs["now"] == SNAPSHOT["captured_at"]
         ctx.maisaka.proactive.trigger.assert_not_awaited()
-        # 不占额度：同一用户之后照常能拍
-        client.review_result = {"allowed": True, "moment": "下课了", "acting": ""}
+        client.review_result = {"decision": "allow", "decline_code": "", "moment": "下课了", "acting": ""}
         again = await service.submit("拍一张现在的自己", "source-2", "private", dict(SNAPSHOT))
-        assert again["status"] == "queued" and again["quota"]["used"] == 1
+        assert again["status"] == "queued"
         # 同一条消息重复调用拿到原结论，不再预审
         repeated = await service.submit("拍一张现在的自己", "source", "private", dict(SNAPSHOT))
         assert repeated["id"] == record["id"] and client.review_calls == 2
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("code, reason", [
+    ("other_person_privacy", "隐私"), ("back_view", "不拍背影"), ("past_photo", "只拍她此刻"),
+    ("unsupported_content", "生活内容"), ("unclear_request", "无法从当前对话"),
+])
+def test_review_declines_content_it_can_judge_from_the_request(setup, code, reason):
+    async def run():
+        service, _, client, _ = setup
+        client.review_result = {"decision": "decline", "decline_code": code, "moment": "在家", "acting": "用她自己的话回绝"}
+        record = await service.submit("看看", "content-" + code, "private", dict(SNAPSHOT))
+        assert record["status"] == "declined" and record["decline"]["reason_code"] == code
+        assert reason in record["decline"]["reason"] and "怎么回：用她自己的话回绝" in record["decline"]["planner_guidance"]
+        assert client.planning_inputs is None and client.image_calls == 0
+    asyncio.run(run())
+
+
 def test_review_declined_tool_result_tells_planner_how_to_act(setup):
     async def run():
         service, _, client, _ = setup
-        client.review_result = {"allowed": False, "moment": "正在上物理课", "acting": "回得很短，说在上课。"}
+        client.review_result = {**NOT_NOW, "moment": "正在上物理课", "acting": "回得很短，说在上课。"}
         plugin_module = importlib.import_module("plugins.01_a_day_with_mittes.plugin")
         plugin = plugin_module.ADayWithMittesPlugin()
         plugin._camera = service
@@ -1384,7 +1265,7 @@ def test_allowed_review_is_kept_before_planning_call(setup):
     async def run():
         service, _, client, _ = setup
         record = await service.submit("拍杯子", "source", "private", dict(SNAPSHOT))
-        assert record["review"]["allowed"] is True
+        assert record["review"]["decision"] == "allow"
         await service.process(record)
         stages = [call["stage"] for call in service.store.get(record["id"])["model_calls"]]
         assert stages[:2] == ["review", "planning"]
@@ -1392,10 +1273,13 @@ def test_allowed_review_is_kept_before_planning_call(setup):
 
 
 @pytest.mark.parametrize("result", [
-    {"allowed": False, "moment": "上课", "acting": ""},
-    {"allowed": True, "moment": "课间", "acting": "说在上课"},
-    {"allowed": "no", "moment": "上课", "acting": ""},
-    {"allowed": True, "moment": "", "acting": ""},
+    {"decision": "decline", "decline_code": "not_now", "moment": "上课", "acting": ""},
+    {"decision": "decline", "decline_code": "helper_absent", "moment": "上课", "acting": "说在上课"},
+    {"decision": "allow", "decline_code": "", "moment": "课间", "acting": "说在上课"},
+    {"decision": "allow", "decline_code": "not_now", "moment": "课间", "acting": ""},
+    {"decision": "maybe", "decline_code": "", "moment": "上课", "acting": ""},
+    {"allowed": True, "moment": "课间", "acting": ""},
+    {"decision": "allow", "decline_code": "", "moment": "", "acting": ""},
 ])
 def test_invalid_review_fails_without_creating_task(setup, result):
     async def run():

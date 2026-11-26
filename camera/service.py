@@ -1,6 +1,5 @@
 """持久化后台拍照队列。每份请求只生成、检查和发送一次成品。"""
 
-from datetime import date, datetime, time as dt_time, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -10,13 +9,15 @@ import base64
 import hashlib
 import json
 import logging
+import random
 import re
 
 from PIL import Image
 
 from .client import CPAClient, GenerationRejected, GenerationUnknown, read_provider
-from .prompt_context import CANDIDS, FACE_COVERS, SHOT_METHODS, reference_roles_text, shot_text, snapshot_text
-from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, PERSON_STYLE, PERSON_STYLE_SHARE, REVIEW, SAFE_REWRITE, SCENE_STYLE, SHARE_STYLE, STYLE, STYLE_FACE_SHOWN
+from .prompt_context import FACE_COVERS, SHOT_METHODS, reference_roles_text, shot_text, snapshot_text
+from .prompts import (CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, DIRECTOR_DECLINES, PERSON_STYLE, PERSON_STYLE_SHARE,
+                      REVIEW, REVIEW_DECLINES, SAFE_REWRITE, SCENE_STYLE, SHARE_STYLE, STYLE, STYLE_CASUAL, STYLE_FACE_SHOWN)
 from .identity import message_image
 from .reference_images import build_references, normalize_pose_image, pose_image, pose_upload_name
 from .store import CameraStore, timestamp
@@ -31,6 +32,23 @@ DEFAULTS = {
     "review_model": "gpt-6.2-sol", "image_model": "gpt-image-2.5-sunburst", "check_model": "gpt-6.2-sol",
     "quality": "high", "timeout_seconds": 300,
 }
+# 三种照片，按稀有程度从低到高：日常分享不限量；不露脸自拍每次抽签、每个聊天每天有上限；露脸每个聊天每天一张。
+PHOTO_KINDS = ("casual", "selfie", "face")
+KIND_NAMES = {"casual": "日常分享", "selfie": "不露脸自拍", "face": "露脸照"}
+SELFIE_CHANCE = 0.3
+SELFIE_DAILY_LIMIT = 3
+FACE_DAILY_LIMIT = 1
+# 构图卡：日常分享一套，自拍一套（不露脸自拍和她自己拍的露脸照共用）；身边的人帮拍不用卡
+CASUAL_CARDS = ("c_hold", "c_desk", "c_outfit", "c_feet", "c_lap", "c_table")
+SELFIE_CARDS = ("s_arm", "s_timer", "s_high")
+# 排卡时避开这个聊天最近用过的：日常分享避开两张，自拍避开一张
+CASUAL_AVOID = 2
+SELFIE_AVOID = 1
+# 取景器只看这些快照字段；share_options 等旧字段即使存在也不传
+DIRECTOR_SNAPSHOT_KEYS = ("captured_at", "slot", "title", "place", "weather", "outfit", "outfit_details",
+                          "outfit_optional", "appearance", "story", "company", "helpers")
+# 成品检查只对照这些事实
+CHECK_FACT_KEYS = ("place", "outfit", "outfit_details", "outfit_optional", "appearance")
 
 
 def message_text(message: dict[str, Any]) -> str:
@@ -67,23 +85,31 @@ def request_quote(record: dict[str, Any], limit: int = 30) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+def downgrade_note(record: dict[str, Any]) -> str:
+    """对方想看的种类高于这次拍的种类时，提醒 planner 这是她自己选的，回复里自然带过。"""
+    plan = record.get("plan") or {}
+    asked, kind = plan.get("asked_for"), plan.get("photo_kind")
+    if asked not in PHOTO_KINDS or kind not in PHOTO_KINDS or PHOTO_KINDS.index(asked) <= PHOTO_KINDS.index(kind):
+        return ""
+    return (f"对方原本想要{KIND_NAMES[asked]}，这次她自己选了拍{KIND_NAMES[kind]}；回复时自然带过，"
+            "当作她自己的选择，不提额度、次数或概率。")
+
+
 def delivery_note(record: dict[str, Any]) -> str:
-    reuse = record.get("reuse")
-    if reuse:
-        return (f"↑ 这是 Mittes 之前（{reuse['taken_at']}，{reuse['place']}）拍过的照片，再发给{requester_label(record)}。"
-                f"回应「{request_quote(record)}」(msg_id={record['source_msg_id']})")
     share = record.get("share")
-    if share:  # 别人帮她拍的照片：交代清楚是谁、什么时候、怎么拍的
-        when = "刚刚" if share["kind"] == "assist" else f"在 {share['day']} {share['taken_at']}"
-        return (f"↑ 这张是{share['source']}{when}帮 Mittes 拍的、她再分享给{requester_label(record)}的照片。"
-                f"照片的来历（回复时照此说明）：{share['caption'].rstrip('。.！!')}。回应「{request_quote(record)}」(msg_id={record['source_msg_id']})")
-    return f"↑ 这张是给{requester_label(record)}拍的，回应「{request_quote(record)}」(msg_id={record['source_msg_id']})"
+    downgrade = downgrade_note(record)
+    if share:  # 身边的人此刻帮她拍的照片：交代清楚是谁、怎么拍的
+        note = (f"↑ 这张是{share['source']}刚刚帮 Mittes 拍的、她再分享给{requester_label(record)}的照片。"
+                f"照片的来历（回复时照此说明）：{share['caption'].rstrip('。.！!')}。" + downgrade)
+    elif downgrade:
+        note = f"↑ 这张是给{requester_label(record)}拍的。" + downgrade
+    else:
+        note = f"↑ 这张是给{requester_label(record)}拍的，"
+    return note + f"回应「{request_quote(record)}」(msg_id={record['source_msg_id']})"
 
 
 def photo_origin(record: dict[str, Any]) -> str:
-    """已发出照片的来历，一句话：自己刚拍的、别人帮拍的，还是之前的照片重发。"""
-    if record.get("reuse"):
-        return f"是 Mittes 之前（{record['reuse']['taken_at']}，{record['reuse']['place']}）拍过、这次再发的照片"
+    """已发出照片的来历，一句话：自己刚拍的，还是身边的人帮拍的。"""
     share = record.get("share")
     if share:
         return f"是{share['source']}帮 Mittes 拍的照片，来历：{share['caption'].rstrip('。.！!')}"
@@ -113,66 +139,44 @@ def _text_fields(obj: Any, fields: tuple[str, ...], name: str, *, allow_empty: t
 
 
 
-def apply_share(record: dict[str, Any], plan: dict[str, Any]) -> None:
-    """assist：身边的人此刻帮她拍；share：分享今天早些时候别人帮她拍的照片，事实改用所选时段的快照。"""
-    plan.setdefault("mode", "shoot")
-    if plan["mode"] not in {"shoot", "assist", "share"}:
-        raise ValueError("拍摄方案的照片类型无效")
-    share = plan.get("share") if isinstance(plan.get("share"), dict) else {}
+def apply_kind(record: dict[str, Any], plan: dict[str, Any]) -> None:
+    """照片种类、谁来拍和遮脸方式要对得上：自己拍时用构图卡，露脸照也可以由此刻身边的人帮拍。"""
+    kind, mode = plan["photo_kind"], plan.get("mode")
     method = plan["shot"]["method"]
-    requester = record["requester_persona"]
-    if not isinstance(plan.get("face_request"), bool):
-        raise ValueError("拍摄方案缺少露脸要求标记")
-    if not plan["face_request"] and (plan["mode"] != "shoot" or plan["face_cover"]["method"] == "shown"):
-        raise ValueError("这张没定为露脸，不能露脸或由别人帮拍")
-    if plan["mode"] == "shoot":
+    cover = plan["face_cover"]["method"]
+    if mode == "shoot":
         if method == "helper":
-            raise ValueError("现拍照片不能由别人拍")
-        if plan["face_request"] and plan["face_cover"]["method"] != "shown":
-            raise ValueError("定为露脸的自拍必须选 shown")
+            raise ValueError("自己拍的照片不能写成别人帮拍")
+        expected = {"casual": {"out_of_frame", "none"}, "selfie": {"crop"}, "face": {"shown"}}[kind]
+        if cover not in expected:
+            raise ValueError(f"{KIND_NAMES[kind]}的遮脸方式不能是 {cover}")
+        if kind != "casual" and not plan["contains_mittes"]:
+            raise ValueError("自拍必须有她入镜")
         return
+    if mode != "assist":
+        raise ValueError("拍摄方案的拍摄方式无效")
+    if kind != "face" or cover != "shown":
+        raise ValueError("身边的人帮拍的只能是露脸照")
     if method != "helper":
         raise ValueError("别人帮拍的照片拍法必须是 helper")
-    if share.get("candid") not in CANDIDS:
-        raise ValueError("别人帮拍的照片拍法无效")
+    if plan["card"]:
+        raise ValueError("别人帮拍的照片不用构图卡")
+    share = plan.get("share") if isinstance(plan.get("share"), dict) else {}
+    if share.get("candid") not in {"requested", "asked"}:
+        raise ValueError("当场帮拍只能是她请对方拍或知道在拍")
     if not plan["contains_mittes"]:
         raise ValueError("别人帮拍的照片必须有 Mittes 入镜")
     caption = str(share.get("caption") or "").strip()
     if not caption:
         raise ValueError("别人帮拍的照片缺少来历说明")
     source = str(share.get("source") or "")
-    if source == requester:
-        raise ValueError("拍照的人不能是提问的人自己")
+    if source == "Sweyn" or source == record["requester_persona"]:
+        raise ValueError("Sweyn 和提问的人自己都不当拍照的人")
     current = record["snapshot"]
-    if plan["mode"] == "assist":
-        if source not in current["helpers"]:
-            raise ValueError(f"此刻身边没有 {source}")
-        if share["candid"] not in {"requested", "asked"}:
-            raise ValueError("当场帮拍只能是她请对方拍或知道在拍")
-        record["share"] = {"kind": "assist", "source": source, "candid": share["candid"], "slot": current["slot"],
-                           "taken_at": "", "caption": caption}
-        return
-    options = {(o["logical_day"], o["slot"]): o for o in current.get("share_options", [])}
-    option = options.get((share.get("day"), share.get("slot")))
-    if option is None:
-        raise ValueError("分享照片选了不在候选里的时段")
-    if source not in option["helpers"]:
-        raise ValueError(f"所选时段 {source} 不在场")
-    taken = str(share.get("taken_at") or "")
-    start, end = option["slot"].split("-")
-    if not (len(taken) == 5 and start <= taken < end):
-        raise ValueError("分享照片的拍摄时刻不在所选时段内")
-    moment = datetime.fromisoformat(current["captured_at"])
-    hour, minute = map(int, taken.split(":"))
-    day = date.fromisoformat(option["logical_day"]) + timedelta(days=hour // 24)
-    taken_at = datetime.combine(day, dt_time(hour % 24, minute), moment.tzinfo)
-    if taken_at > moment:
-        raise ValueError("分享照片的拍摄时刻晚于当前时刻")
-    record["request_snapshot"] = current
-    record["snapshot"] = {**{k: v for k, v in option.items() if k not in {"helpers", "company"}},
-                          "captured_at": taken_at.isoformat(), "appearance": current.get("appearance", {})}
-    record["share"] = {"kind": "share", "source": source, "candid": share["candid"], "day": option["logical_day"], "slot": option["slot"],
-                       "taken_at": taken, "caption": caption}
+    if source not in current["helpers"]:
+        raise ValueError(f"此刻身边没有 {source}")
+    record["share"] = {"kind": "assist", "source": source, "candid": share["candid"], "slot": current["slot"],
+                       "taken_at": "", "caption": caption}
 
 
 def validate_pose(record: dict[str, Any], plan: dict[str, Any]) -> None:
@@ -280,7 +284,7 @@ class PhotoService:
         record = {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v18",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v19",
             "images": [], "references": [],
             "previous_photo": None,
             "requester": requester, "requester_name": requester_name, "requester_persona": requester_persona,
@@ -291,13 +295,16 @@ class PhotoService:
             existing = await asyncio.to_thread(self.store.find, stream_id, source_msg_id)
             if existing is not None:
                 return existing
-            # 预审在入队前同步完成：此刻不方便拍时，planner 当轮就拿到她的状况，不会先答应再收回
+            # 预审在入队前同步完成：此刻不方便拍、或光看请求就拍不成时，planner 当轮就拿到她怎么回，不会先答应再收回
             record["review"] = await self._review(record)
-            if not record["review"]["allowed"]:
+            if record["review"]["decision"] == "decline":
+                code = record["review"]["decline_code"]
+                reason = DECLINE_REASONS[code]
+                if code == "not_now":
+                    reason = "Mittes 此刻不方便拍照：" + record["review"]["moment"]
                 record["decline"] = {
-                    "reason_code": "not_now", "reason": "Mittes 此刻不方便拍照：" + record["review"]["moment"],
-                    "planner_guidance": "怎么回：" + record["review"]["acting"]
-                                        + "\n这次没有拍。选择 reply 回应对方，不要重试拍照，也不要换消息 ID 再调用。",
+                    "reason_code": code, "reason": reason,
+                    "planner_guidance": "怎么回：" + record["review"]["acting"] + "\n" + DECLINE_GUIDANCE,
                     "feedback_delivered": True,
                 }
                 return await asyncio.to_thread(self.store.create_declined, record)
@@ -308,7 +315,7 @@ class PhotoService:
         return await asyncio.to_thread(self.store.create, record)
 
     async def _review(self, record: dict[str, Any]) -> dict[str, Any]:
-        """时机预审：按此刻日程判断她现在拿手机拍合不合理；调用记录写进 model_calls 第一项。"""
+        """预审：此刻能不能拍、光看请求是不是拍不成；拍不了时写她此刻在做什么和怎么回。调用记录写进 model_calls 第一项。"""
         settings = record["settings"]
         snapshot = record["snapshot"]
         data = {
@@ -326,12 +333,15 @@ class PhotoService:
         finally:
             await client.close()
         call.update(status="completed", completed_at=timestamp(), output={"result": result, "usage": usage})
-        allowed, moment, acting = result.get("allowed"), result.get("moment"), result.get("acting")
-        if not isinstance(allowed, bool) or not isinstance(moment, str) or not moment.strip() or not isinstance(acting, str):
-            raise ValueError("预审未返回有效的 allowed/moment/acting")
-        if allowed == bool(acting.strip()):
-            raise ValueError("预审结论与演绎指导不一致")
-        return {"allowed": allowed, "moment": moment.strip(), "acting": acting.strip(), "usage": usage}
+        decision, code = result.get("decision"), result.get("decline_code")
+        moment, acting = result.get("moment"), result.get("acting")
+        if decision not in {"allow", "decline"} or not isinstance(moment, str) or not moment.strip() or not isinstance(acting, str):
+            raise ValueError("预审未返回有效的 decision/moment/acting")
+        if decision == "decline" and (code not in REVIEW_DECLINES or not acting.strip()):
+            raise ValueError("预审拒绝时缺少有效的拒绝原因或回复指导")
+        if decision == "allow" and (code or acting.strip()):
+            raise ValueError("预审放行时不能带拒绝原因或回复指导")
+        return {"decision": decision, "decline_code": code or "", "moment": moment.strip(), "acting": acting.strip(), "usage": usage}
 
     async def _save_pose(self, stream_id: str, msg_id: str, image_index: int) -> dict[str, Any]:
         message = await self.ctx.message.get_by_id(msg_id, chat_id=stream_id, include_binary_data=True)
@@ -347,6 +357,27 @@ class PhotoService:
         await asyncio.to_thread(target.write_bytes, raw)
         return {"file": name, "sha256": hashlib.sha256(raw).hexdigest(), "msg_id": msg_id, "image_index": image_index}
 
+    def _photo_options(self, record: dict[str, Any]) -> dict[str, list[str]]:
+        """这次可用的照片种类，各自带上打乱好的构图卡。露脸每个聊天每天一张；不露脸自拍每次抽签，
+        每个聊天每天有上限；日常分享总是可用。店长、本地预览和每日分享不受额度限制。"""
+        exempt = record["quota"]["exempt"]
+        used = {} if exempt else self.store.kinds_sent_today(record["stream_id"])
+        recent = [] if exempt else self.store.recent_cards(record["stream_id"])
+
+        def shuffled(cards: tuple[str, ...], avoid: int) -> list[str]:
+            recent_kind = [card for card in recent if card in cards][:avoid]
+            order = [card for card in cards if card not in recent_kind]
+            random.shuffle(order)
+            return order + recent_kind  # 最近用过的排到最后，此刻只适合它时仍可选
+
+        options = {"casual": shuffled(CASUAL_CARDS, CASUAL_AVOID)}
+        selfie = shuffled(SELFIE_CARDS, SELFIE_AVOID)
+        if exempt or (random.random() < SELFIE_CHANCE and used.get("selfie", 0) < SELFIE_DAILY_LIMIT):
+            options["selfie"] = selfie
+        if exempt or used.get("face", 0) < FACE_DAILY_LIMIT:
+            options["face"] = selfie
+        return options
+
     def _previous_photo(self, record: dict[str, Any]) -> dict[str, Any] | None:
         previous = self.store.latest_sent(record["stream_id"])
         if previous is None or previous["id"] == record["id"]:
@@ -354,6 +385,21 @@ class PhotoService:
         return {"id": previous["id"], "description": previous["description"],
                 "instruction": previous["instruction"], "file": previous["final_image"],
                 "snapshot": {key: previous["snapshot"].get(key) for key in ("captured_at", "outfit", "place")}}
+
+    def _director_input(self, record: dict[str, Any]) -> dict[str, Any]:
+        """取景器只拿取景要用的：请求、对话、此刻的事实和可用照片；帮拍拍法、上一张照片、姿势参考按需才给。"""
+        options = record["photo_options"]
+        snapshot = {key: record["snapshot"][key] for key in DIRECTOR_SNAPSHOT_KEYS
+                    if key in record["snapshot"] and not (key == "outfit_optional" and not record["snapshot"][key])}
+        data: dict[str, Any] = {"instruction": record["instruction"], "source_text": record["source_text"],
+                                "context": record["context"], "snapshot": snapshot, "photo_options": options}
+        if "face" in options:
+            data["recent_candids"] = self.store.recent_candids()
+        if record.get("previous_photo"):
+            data["previous_photo"] = {key: value for key, value in record["previous_photo"].items() if key != "file"}
+        if record.get("pose_reference"):
+            data["pose_reference"] = True
+        return data
 
     async def event(self, record: dict[str, Any], stage: str, text: str, **detail: Any) -> None:
         record["status"] = stage
@@ -401,8 +447,9 @@ class PhotoService:
             # 提交时取会漏掉排在前面、尚未发出的那张（11-04 拍脚照拿到的是自拍而不是穿搭照）。
             record["previous_photo"] = await asyncio.to_thread(self._previous_photo, record)
         await self.event(record, "planning", "读取请求快照，设计手机取景")
-        # 每日分享是新拍的配图，不从旧照片里挑
-        record["earlier_photos"] = [] if record.get("daily_share") else await asyncio.to_thread(self.store.earlier_photos, record)
+        # 本地试拍可以指定可用照片；其余每次按额度和抽签现算
+        if "photo_options" not in record:
+            record["photo_options"] = await asyncio.to_thread(self._photo_options, record)
         pose_images = None
         if record.get("pose_reference"):
             # 取景器先看这张图；任务目录里留一份 pose.png，流程日志按文件名指到它
@@ -413,48 +460,47 @@ class PhotoService:
         base_url, key = await asyncio.to_thread(read_provider, settings["api_provider"])
         client = CameraTraceClient(self.client_factory(base_url, key, float(settings["timeout_seconds"])), record, self.store)
         try:
-            plan, usage = await client.json(settings["director_model"], DIRECTOR, {
-                "instruction": record["instruction"], "source_text": record["source_text"],
-                "context": record["context"], "snapshot": record["snapshot"], "requester": record["requester_persona"],
-                "earlier_photos": record["earlier_photos"],
-                "previous_photo": record.get("previous_photo"),
-                "recent_candids": await asyncio.to_thread(self.store.recent_candids),
-                "pose_reference": bool(record.get("pose_reference")),
-            }, images=pose_images)
+            data = await asyncio.to_thread(self._director_input, record)
+            plan, usage = await client.json(settings["director_model"], DIRECTOR, data, images=pose_images)
             record["plan"] = plan
             record["planning_usage"] = usage
-            if not isinstance(plan.get("feasible"), bool) or plan.get("target_kind") not in {"self", "object", "environment", "other_person", "unclear"}:
-                raise ValueError("取景分析未返回有效的可拍判断与拍摄对象类型")
-            if plan["target_kind"] == "other_person" or plan.get("rejection_code") == "other_person_privacy":
-                await self._decline(record, "other_person_privacy")
-                return
-            if plan["target_kind"] == "unclear":
-                await self._decline(record, "unclear_request")
-                return
+            if not isinstance(plan.get("feasible"), bool):
+                raise ValueError("取景器未返回有效的可拍判断")
             if not plan["feasible"]:
                 code = plan.get("rejection_code")
-                if code not in DECLINE_REASONS:
-                    raise ValueError("不可拍判断缺少有效原因代码")
+                if code not in DIRECTOR_DECLINES:
+                    raise ValueError("取景器拒绝时缺少有效原因代码")
+                moment, acting = plan.get("moment"), plan.get("acting")
+                if not isinstance(moment, str) or not moment.strip() or not isinstance(acting, str) or not acting.strip():
+                    raise ValueError("取景器拒绝时缺少她此刻的状况或回复指导")
+                reason = DECLINE_REASONS[code]
                 if code == "helper_absent":
                     name = str(plan.get("absent_helper") or "").strip()
                     if not name or name in record["snapshot"]["helpers"]:
                         raise ValueError("点名的人不在身边，但方案没写明是谁或其实在场")
-                    await self._decline(record, code, f"{name} 现在不在我身边。")
-                    return
-                await self._decline(record, code)
+                    reason = f"{name} 现在不在 Mittes 身边。"
+                await self._decline(record, code, reason, "怎么回：" + acting.strip() + "\n" + DECLINE_GUIDANCE)
                 return
             if plan.get("rejection_code") != "":
                 raise ValueError("可拍判断与拒绝原因不一致")
-            if plan.get("mode") == "reuse":
-                if record.get("pose_reference"):
-                    raise ValueError("模仿姿势的请求不能重发旧照片")
-                await self._reuse(record, plan)
-                return
+            options = record["photo_options"]
+            if plan.get("photo_kind") not in options:
+                raise ValueError(f"取景器选了这次不可用的照片种类：{plan.get('photo_kind')}")
+            if plan.get("asked_for") not in PHOTO_KINDS:
+                raise ValueError("取景器没写对方原本想要的照片种类")
+            if not isinstance(plan.get("card"), str):
+                raise ValueError("拍摄方案缺少构图卡")
+            if plan.get("mode") == "shoot" and plan["card"] not in options[plan["photo_kind"]]:
+                raise ValueError(f"构图卡 {plan['card']} 不属于{KIND_NAMES[plan['photo_kind']]}")
+            if not isinstance(plan.get("must_show"), list) or not all(isinstance(item, str) for item in plan["must_show"]):
+                raise ValueError("拍摄方案的 must_show 无效")
+            if not isinstance(plan.get("fact_changes"), list) or not all(isinstance(item, str) for item in plan["fact_changes"]):
+                raise ValueError("拍摄方案的 fact_changes 无效")
             validate_shot(plan)
-            if plan.get("scene_type") not in {"indoor", "outdoor"} or not isinstance(plan.get("include_outfit"), bool):
-                raise ValueError("拍摄方案的场景类型或穿搭标记无效")
-            if plan.get("style_category") not in {"portrait", "food", "drink", "outdoor", "object"} or plan.get("identity_reference") not in {"none", "body"}:
-                raise ValueError("拍摄方案的参考图用途无效")
+            if not isinstance(plan.get("include_outfit"), bool):
+                raise ValueError("拍摄方案缺少穿搭标记")
+            if plan.get("identity_reference") not in {"none", "body"}:
+                raise ValueError("拍摄方案的外貌参考用途无效")
             if not isinstance(plan.get("contains_mittes"), bool):
                 raise ValueError("拍摄方案缺少人物入镜标记")
             if plan.get("scene_context") not in {"none", "street", "terrace", "train", "cafe", "night_desk", "classroom"}:
@@ -465,7 +511,7 @@ class PhotoService:
                 raise ValueError("衣着分享参考必须同时加载当前衣柜款式")
             if plan["contains_mittes"] == (plan["face_cover"]["method"] == "none"):
                 raise ValueError("遮脸方式与人物入镜标记不一致")
-            apply_share(record, plan)
+            apply_kind(record, plan)
             validate_pose(record, plan)
             if not plan["contains_mittes"] and plan["identity_reference"] != "none":
                 raise ValueError("无人物拍摄方案不能使用人物外貌参考")
@@ -495,9 +541,10 @@ class PhotoService:
                 info = await asyncio.to_thread(write_image, folder / filename, raw)
                 record["images"].append({"file": filename, "attempt": attempt + 1, **info, **result})
                 await self.event(record, "checking", "检查拍摄对象、面部遮挡、场景和画风", attempt=attempt + 1)
+                facts = {key: record["snapshot"][key] for key in CHECK_FACT_KEYS
+                         if key in record["snapshot"] and not (key == "outfit_optional" and not record["snapshot"][key])}
                 check, usage = await client.json(settings["check_model"], CHECK, {
-                    "instruction": record["instruction"], "source_text": record["source_text"],
-                    "plan": plan, "snapshot": record["snapshot"], "reference_roles": record["references"],
+                    "plan": plan, "facts": facts, "reference_roles": record["references"],
                     "style_family": record["style_family"],
                 }, images=[raw, *check_references])
                 if not isinstance(check.get("passed"), bool) or not isinstance(check.get("issues"), list) or not isinstance(check.get("repairable"), bool):
@@ -536,10 +583,15 @@ class PhotoService:
         expression = record["plan"].get("expression")
         if expression and expression["visible"]:
             scene += "\n此刻的神情：" + expression["look"].strip()
+        changes = [change.strip() for change in record["plan"].get("fact_changes") or [] if change.strip()]
+        if changes:
+            scene += "\n近况变化（以此为准，覆盖下方快照里的对应项）：" + "；".join(changes)
         if share:
             head = SHARE_STYLE.format(source=share["source"])
+        elif record["plan"]["face_cover"]["method"] == "shown":
+            head = STYLE_FACE_SHOWN
         else:
-            head = STYLE_FACE_SHOWN if record["plan"]["face_cover"]["method"] == "shown" else STYLE
+            head = STYLE_CASUAL if record["plan"]["photo_kind"] == "casual" else STYLE
         return (head + "\n" + style + "\n\n本次拍摄：\n" + scene
                 + "\n\n事实依据（拍摄时快照）：\n" + snapshot_text(record["snapshot"])
                 + "\n\n参考图用途：\n" + reference_roles_text(record["references"]))
@@ -593,12 +645,7 @@ class PhotoService:
             optimization["status"] = "generated"
             return result
 
-    async def _decline(self, record: dict[str, Any], code: str, reason: str = "") -> None:
-        guidance = {
-            "unclear_request": "还不清楚对方想看什么。选择 reply，向对方问清楚。不要自己挑拍摄对象，也不要自动重试。",
-            "no_photo": "选择 reply，直接告诉对方没有那时候的照片。不要解释原因，不要现拍别的照片代替，也不要自动重试。",
-        }.get(code, DECLINE_GUIDANCE)
-        reason = reason or DECLINE_REASONS[code]
+    async def _decline(self, record: dict[str, Any], code: str, reason: str, guidance: str) -> None:
         record["decline"] = {"reason_code": code, "reason": reason, "planner_guidance": guidance}
         await self.event(record, "declined", reason)
         if quiet(record):
@@ -620,27 +667,6 @@ class PhotoService:
             record["events"].append({"at": timestamp(), "stage": "feedback_warning", "text": "不可拍摄决定已保存，但回复指导回填失败；未自动重试"})
             await asyncio.to_thread(self.store.save, record)
             _logger.exception("[相机] 不可拍摄结果回填失败 %s", record["id"])
-
-    async def _reuse(self, record: dict[str, Any], plan: dict[str, Any]) -> None:
-        """把之前发过的一张没露脸的照片原样再发一次，不重新生成。"""
-        if record.get("daily_share"):
-            raise ValueError("每日分享配图不重发旧照片")
-        reuse = plan.get("reuse") if isinstance(plan.get("reuse"), dict) else {}
-        chosen = next((p for p in record["earlier_photos"] if p["id"] == reuse.get("photo_id")), None)
-        if chosen is None:
-            raise ValueError("重发照片选了不在候选里的照片")
-        source = await asyncio.to_thread(self.store.get, chosen["id"])
-        raw = await asyncio.to_thread((self.store.root / chosen["id"] / source["final_image"]).read_bytes)
-        info = await asyncio.to_thread(write_image, self.store.root / record["id"] / "attempt-1.png", raw)
-        record["reuse"] = chosen
-        record["images"].append({"file": "attempt-1.png", "attempt": 1, **info, "reused_from": chosen["id"]})
-        record["final_image"] = "attempt-1.png"
-        record["description"] = source["description"]
-        await self.event(record, "ready", f"找到之前发过的照片（{chosen['taken_at']} {chosen['place']}），原样再发")
-        if record["preview"]:
-            await self.event(record, "preview", "本地接口实测完成，未发送到聊天")
-        else:
-            await self._deliver(record, raw)
 
     def _references(self, record: dict[str, Any], plan: dict[str, Any]) -> list[bytes]:
         return build_references(self.plugin_dir, self.store.root, record, plan)

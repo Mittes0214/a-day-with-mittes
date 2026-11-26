@@ -21,7 +21,9 @@ def test_deployed_reference_manifest_matches_all_files():
     manifest = json.loads((folder / "references.json").read_text())
     assert manifest["version"] == "mittes-phone-photo-style-v6"
     assert {entry["category"] for entry in manifest["references"]} == {"portrait"}
-    entries = [*manifest["references"], manifest["scene_reference"], *manifest["identity"].values(), *manifest["scene_supplements"], *manifest["clothing_supplements"]]
+    entries = [*manifest["references"], manifest["scene_reference"], *manifest["identity"].values(), *manifest["scene_supplements"],
+               *manifest["clothing_supplements"], *manifest["composition"].values()]
+    assert set(manifest["composition"]) == {"c_outfit"}
     assert {entry["category"] for entry in manifest["scene_supplements"]} == {"street", "terrace", "train", "cafe", "night_desk", "classroom"}
     assert {entry["category"] for entry in manifest["clothing_supplements"]} == {"socks", "shoes"}
     shoes = next(entry for entry in manifest["clothing_supplements"] if entry["category"] == "shoes")
@@ -54,12 +56,11 @@ def test_snapshot_contains_appearance_and_actual_place_without_innerwear():
     assert snapshot["place"] == "卧室书桌前"
     assert snapshot["skeleton_place"] == "二楼浴室 / 三楼卧室"
     assert snapshot["weather"] == "晴" and snapshot["company"] == "一个人"
-    # 一个人待着的时段不会有别人帮拍的照片，不列为分享来源
-    assert snapshot["share_options"] == [] and snapshot["helpers"] == []
+    # 拍照只拍此刻，快照里不再列可回看的旧时段
+    assert "share_options" not in snapshot and snapshot["helpers"] == []
     segment.company = "Niya、老师"
     snapshot = plugin._photo_snapshot()
     assert snapshot["helpers"] == ["Niya"]
-    assert [o["logical_day"] for o in snapshot["share_options"]] == [f"2026-10-{d}" for d in range(18, 11, -1)]
     assert "银白" in snapshot["appearance"]["hair_base"]
     assert "underwear" not in snapshot["outfit_details"]
     assert "缎带" in snapshot["outfit_details"]["hair"]
@@ -85,21 +86,6 @@ def test_archived_season_outfits_resolve_only_for_looking_back():
     # 冬季启用后换下的单套同样留在存档里
     assert wardrobe.get("燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙") is None
     assert "灯芯绒" in wardrobe.get_any("燕麦色高领毛衣配有口袋的藏青灯芯绒背带裙").parts["bottom"]
-
-
-def test_share_option_keeps_the_outfit_archived_for_that_day():
-    plugin = plugin_module.ADayWithMittesPlugin()
-    wardrobe = plugin_module.Wardrobe(ROOT / "character/wardrobe.toml", ROOT / "character/seasons")
-    wardrobe.load()
-    plugin._wardrobe = wardrobe
-    autumn = plugin_module.Segment(start="17:00", end="19:00", title="换上女仆装接客", place="一楼营业区",
-                                   outfit="黑白女仆装", company="客人、Sweyn、Niya", kind="工作")
-    state = SimpleNamespace(places=[], story="放学后的客人", topic="")
-    plugin._store = SimpleNamespace(archived_segments=lambda day: [(autumn, state)] if day == date(2026, 11, 13) else [],
-                                    db=SimpleNamespace(day_weather=lambda day: "晴"))
-    options = plugin._share_options(date(2026, 11, 14), 10 * 60)
-    assert [(o["logical_day"], o["slot"], o["outfit"]) for o in options] == [("2026-11-13", "17:00-19:00", "黑白女仆装")]
-    assert options[0]["outfit_details"]["top"] == wardrobe.get_any("黑白女仆装").parts["top"]
 
 
 def test_outfit_images_cover_current_and_archived_outfits():

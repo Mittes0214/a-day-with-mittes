@@ -103,6 +103,9 @@ def build_references(plugin_dir: Path, camera_root: Path, record: dict[str, Any]
         if not target.is_relative_to(wardrobe_root):
             raise ValueError("服饰参考图路径越界")
         add(target.read_bytes(), "当前穿搭款式参考：仅款式；忽略白底、标注、平铺和整身展示", "outfit", outfit=name)
+    composition = manifest["composition"].get(plan.get("card", ""))
+    if composition:
+        fixed(composition, composition["role"], "composition")
     if plan["use_previous_photo"]:
         previous = record.get("previous_photo")
         if not previous:

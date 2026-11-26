@@ -101,7 +101,9 @@ def test_full_flow_waits_for_review_and_publishes_after_segment(share):
         # 配图走相机流程，但不发到任何聊天、不触发 planner、不占额度
         photo = camera.store.get(record["camera_task_id"])
         assert photo["status"] == "daily_share" and photo["quota"]["exempt"]
-        assert client.planning_inputs["requester"] == "" and client.planning_inputs["earlier_photos"] == []
+        assert "requester" not in client.planning_inputs and "earlier_photos" not in client.planning_inputs
+        # 每日分享不受照片额度限制，三种照片都可选
+        assert set(client.planning_inputs["photo_options"]) == {"casual", "selfie", "face"}
         assert client.planning_inputs["snapshot"]["captured_at"].startswith("2026-11-17T16:10")
         ctx.send.image.assert_not_awaited()
         ctx.maisaka.proactive.trigger.assert_not_awaited()
@@ -199,7 +201,8 @@ def test_skip_day_without_photo(share):
 def test_camera_decline_marks_share_failed(share):
     async def run():
         service, camera, ctx, client, *_ = share
-        client.plan_overrides = {"feasible": False, "rejection_code": "unsupported_content"}
+        client.plan_overrides = {"feasible": False, "rejection_code": "helper_absent", "absent_helper": "梧桐",
+                                 "moment": "她在店里", "acting": "说梧桐不在"}
         await service.tick()
         await camera.process(camera.store.next_queued())
         await service.tick()

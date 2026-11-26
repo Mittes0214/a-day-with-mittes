@@ -28,7 +28,7 @@
 
 from datetime import date, datetime, time as dt_time, timedelta
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import asyncio
 import copy
@@ -45,7 +45,6 @@ from .camera.identity import IdentityService
 from .camera.prompt_context import helpers_of
 from .camera.prompts import PENDING_GUIDANCE
 from .camera.service import PhotoService, PoseImageError, pending_line, photo_origin
-from .camera.store import PhotoQuotaExceeded
 from .daily.service import DailyShareService
 from .character.outfit_images import (
     IMAGES_ARG,
@@ -94,7 +93,6 @@ _ROLE_BY_ITEM_TYPE = {
 }
 
 
-SHARE_LOOKBACK_DAYS = 7  # 问以前的照片时，今天没有就往前找，最多找到 6 天前
 
 class ADayWithMittesPlugin(MaiBotPlugin):
     def __init__(self) -> None:
@@ -746,7 +744,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
 
     # ── Tool ──
-    @API("reset_photo_quota", description="重置自拍当天全部额度", public=True)
+    @API("reset_photo_quota", description="重置今天各聊天的露脸照和不露脸自拍额度", public=True)
     async def reset_photo_quota(self) -> bool:
         if self._camera is None:
             raise RuntimeError("相机服务尚未启动")
@@ -755,14 +753,14 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
     @Command(
         "pik_reset",
-        description="重置自拍当天全部用户和聊天的额度（仅管理员）",
+        description="重置今天各聊天的露脸照和不露脸自拍额度（仅管理员）",
         permission="operator",
         pattern=r"^/pik\s+reset\s*$",
     )
     async def cmd_pik_reset(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         await self.reset_photo_quota()
         await self.ctx.send.text("拍照次数重置了~", stream_id)
-        note = "管理员执行 /pik reset，已回复：拍照次数重置了~。自拍当天全部用户和聊天额度已重置。"
+        note = "管理员执行 /pik reset，已回复：拍照次数重置了~。今天各聊天的露脸照和不露脸自拍额度已重置。"
         result = await self.ctx.maisaka.context.append(
             stream_id, [{"type": "text", "data": note}], visible_text=note,
             source_kind="plugin:khiqwq.a-day-with-mittes:quota_reset",
@@ -775,8 +773,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         "take_mittes_photo",
         visibility="visible",
         description=(
-            "应用户看图请求，拍一张 Mittes 身边事物、环境或当前穿搭的二次元手机随拍；也可以照用户发来的图摆同样的姿势或手势自拍。\n"
-            "此刻适不适合拍由工具按她的日程判断：不方便时会返回她此刻在做什么和怎么回应，照着演即可。\n"
+            "应用户看图请求，拍一张 Mittes 此刻的二次元手机随拍（身边的东西、穿搭、手上的事，或自拍）；也可以照用户发来的图摆同样的姿势或手势自拍。"
+            "只拍她此刻的照片，要以前的照片不用这个工具。\n"
+            "能不能拍、拍成哪种由工具判断：拍不了时会返回她此刻在做什么和怎么回应，照着演即可。\n"
             "照片另行发送到原会话；不要重复调用查询进度。"
         ),
         parameters=[
@@ -814,13 +813,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         except PoseImageError as exc:
             return {"success": False, "name": "take_mittes_photo", "status": "pose_image_unavailable",
                     "content": f"没取到要照着摆姿势的那张图（{exc}），这次没有拍。确认 pose_msg_id 是含那张图的消息；找不到就选择 reply 问对方是哪张图。"}
-        except PhotoQuotaExceeded as exc:
-            return {
-                "success": False, "name": "take_mittes_photo", "status": "quota_exceeded",
-                "content": str(exc) + " Mittes 现在暂时不能再拍了，这次没有拍，也没有发照片。选择 reply 回应对方。这次请求不要重试，也不要换消息 ID 或会话再调用。",
-                "metadata": {"reason": "daily_photo_limit", "used": exc.used, "limit": exc.limit,
-                             "day": exc.day, "timezone": exc.timezone, "background_task": False},
-            }
         except Exception:
             _logger.exception("[相机] 无法提交拍照请求")
             return {"success": False, "name": "take_mittes_photo",
@@ -884,52 +876,18 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     def _day_weather(self, day: date) -> str:
         return self._require_store().db.day_weather(day)
 
-    def _share_options(self, day: date, now_minutes: int) -> List[Dict[str, Any]]:
-        """可分享的「别人帮她拍的照片」来源：今天到此刻为止、再往前 SHARE_LOOKBACK_DAYS-1 天里，
-        同伴中有认识的人的时段（从新到旧）。一个人待着的时段不会有这种照片，不列出。"""
-        out: List[Dict[str, Any]] = []
-        for back in range(SHARE_LOOKBACK_DAYS):
-            out += self._share_options_of(day - timedelta(days=back), now_minutes if back == 0 else None)
-        return out
-
-    def _share_options_of(self, day: date, now_minutes: int | None) -> List[Dict[str, Any]]:
-        """按归档里当天生成时的骨架快照列候选：换季后回看旧日子，穿的仍是当时的衣服。"""
-        store = self._require_store()
-        out: List[Dict[str, Any]] = []
-        for segment, state in reversed(store.archived_segments(day)):
-            if now_minutes is not None and segment.start_minutes > now_minutes:
-                continue
-            helpers = helpers_of(segment.company)
-            if not helpers:
-                continue
-            outfit = self._wardrobe.get_any(segment.outfit) if self._wardrobe is not None else None
-            places = state.places or []
-            out.append({
-                "logical_day": day.isoformat(), "slot": segment.slot, "title": segment.title,
-                "place": str((places[0] or {}).get("place") or "") if places else segment.place.split("/")[0].strip(),
-                "places": places, "skeleton_place": segment.place, "weather": self._day_weather(day),
-                "outfit": segment.outfit,
-                "outfit_details": {k: v for k, v in outfit.parts.items() if k != "underwear"} if outfit else {},
-                "outfit_optional": outfit.optional if outfit else "",
-                "story": state.story, "topic": state.topic, "company": segment.company,
-                "helpers": helpers,
-            })
-        return out
-
     def _photo_snapshot(self) -> dict[str, Any]:
         moment, day, segment, state = self._current()
-        return self._build_snapshot(moment, day, segment, state, share_options=True)
+        return self._build_snapshot(moment, day, segment, state)
 
     def _photo_snapshot_at(self, moment: datetime) -> dict[str, Any]:
-        """每日分享用：某一时刻的拍照快照。拍的就是那一刻本身，不列可回看的旧时段。"""
+        """每日分享用：某一时刻的拍照快照。"""
         store = self._require_store()
         day, _minutes = store.resolve_moment(moment)
         segment, state = store.state_at(moment)
-        return self._build_snapshot(moment, day, segment, state, share_options=False)
+        return self._build_snapshot(moment, day, segment, state)
 
-    def _build_snapshot(self, moment: datetime, day: date, segment: Segment, state: SegmentState,
-                        *, share_options: bool) -> dict[str, Any]:
-        store = self._require_store()
+    def _build_snapshot(self, moment: datetime, day: date, segment: Segment, state: SegmentState) -> dict[str, Any]:
         outfit = self._wardrobe.get(segment.outfit) if self._wardrobe is not None else None
         return {
             "captured_at": moment.isoformat(), "logical_day": day.isoformat(), "slot": segment.slot,
@@ -941,7 +899,6 @@ class ADayWithMittesPlugin(MaiBotPlugin):
             "appearance": self._wardrobe.appearance if self._wardrobe is not None else {},
             "story": state.story, "topic": state.topic, "company": segment.company,
             "helpers": helpers_of(segment.company),
-            "share_options": self._share_options(day, store.resolve_moment(moment)[1]) if share_options else [],
         }
 
     def _daily_material(self, day: date) -> dict[str, Any] | None:
