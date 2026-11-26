@@ -16,7 +16,7 @@ from PIL import Image
 
 from .client import CPAClient, GenerationRejected, GenerationUnknown, read_provider
 from .prompt_context import CANDIDS, FACE_COVERS, SHOT_METHODS, reference_roles_text, shot_text, snapshot_text
-from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, PERSON_STYLE, PERSON_STYLE_SHARE, SAFE_REWRITE, SCENE_STYLE, SHARE_STYLE, STYLE, STYLE_FACE_SHOWN
+from .prompts import CHECK, DECLINE_GUIDANCE, DECLINE_REASONS, DIRECTOR, PERSON_STYLE, PERSON_STYLE_SHARE, REVIEW, SAFE_REWRITE, SCENE_STYLE, SHARE_STYLE, STYLE, STYLE_FACE_SHOWN
 from .identity import message_image
 from .reference_images import build_references, normalize_pose_image, pose_image, pose_upload_name
 from .store import CameraStore, timestamp
@@ -28,7 +28,7 @@ PHOTO_DIMENSIONS = (1024, 1536)
 PHOTO_SIZE = "1024x1536"
 DEFAULTS = {
     "enabled": False, "api_provider": "CLIProxyAPI", "director_model": "gpt-6.2-sol",
-    "image_model": "gpt-image-2.5-sunburst", "check_model": "gpt-6.2-sol",
+    "review_model": "gpt-6.2-sol", "image_model": "gpt-image-2.5-sunburst", "check_model": "gpt-6.2-sol",
     "quality": "high", "timeout_seconds": 300,
 }
 
@@ -277,20 +277,61 @@ class PhotoService:
                 text = message_text(message)
                 if text:
                     context.append({"text": text[:1200], "user_id": str(message.get("message_info", {}).get("user_info", {}).get("user_id", ""))})
-        pose_reference = None
-        if pose_msg_id:
-            if daily_share is not None or preview:
-                raise ValueError("姿势参考只用于聊天里的拍照请求")
-            pose_reference = await self._save_pose(stream_id, pose_msg_id, pose_image_index)
-        return await asyncio.to_thread(self.store.create, {
+        record = {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
             "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v18",
             "images": [], "references": [],
             "previous_photo": None,
             "requester": requester, "requester_name": requester_name, "requester_persona": requester_persona,
-            "daily_share": daily_share, "pose_reference": pose_reference,
-        })
+            "daily_share": daily_share, "pose_reference": None,
+        }
+        if not preview and daily_share is None:
+            # 同一条消息再次调用时直接给出已有结果，不重复预审
+            existing = await asyncio.to_thread(self.store.find, stream_id, source_msg_id)
+            if existing is not None:
+                return existing
+            # 预审在入队前同步完成：此刻不方便拍时，planner 当轮就拿到她的状况，不会先答应再收回
+            record["review"] = await self._review(record)
+            if not record["review"]["allowed"]:
+                record["decline"] = {
+                    "reason_code": "not_now", "reason": "Mittes 此刻不方便拍照：" + record["review"]["moment"],
+                    "planner_guidance": "怎么回：" + record["review"]["acting"]
+                                        + "\n这次没有拍。选择 reply 回应对方，不要重试拍照，也不要换消息 ID 再调用。",
+                    "feedback_delivered": True,
+                }
+                return await asyncio.to_thread(self.store.create_declined, record)
+        if pose_msg_id:
+            if daily_share is not None or preview:
+                raise ValueError("姿势参考只用于聊天里的拍照请求")
+            record["pose_reference"] = await self._save_pose(stream_id, pose_msg_id, pose_image_index)
+        return await asyncio.to_thread(self.store.create, record)
+
+    async def _review(self, record: dict[str, Any]) -> dict[str, Any]:
+        """时机预审：按此刻日程判断她现在拿手机拍合不合理；调用记录写进 model_calls 第一项。"""
+        settings = record["settings"]
+        snapshot = record["snapshot"]
+        data = {
+            "instruction": record["instruction"], "source_text": record["source_text"], "context": record["context"],
+            "now": snapshot["captured_at"], "slot": snapshot["slot"], "title": snapshot["title"],
+            "place": snapshot["place"], "company": snapshot["company"], "story": snapshot["story"],
+        }
+        call = {"index": 1, "stage": "review", "model": settings["review_model"], "started_at": timestamp(),
+                "input": {"system": REVIEW, "text": json.dumps(data, ensure_ascii=False), "data": data, "images": []}}
+        record["model_calls"] = [call]
+        base_url, key = await asyncio.to_thread(read_provider, settings["api_provider"])
+        client = self.client_factory(base_url, key, float(settings["timeout_seconds"]))
+        try:
+            result, usage = await client.json(settings["review_model"], REVIEW, data)
+        finally:
+            await client.close()
+        call.update(status="completed", completed_at=timestamp(), output=result)
+        allowed, moment, acting = result.get("allowed"), result.get("moment"), result.get("acting")
+        if not isinstance(allowed, bool) or not isinstance(moment, str) or not moment.strip() or not isinstance(acting, str):
+            raise ValueError("预审未返回有效的 allowed/moment/acting")
+        if allowed == bool(acting.strip()):
+            raise ValueError("预审结论与演绎指导不一致")
+        return {"allowed": allowed, "moment": moment.strip(), "acting": acting.strip(), "usage": usage}
 
     async def _save_pose(self, stream_id: str, msg_id: str, image_index: int) -> dict[str, Any]:
         message = await self.ctx.message.get_by_id(msg_id, chat_id=stream_id, include_binary_data=True)

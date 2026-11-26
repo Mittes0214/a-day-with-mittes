@@ -18,13 +18,19 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 module = importlib.import_module("plugins.01_a_day_with_mittes.camera.service")
 quota_module = importlib.import_module("plugins.01_a_day_with_mittes.camera.store")
-SNAPSHOT = {"outfit": "校服", "place": "家", "captured_at": "2026-10-17T18:00:00+09:00"}
+SNAPSHOT = {"outfit": "校服", "place": "家", "captured_at": "2026-10-17T18:00:00+09:00", "slot": "17:30-19:00",
+            "title": "在家写作业", "company": "一个人", "story": "回到家换下校服，在书桌前写数学作业。"}
 
 
 def png(size=(512, 512)):
     output = BytesIO()
     Image.new("RGB", size, "white").save(output, format="PNG")
     return output.getvalue()
+
+
+def camera_calls(record):
+    """入队后相机自己的模型调用；预审那一步另有测试。"""
+    return [call for call in record["model_calls"] if call["stage"] != "review"]
 
 
 class FakeClient:
@@ -37,8 +43,15 @@ class FakeClient:
     check_inputs = None
     rewrite_calls = 0
     rewrite_result = {"retry_allowed": True, "reason": "普通生活照，整理场景表述", "prompt": "手机拍摄桌上的杯子，室内自然光。"}
+    review_result = {"allowed": True, "moment": "在家写作业", "acting": ""}
+    review_inputs = None
+    review_calls = 0
 
     async def json(self, model, system, data, images=None):
+        if system == module.REVIEW:
+            self.review_calls += 1
+            self.review_inputs = data
+            return dict(self.review_result), {}
         if system == module.SAFE_REWRITE:
             self.rewrite_calls += 1
             self.rewrite_inputs = (data, images)
@@ -212,7 +225,7 @@ def test_passed_image_saved_then_sent_only_to_original_stream(setup, preview):
         assert client.image_calls == 1
         assert record["snapshot"] == SNAPSHOT
         assert record["references"][0]["sha256"]
-        calls = record["model_calls"]
+        calls = camera_calls(record)
         assert [call["stage"] for call in calls] == ["planning", "generating", "checking"]
         assert all(call["status"] == "completed" for call in calls)
         assert calls[0]["input"]["system"] == module.DIRECTOR
@@ -323,7 +336,7 @@ def test_expression_is_in_actual_image_request_and_checker_without_inventing_sna
         assert record["snapshot"] == SNAPSHOT
         assert client.check_inputs[0]["plan"]["expression"] == expression
         assert "嘴部开合" in next(ref["role"] for ref in record["references"] if ref["kind"] == "identity")
-        assert [call["stage"] for call in record["model_calls"]] == ["planning", "generating", "checking"]
+        assert [call["stage"] for call in camera_calls(record)] == ["planning", "generating", "checking"]
         assert record["status"] == "preview"
     asyncio.run(run())
 
@@ -395,7 +408,7 @@ def test_safety_rejection_rewrites_once_then_checks_before_sending(setup):
         assert record["prompt_optimization"]["status"] == "generated"
         assert record["images"][0]["check"]["passed"] is True
         assert record["snapshot"] == SNAPSHOT and record["quota"]["used"] == 1
-        calls = record["model_calls"]
+        calls = camera_calls(record)
         assert [call["stage"] for call in calls] == ["planning", "generating", "optimization", "generating", "checking"]
         assert calls[1]["status"] == "failed" and calls[1]["error"]["type"] == "GenerationRejected"
         assert calls[0]["output"]["result"]["prompt"] == "手机俯拍杯子"
@@ -1325,4 +1338,77 @@ def test_unusable_pose_is_declined_without_generation(setup):
         record = await service.submit("照这个姿势拍", "pose-unusable", "private", dict(SNAPSHOT), pose_msg_id="pose-unusable")
         await service.process(record)
         assert record["decline"]["reason_code"] == "pose_unusable" and client.image_calls == 0
+    asyncio.run(run())
+
+
+def test_review_declines_synchronously_without_queue_or_quota(setup):
+    async def run():
+        service, ctx, client, _ = setup
+        client.review_result = {"allowed": False, "moment": "正在上第二节物理课", "acting": "偷偷看了眼手机，回得很短，说在上课。"}
+        record = await service.submit("拍一张现在的自己", "source", "private", dict(SNAPSHOT))
+        assert record["status"] == "declined"
+        assert record["decline"]["reason_code"] == "not_now"
+        assert "正在上第二节物理课" in record["decline"]["reason"]
+        assert "说在上课" in record["decline"]["planner_guidance"]
+        assert record["model_calls"][0]["stage"] == "review"
+        assert service.store.next_queued() is None
+        assert client.review_inputs["story"] == SNAPSHOT["story"] and client.review_inputs["now"] == SNAPSHOT["captured_at"]
+        ctx.maisaka.proactive.trigger.assert_not_awaited()
+        # 不占额度：同一用户之后照常能拍
+        client.review_result = {"allowed": True, "moment": "下课了", "acting": ""}
+        again = await service.submit("拍一张现在的自己", "source-2", "private", dict(SNAPSHOT))
+        assert again["status"] == "queued" and again["quota"]["used"] == 1
+        # 同一条消息重复调用拿到原结论，不再预审
+        repeated = await service.submit("拍一张现在的自己", "source", "private", dict(SNAPSHOT))
+        assert repeated["id"] == record["id"] and client.review_calls == 2
+    asyncio.run(run())
+
+
+def test_review_declined_tool_result_tells_planner_how_to_act(setup):
+    async def run():
+        service, _, client, _ = setup
+        client.review_result = {"allowed": False, "moment": "正在上物理课", "acting": "回得很短，说在上课。"}
+        plugin_module = importlib.import_module("plugins.01_a_day_with_mittes.plugin")
+        plugin = plugin_module.ADayWithMittesPlugin()
+        plugin._camera = service
+        plugin._photo_snapshot = lambda: dict(SNAPSHOT)
+        result = await plugin.tool_take_photo("拍一张现在的自己", "source", "private")
+        assert result["status"] == "declined" and result["success"] is False
+        assert "正在上物理课" in result["content"] and "说在上课" in result["content"]
+        assert result["metadata"]["background_task"] is False
+    asyncio.run(run())
+
+
+def test_allowed_review_is_kept_before_planning_call(setup):
+    async def run():
+        service, _, client, _ = setup
+        record = await service.submit("拍杯子", "source", "private", dict(SNAPSHOT))
+        assert record["review"]["allowed"] is True
+        await service.process(record)
+        stages = [call["stage"] for call in service.store.get(record["id"])["model_calls"]]
+        assert stages[:2] == ["review", "planning"]
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("result", [
+    {"allowed": False, "moment": "上课", "acting": ""},
+    {"allowed": True, "moment": "课间", "acting": "说在上课"},
+    {"allowed": "no", "moment": "上课", "acting": ""},
+    {"allowed": True, "moment": "", "acting": ""},
+])
+def test_invalid_review_fails_without_creating_task(setup, result):
+    async def run():
+        service, _, client, _ = setup
+        client.review_result = result
+        with pytest.raises(ValueError):
+            await service.submit("拍杯子", "source", "private", dict(SNAPSHOT))
+        assert service.store.find("private", "source") is None
+    asyncio.run(run())
+
+
+def test_preview_skips_review(setup):
+    async def run():
+        service, _, client, _ = setup
+        record = await service.submit("拍杯子", "source", "", dict(SNAPSHOT), preview=True)
+        assert record["status"] == "queued" and client.review_calls == 0 and "review" not in record
     asyncio.run(run())

@@ -774,9 +774,9 @@ class ADayWithMittesPlugin(MaiBotPlugin):
     @Tool(
         "take_mittes_photo",
         visibility="visible",
-        brief_description="应用户看图请求，拍一张 Mittes 身边事物、环境或当前穿搭的二次元手机随拍；也可以照用户发来的图摆同样的姿势或手势自拍。",
         description=(
-            "根据用户看图请求和聊天上下文，结合 Mittes 当前日程，拍摄并分享身边环境、物件或自身穿搭。"
+            "应用户看图请求，拍一张 Mittes 身边事物、环境或当前穿搭的二次元手机随拍；也可以照用户发来的图摆同样的姿势或手势自拍。\n"
+            "此刻适不适合拍由工具按她的日程判断：不方便时会返回她此刻在做什么和怎么回应，照着演即可。\n"
             "照片另行发送到原会话；不要重复调用查询进度。"
         ),
         parameters=[

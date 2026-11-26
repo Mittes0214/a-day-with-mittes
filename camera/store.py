@@ -126,6 +126,32 @@ class CameraStore:
             )
         return record
 
+    def find(self, stream_id: str, source_msg_id: str) -> dict[str, Any] | None:
+        with closing(sqlite3.connect(self.db)) as con:
+            row = con.execute("SELECT record FROM tasks WHERE stream_id=? AND source_msg_id=?",
+                              (stream_id, source_msg_id)).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    def create_declined(self, record: dict[str, Any]) -> dict[str, Any]:
+        """预审判定此刻不方便拍：直接落成 declined 记录，不入队、不占额度。"""
+        now = timestamp()
+        record = {**record, "id": uuid.uuid4().hex, "status": "declined", "created_at": now, "updated_at": now,
+                  "events": [{"at": now, "stage": "declined", "text": record["decline"]["reason"]}],
+                  "quota": {"day": datetime.now(QUOTA_TIMEZONE).date().isoformat(), "timezone": QUOTA_TIMEZONE.key,
+                            "limit": DAILY_LIMIT, "exempt": True}}
+        with closing(sqlite3.connect(self.db)) as con, con:
+            con.execute("BEGIN IMMEDIATE")
+            existing = con.execute("SELECT record FROM tasks WHERE stream_id=? AND source_msg_id=?",
+                                   (record["stream_id"], record["source_msg_id"])).fetchone()
+            if existing is not None:
+                return json.loads(existing[0])
+            con.execute(
+                "INSERT INTO tasks VALUES (?,?,?,?,?,?,?)",
+                (record["id"], record["stream_id"], record["source_msg_id"], record["status"],
+                 record["created_at"], record["updated_at"], json.dumps(record, ensure_ascii=False)),
+            )
+        return record
+
     def save(self, record: dict[str, Any]) -> None:
         record["updated_at"] = timestamp()
         with closing(sqlite3.connect(self.db)) as con, con:
