@@ -1351,6 +1351,7 @@ def test_review_declines_synchronously_without_queue_or_quota(setup):
         assert "正在上第二节物理课" in record["decline"]["reason"]
         assert "说在上课" in record["decline"]["planner_guidance"]
         assert record["model_calls"][0]["stage"] == "review"
+        assert record["model_calls"][0]["output"]["result"]["allowed"] is False
         assert service.store.next_queued() is None
         assert client.review_inputs["story"] == SNAPSHOT["story"] and client.review_inputs["now"] == SNAPSHOT["captured_at"]
         ctx.maisaka.proactive.trigger.assert_not_awaited()

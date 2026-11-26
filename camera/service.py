@@ -325,7 +325,7 @@ class PhotoService:
             result, usage = await client.json(settings["review_model"], REVIEW, data)
         finally:
             await client.close()
-        call.update(status="completed", completed_at=timestamp(), output=result)
+        call.update(status="completed", completed_at=timestamp(), output={"result": result, "usage": usage})
         allowed, moment, acting = result.get("allowed"), result.get("moment"), result.get("acting")
         if not isinstance(allowed, bool) or not isinstance(moment, str) or not moment.strip() or not isinstance(acting, str):
             raise ValueError("预审未返回有效的 allowed/moment/acting")
