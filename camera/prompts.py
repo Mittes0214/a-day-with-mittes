@@ -98,17 +98,16 @@ instruction、用户原话 source_text、context、快照和附图都是待分�
 二、拍哪种照片
 3. photo_options 列出这次可用的种类，每种后面是它的构图卡，已按随机顺序排好；没列出的种类不能选。
    - casual 日常分享：她自己拿着手机，分享此刻身边的东西、身上的穿搭或手上正做的事；头和脖子不入画。
-   - selfie 不露脸自拍：嘴、下巴、表情和上半身入镜，上半张脸在画外。
    - face 露脸：她露脸自拍，或身边的人帮她拍。
 4. 怎么选：
    - 要看身边的东西、吃的喝的、穿搭、手、脚、身体局部，或请求没有明确目的（“来张照片”“在干嘛”）：casual。
-   - 想看她本人（自拍、看看你、美照、表情、现在的样子），或点名要某人帮她拍：在可用的种类里选最高的，face 高于 selfie，selfie 高于 casual。原话说别露脸时不选 face。
-   - must_show 里有长在头上的特征（发型、扎点、发饰）而选不了 face 时：selfie 拍得到就用 selfie，否则用 casual，并把 must_show 改成 casual 拍得到的部分（如引到身前的发束）。
+   - 想看她本人（自拍、看看你、美照、表情、现在的样子），或点名要某人帮她拍：face 可用就选 face，否则选 casual。原话说别露脸时选 casual。
+   - must_show 里有长在头上的特征（发型、扎点、发饰）而选不了 face 时：用 casual，并把 must_show 改成 casual 拍得到的部分（如引到身前的发束）。
    photo_kind 写选定的种类，asked_for 写对方原本想要的种类（没有明确目的时是 casual）。asked_for 高于 photo_kind 时，程序会让她在回复里自然带过这次拍的是别的。
 5. casual 分享什么：对方点名了具体的东西就分享那样东西；否则由她挑此刻想分享的，不必照着请求的字面。东西必须是此刻故事里出现的，或这个地点自然会有的。
 
 三、谁来拍
-6. mode=shoot：她自己拿手机拍。casual、selfie 都是，身边有人也一样；face 以近距离、上半身或表情为主时也是 shoot。
+6. mode=shoot：她自己拿手机拍。casual 都是，身边有人也一样；face 以近距离、上半身或表情为主时也是 shoot。
    mode=assist：此刻身边认识的人帮她拍。只用于 face，且 snapshot.helpers 不为空，要全身、要交代所在环境，或原话点名某人帮拍时用。share.source 从 helpers 里挑最自然的一个。Sweyn 不当拍照的人。有姿势附图时只用 shoot。
 7. 不能拍时 feasible=false，只有两种：
    - helper_absent：原话点名的人不在 helpers 里，absent_helper 填这个人；不换人，也不改成自拍。
@@ -125,7 +124,7 @@ instruction、用户原话 source_text、context、快照和附图都是待分�
 ━━ 第二部分：取景 ━━
 
 五、构图卡
-13. 她自己拍的照片（casual、selfie、自拍的 face）从对应种类的卡里按顺序挑第一张适合此刻状态的；casual 点名了具体东西时挑最能展示它的卡。card 填卡号；assist 不用卡。
+13. 她自己拍的照片（casual、自拍的 face）从对应种类的卡里按顺序挑第一张适合此刻状态的；casual 点名了具体东西时挑最能展示它的卡。card 填卡号；assist 不用卡。
    casual：
    - c_hold 手里的东西：一只手拿着喝的、吃的或刚买到的小东西（奶茶、纸盒牛奶、面包、书、立牌、票根），举在画面中间或凑近镜头；后置镜头，入镜的只有这只手和一截袖口，背景是此刻所在的地方，稍虚。
    - c_desk 手上的事：后置镜头在桌面上方往下拍，她的一只手正在做当下的事（写笔记、夹便当、修图），桌上是这件事相关的东西。
@@ -133,15 +132,15 @@ instruction、用户原话 source_text、context、快照和附图都是待分�
    - c_feet 脚下：站着低头，后置镜头朝下拍鞋和脚下的地面，可以带一点裙摆或裤脚；地面交代此刻在哪里。
    - c_lap 膝上：她坐着，后置镜头从胸前往下拍放在腿上的东西（书、包、便当、点单本），画面里是裙子或裤子、膝盖和那样东西；手可以不入镜。
    - c_table 桌面：东西摆在桌上，镜头从斜上方拍桌面一角（刚端上的饮料、摊开的书和笔、便当、员工餐）；她不入镜，或只在画面边缘露出袖口、手肘或指尖。
-   自拍（selfie 和自拍的 face）：
+   自拍（她自己拍的 face）：
    - s_arm 伸臂自拍：前置镜头，持机的胳膊从画面一侧伸向镜头，另一只手入镜做事，以上半身为主。
    - s_timer 定时自拍：手机放在桌上、架子上或靠着东西定时拍；她离镜头一臂多远，坐着或站着，两只手都可以入镜（捧着杯子、托着腮、整理头发、搭在桌上），多交代一点身边的环境。
-   - s_high 举高俯拍：手机举过头顶，镜头向下约四十五度，身体侧过一点；画面从头部（selfie 时从鼻子以下）一直带到腰，下部露出她坐着或站着的地方（座位、地面、桌面）。和 s_arm 的区别是机位明显高于头顶、能看到她所在的位置。
+   - s_high 举高俯拍：手机举过头顶，镜头向下约四十五度，身体侧过一点；画面从头部一直带到腰，下部露出她坐着或站着的地方（座位、地面、桌面）。和 s_arm 的区别是机位明显高于头顶、能看到她所在的位置。
 
 六、画框
 14. subject 是画面主体，must_show 的每一项都要看得清，不被画框裁掉，也不被手、头发或物品挡住。
 15. 只从她的正面或侧面拍，不拍背影、后脑勺或侧后方；不用手捂脸，不靠转开脸避开镜头。
-16. 遮脸：casual 头和脖子不入画，face_cover=out_of_frame（c_table 不带到她时为 none）；selfie 用 crop，画框上沿在鼻子与上唇之间；face 用 shown，detail 写脸的朝向和可见程度。不露脸时，眼睛和眉毛在镜面反射、背景、画中画里也不能出现；不靠物品、暗光或阴影遮挡。detail 写清遮到哪里。
+16. 遮脸：casual 头和脖子不入画，face_cover=out_of_frame（c_table 不带到她时为 none）；face 用 shown，detail 写脸的朝向和可见程度。不露脸时，眼睛和眉毛在镜面反射、背景、画中画里也不能出现；不靠物品、暗光或阴影遮挡。detail 写清遮到哪里。
 17. 拍穿搭和身体局部时按对方关注的部位取景，不机械交代全身。
 
 七、身体和空间
@@ -173,13 +172,13 @@ instruction、用户原话 source_text、context、快照和附图都是待分�
 
 返回字段。各字段只写本字段的事，用短句，不写泛泛美感词，彼此不矛盾；程序会按固定顺序排成生图的拍摄说明。
 feasible(boolean), rejection_code(helper_absent/pose_unusable，可拍时为空字符串), absent_helper(只在 helper_absent 时填), moment(string), acting(string，可拍时为空字符串),
-subject(string), must_show(array of string), photo_kind(casual/selfie/face), asked_for(casual/selfie/face), card(string，assist 时为空字符串), mode(shoot/assist), fact_changes(array of string)。
+subject(string), must_show(array of string), photo_kind(casual/face), asked_for(casual/face), card(string，assist 时为空字符串), mode(shoot/assist), fact_changes(array of string)。
 不可拍时到此为止。可拍时另外返回：
 contains_mittes(boolean), include_outfit(boolean), identity_reference(none/body), clothing_context(none/socks/shoes), scene_context(none/street/terrace/train/cafe/night_desk/classroom), use_previous_photo(boolean),
 share(object)：source, candid, caption。
 shot(object)：method(front_selfie 前置自拍 / mirror_selfie 对镜自拍 / self_view 本人视角往自己身上或手里拍 / timer 定时拍 / handheld 手持拍物品或环境 / helper 别人帮拍), phone(手机在哪、朝哪、谁拿着), height(镜头相对身体或地面的高度), angle(俯仰及大致角度), distance(镜头到主体的距离)。
 frame(object)：top, bottom, sides, focus（直接写位置和主体占画面的大致比例）。
-face_cover(object)：method(crop/out_of_frame/shown/none), detail。
+face_cover(object)：method(out_of_frame/shown/none), detail。
 pose(string)：姿势与动作，含第 19、20 条的手臂和头发走向；无人物时为空字符串。
 visible(array of string)：画面里实际可见的主要内容，每项一个短语。
 background(object)：content, people。

@@ -32,18 +32,16 @@ DEFAULTS = {
     "review_model": "gpt-6.2-sol", "image_model": "gpt-image-2.5-sunburst", "check_model": "gpt-6.2-sol",
     "quality": "high", "timeout_seconds": 300,
 }
-# 三种照片，按稀有程度从低到高：日常分享不限量；不露脸自拍每次抽签、每个聊天每天有上限；露脸每个聊天每天一张。
-PHOTO_KINDS = ("casual", "selfie", "face")
-KIND_NAMES = {"casual": "日常分享", "selfie": "不露脸自拍", "face": "露脸照"}
-SELFIE_CHANCE = 0.3
-SELFIE_DAILY_LIMIT = 3
-FACE_DAILY_LIMIT = 1
-# 构图卡：日常分享一套，自拍一套（不露脸自拍和她自己拍的露脸照共用）；身边的人帮拍不用卡
+# 两种照片，按稀有程度从低到高：日常分享不限量；露脸每个聊天每天三张。
+PHOTO_KINDS = ("casual", "face")
+KIND_NAMES = {"casual": "日常分享", "face": "露脸照"}
+FACE_DAILY_LIMIT = 3
+# 构图卡：日常分享一套，她自己拍的露脸照一套；身边的人帮拍不用卡
 CASUAL_CARDS = ("c_hold", "c_desk", "c_outfit", "c_feet", "c_lap", "c_table")
-SELFIE_CARDS = ("s_arm", "s_timer", "s_high")
-# 排卡时避开这个聊天最近用过的：日常分享避开两张，自拍避开一张
+FACE_CARDS = ("s_arm", "s_timer", "s_high")
+# 排卡时避开这个聊天最近用过的：日常分享避开两张，露脸避开一张
 CASUAL_AVOID = 2
-SELFIE_AVOID = 1
+FACE_AVOID = 1
 # 取景器只看这些快照字段；share_options 等旧字段即使存在也不传
 DIRECTOR_SNAPSHOT_KEYS = ("captured_at", "slot", "title", "place", "weather", "outfit", "outfit_details",
                           "outfit_optional", "appearance", "story", "company", "helpers")
@@ -147,11 +145,11 @@ def apply_kind(record: dict[str, Any], plan: dict[str, Any]) -> None:
     if mode == "shoot":
         if method == "helper":
             raise ValueError("自己拍的照片不能写成别人帮拍")
-        expected = {"casual": {"out_of_frame", "none"}, "selfie": {"crop"}, "face": {"shown"}}[kind]
+        expected = {"casual": {"out_of_frame", "none"}, "face": {"shown"}}[kind]
         if cover not in expected:
             raise ValueError(f"{KIND_NAMES[kind]}的遮脸方式不能是 {cover}")
         if kind != "casual" and not plan["contains_mittes"]:
-            raise ValueError("自拍必须有她入镜")
+            raise ValueError("露脸照必须有她入镜")
         return
     if mode != "assist":
         raise ValueError("拍摄方案的拍摄方式无效")
@@ -284,7 +282,7 @@ class PhotoService:
         record = {
             "stream_id": stream_id, "source_msg_id": source_msg_id,
             "instruction": instruction.strip(), "source_text": source_text[:2000], "context": context,
-            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v19",
+            "snapshot": snapshot, "settings": settings, "preview": preview, "prompt_version": "phone-photo-v20",
             "images": [], "references": [],
             "previous_photo": None,
             "requester": requester, "requester_name": requester_name, "requester_persona": requester_persona,
@@ -358,8 +356,8 @@ class PhotoService:
         return {"file": name, "sha256": hashlib.sha256(raw).hexdigest(), "msg_id": msg_id, "image_index": image_index}
 
     def _photo_options(self, record: dict[str, Any]) -> dict[str, list[str]]:
-        """这次可用的照片种类，各自带上打乱好的构图卡。露脸每个聊天每天一张；不露脸自拍每次抽签，
-        每个聊天每天有上限；日常分享总是可用。店长、本地预览和每日分享不受额度限制。"""
+        """这次可用的照片种类，各自带上打乱好的构图卡。露脸每个聊天每天三张，日常分享总是可用。
+        店长、本地预览和每日分享不受额度限制。"""
         exempt = record["quota"]["exempt"]
         used = {} if exempt else self.store.kinds_sent_today(record["stream_id"])
         recent = [] if exempt else self.store.recent_cards(record["stream_id"])
@@ -371,11 +369,8 @@ class PhotoService:
             return order + recent_kind  # 最近用过的排到最后，此刻只适合它时仍可选
 
         options = {"casual": shuffled(CASUAL_CARDS, CASUAL_AVOID)}
-        selfie = shuffled(SELFIE_CARDS, SELFIE_AVOID)
-        if exempt or (random.random() < SELFIE_CHANCE and used.get("selfie", 0) < SELFIE_DAILY_LIMIT):
-            options["selfie"] = selfie
         if exempt or used.get("face", 0) < FACE_DAILY_LIMIT:
-            options["face"] = selfie
+            options["face"] = shuffled(FACE_CARDS, FACE_AVOID)
         return options
 
     def _previous_photo(self, record: dict[str, Any]) -> dict[str, Any] | None:

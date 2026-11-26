@@ -744,7 +744,7 @@ class ADayWithMittesPlugin(MaiBotPlugin):
         )
 
     # ── Tool ──
-    @API("reset_photo_quota", description="重置今天各聊天的露脸照和不露脸自拍额度", public=True)
+    @API("reset_photo_quota", description="重置今天各聊天的露脸照额度", public=True)
     async def reset_photo_quota(self) -> bool:
         if self._camera is None:
             raise RuntimeError("相机服务尚未启动")
@@ -753,14 +753,14 @@ class ADayWithMittesPlugin(MaiBotPlugin):
 
     @Command(
         "pik_reset",
-        description="重置今天各聊天的露脸照和不露脸自拍额度（仅管理员）",
+        description="重置今天各聊天的露脸照额度（仅管理员）",
         permission="operator",
         pattern=r"^/pik\s+reset\s*$",
     )
     async def cmd_pik_reset(self, stream_id: str = "", **kwargs: Any) -> tuple[bool, str, bool]:
         await self.reset_photo_quota()
         await self.ctx.send.text("拍照次数重置了~", stream_id)
-        note = "管理员执行 /pik reset，已回复：拍照次数重置了~。今天各聊天的露脸照和不露脸自拍额度已重置。"
+        note = "管理员执行 /pik reset，已回复：拍照次数重置了~。今天各聊天的露脸照额度已重置。"
         result = await self.ctx.maisaka.context.append(
             stream_id, [{"type": "text", "data": note}], visible_text=note,
             source_kind="plugin:khiqwq.a-day-with-mittes:quota_reset",

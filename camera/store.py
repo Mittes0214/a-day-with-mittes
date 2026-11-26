@@ -34,7 +34,7 @@ class CameraStore:
             con.execute("CREATE INDEX IF NOT EXISTS task_status ON tasks(status, created_at)")
 
     def reset_quota(self) -> None:
-        """释放今天所有聊天的照片额度：今天的任务标上 reset，不再计入当天的露脸、不露脸自拍张数。"""
+        """释放今天所有聊天的照片额度：今天的任务标上 reset，不再计入当天的露脸张数。"""
         day = datetime.now(QUOTA_TIMEZONE).date().isoformat()
         with closing(sqlite3.connect(self.db)) as con, con:
             con.execute("BEGIN IMMEDIATE")
@@ -130,7 +130,7 @@ class CameraStore:
         return json.loads(row[0]) if row else None
 
     def kinds_sent_today(self, stream_id: str) -> dict[str, int]:
-        """这个聊天今天（东京时间）已发出的各种照片张数（casual/selfie/face），不算豁免和被重置的。"""
+        """这个聊天今天（东京时间）已发出的各种照片张数（casual/face），不算豁免和被重置的。"""
         day = datetime.now(QUOTA_TIMEZONE).date().isoformat()
         with closing(sqlite3.connect(self.db)) as con:
             rows = con.execute("SELECT record FROM tasks WHERE stream_id=? AND status='sent'", (stream_id,)).fetchall()

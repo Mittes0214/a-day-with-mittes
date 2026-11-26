@@ -1,4 +1,4 @@
-"""三种照片的额度：露脸每个聊天每天一张，不露脸自拍抽签且每天有上限，日常分享不限；
+"""两种照片的额度：露脸每个聊天每天三张，日常分享不限；
 额度只按这个聊天今天已发出的照片算，店长、本地预览和每日分享不受限。"""
 
 from datetime import datetime
@@ -46,14 +46,14 @@ def service_for(store):
 
 def test_only_sent_photos_of_this_chat_today_count(store):
     sent(store, 1, "face", "s_arm")
-    sent(store, 2, "selfie", "s_timer")
+    sent(store, 2, "face", "s_timer")
     sent(store, 3, "casual", "c_hold")
     sent(store, 4, "face", "s_arm", stream="other")
     sent(store, 5, "face", "s_arm", persona="Sweyn")  # 店长豁免，不计
     queued = store.create(request(6))
     queued["plan"] = {"photo_kind": "face", "card": "s_arm"}
     store.save(queued)  # 还没发出，不计
-    assert store.kinds_sent_today("group") == {"face": 1, "selfie": 1, "casual": 1}
+    assert store.kinds_sent_today("group") == {"face": 2, "casual": 1}
 
 
 def test_natural_day_resets_at_tokyo_midnight(store, monkeypatch):
@@ -65,45 +65,32 @@ def test_natural_day_resets_at_tokyo_midnight(store, monkeypatch):
     assert store.kinds_sent_today("group") == {}
 
 
-def test_face_is_one_per_chat_per_day_then_downgrades(store, monkeypatch):
+def test_face_is_three_per_chat_per_day_then_downgrades(store):
     service = service_for(store)
-    monkeypatch.setattr(service_module.random, "random", lambda: 0.0)
-    fresh = store.create(request(1))
-    assert set(service._photo_options(fresh)) == {"casual", "selfie", "face"}
-    sent(store, 2, "face", "s_arm")
-    assert set(service._photo_options(store.create(request(3)))) == {"casual", "selfie"}
-    # 其他聊天不受影响
-    assert "face" in service._photo_options(store.create(request(4, stream="other")))
-
-
-def test_selfie_needs_the_draw_and_stops_after_three(store, monkeypatch):
-    service = service_for(store)
-    monkeypatch.setattr(service_module.random, "random", lambda: 0.99)
-    assert "selfie" not in service._photo_options(store.create(request(1)))
-    monkeypatch.setattr(service_module.random, "random", lambda: 0.0)
+    assert set(service._photo_options(store.create(request(1)))) == {"casual", "face"}
     for index in range(2, 5):
-        assert "selfie" in service._photo_options(store.create(request(100 + index)))
-        sent(store, index, "selfie", "s_arm")
-    assert "selfie" not in service._photo_options(store.create(request(10)))
-    assert service._photo_options(store.create(request(11)))["casual"]  # 日常分享总是可用
+        assert "face" in service._photo_options(store.create(request(100 + index)))
+        sent(store, index, "face", "s_arm")
+    assert set(service._photo_options(store.create(request(10)))) == {"casual"}
+    # 其他聊天不受影响
+    assert "face" in service._photo_options(store.create(request(11, stream="other")))
 
 
 @pytest.mark.parametrize("kwargs", [{"persona": "Sweyn"}, {"preview": True}])
-def test_owner_and_preview_get_every_kind_without_draw(store, monkeypatch, kwargs):
+def test_owner_and_preview_get_every_kind(store, kwargs):
     service = service_for(store)
-    monkeypatch.setattr(service_module.random, "random", lambda: 0.99)
     for index in range(3):
         sent(store, index, "face", "s_arm")
     record = store.create(request(9, **kwargs))
     assert record["quota"]["exempt"] is True
-    assert set(service._photo_options(record)) == {"casual", "selfie", "face"}
+    assert set(service._photo_options(record)) == {"casual", "face"}
 
 
 def test_cards_avoid_the_ones_just_used_in_this_chat(store):
     service = service_for(store)
     sent(store, 1, "casual", "c_feet")
     sent(store, 2, "casual", "c_hold")
-    sent(store, 3, "selfie", "s_timer")
+    sent(store, 3, "face", "s_timer")
     for index in range(20):
         options = service._photo_options(store.create(request(100 + index)))
         assert sorted(options["casual"]) == sorted(service_module.CASUAL_CARDS)
@@ -118,7 +105,7 @@ def test_downgrade_is_explained_to_the_planner():
     note = service_module.delivery_note(record)
     assert note.startswith("↑ 这张是给阿铭拍的。对方原本想要露脸照，这次她自己选了拍日常分享")
     assert "不提额度、次数或概率" in note and note.endswith("回应「看看你」(msg_id=9)")
-    record["plan"] = {"photo_kind": "selfie", "asked_for": "selfie"}
+    record["plan"] = {"photo_kind": "face", "asked_for": "face"}
     assert service_module.delivery_note(record) == "↑ 这张是给阿铭拍的，回应「看看你」(msg_id=9)"
 
 

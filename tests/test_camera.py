@@ -73,16 +73,16 @@ class FakeClient:
                 "use_previous_photo": self.use_previous, **(self.plan_overrides or {})} | self._person_defaults(), {}
 
     def _person_defaults(self):
-        # 有人物入镜又没指定照片种类时，假取景器默认拍不露脸自拍（真实取景器必须自己选）
+        # 有人物入镜又没指定照片种类时，假取景器默认拍露脸自拍（真实取景器必须自己选）
         overrides = self.plan_overrides or {}
         if not overrides.get("contains_mittes"):
             return {}
         out = {}
         if "face_cover" not in overrides:
-            out["face_cover"] = {"method": "crop", "detail": "画框上沿在鼻子与上唇之间"}
+            out["face_cover"] = {"method": "shown", "detail": "正脸看镜头"}
         if "photo_kind" not in overrides:
             cover = (overrides.get("face_cover") or out["face_cover"])["method"]
-            kind = {"crop": "selfie", "shown": "face", "out_of_frame": "casual"}[cover]
+            kind = {"shown": "face", "out_of_frame": "casual"}[cover]
             out |= {"photo_kind": kind, "asked_for": kind, "card": "c_outfit" if kind == "casual" else "s_arm"}
             if overrides.get("mode") == "assist":
                 out["card"] = ""
@@ -139,8 +139,6 @@ def setup(tmp_path, monkeypatch):
                                 proactive=SimpleNamespace(trigger=AsyncMock(return_value={"success": True}))),
     )
     monkeypatch.setattr(module, "read_provider", lambda *args: ("http://test/v1", "secret-not-in-record"))
-    # 不露脸自拍的抽签固定为抽中；抽不中的情况在额度测试里单独测
-    monkeypatch.setattr(module.random, "random", lambda: 0.0)
     client = FakeClient()
     client.checks = [{"passed": True, "issues": [], "repairable": False, "description": "桌上的杯子"}]
     service = module.PhotoService(ctx, plugin, tmp_path / "data", AsyncMock(side_effect=lambda key, default: True if key == "photo.enabled" else default), client_factory=lambda *args: client)
@@ -959,7 +957,7 @@ def test_assist_uses_helper_beside_her_now(setup):
     ({"method": "front_selfie"}, ["Niya"], "helper"),
     ({"caption": " "}, ["Niya"], "来历"),
     ({"card": "s_arm"}, ["Niya"], "不用构图卡"),
-    ({"photo_kind": "selfie"}, ["Niya"], "只能是露脸照"),
+    ({"photo_kind": "casual"}, ["Niya"], "只能是露脸照"),
 ])
 def test_assist_rejects_invalid_helper_shot(setup, share, helpers, message):
     async def run():
@@ -973,9 +971,8 @@ def test_assist_rejects_invalid_helper_shot(setup, share, helpers, message):
 
 
 @pytest.mark.parametrize("kind, card, cover, message", [
-    ("selfie", "s_arm", "shown", "不露脸自拍的遮脸方式"),
-    ("face", "s_arm", "crop", "露脸照的遮脸方式"),
-    ("casual", "c_outfit", "crop", "日常分享的遮脸方式"),
+    ("face", "s_arm", "out_of_frame", "露脸照的遮脸方式"),
+    ("casual", "c_outfit", "shown", "日常分享的遮脸方式"),
 ])
 def test_photo_kind_and_face_cover_must_agree(setup, kind, card, cover, message):
     async def run():
@@ -1011,7 +1008,7 @@ def test_unavailable_kind_or_wrong_card_stops_before_generation(setup, plan, mes
         service, _, client, _ = setup
         client.plan_overrides = plan
         record = await service.submit("自拍", "kind-" + message, "private", SNAPSHOT, preview=True)
-        record["photo_options"] = {"casual": list(module.CASUAL_CARDS), "selfie": list(module.SELFIE_CARDS)}
+        record["photo_options"] = {"casual": list(module.CASUAL_CARDS)}
         with pytest.raises(ValueError, match=message):
             await service.process(record)
         assert client.image_calls == 0
@@ -1084,7 +1081,7 @@ def test_named_helper_absent_is_declined_with_their_name(setup):
 def test_object_face_cover_is_no_longer_allowed(setup):
     async def run():
         service, _, client, _ = setup
-        client.plan_overrides = {"contains_mittes": True, "photo_kind": "selfie", "asked_for": "selfie", "card": "s_arm",
+        client.plan_overrides = {"contains_mittes": True, "photo_kind": "casual", "asked_for": "casual", "card": "c_outfit",
                                  "face_cover": {"method": "object", "detail": "用调色盘挡住眉眼"}}
         record = await service.submit("来张自拍", "object-cover", "private", dict(SNAPSHOT), preview=True)
         with pytest.raises(ValueError, match="遮脸方式无效"):

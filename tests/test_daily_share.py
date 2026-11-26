@@ -102,8 +102,8 @@ def test_full_flow_waits_for_review_and_publishes_after_segment(share):
         photo = camera.store.get(record["camera_task_id"])
         assert photo["status"] == "daily_share" and photo["quota"]["exempt"]
         assert "requester" not in client.planning_inputs and "earlier_photos" not in client.planning_inputs
-        # 每日分享不受照片额度限制，三种照片都可选
-        assert set(client.planning_inputs["photo_options"]) == {"casual", "selfie", "face"}
+        # 每日分享不受照片额度限制，两种照片都可选
+        assert set(client.planning_inputs["photo_options"]) == {"casual", "face"}
         assert client.planning_inputs["snapshot"]["captured_at"].startswith("2026-11-17T16:10")
         ctx.send.image.assert_not_awaited()
         ctx.maisaka.proactive.trigger.assert_not_awaited()
